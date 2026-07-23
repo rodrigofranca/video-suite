@@ -1,0 +1,29 @@
+# Go build artifacts
+apps/api/api
+apps/worker/worker
+worker
+
+# Dependencies
+node_modules
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker volumes (local dev)
+data/
+volumes/
+
+# MinIO local data
+minio-data/

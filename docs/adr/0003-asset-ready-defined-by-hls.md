@@ -1,0 +1,3 @@
+# Asset `ready` é definido pelo sucesso do job HLS, não do pipeline completo
+
+Um Asset atinge status `ready` quando o job `transcode-hls` completa com sucesso — independente do resultado dos jobs `extract-metadata` e `generate-thumbnail`. Falhas nesses jobs ficam visíveis nos logs do Job mas não bloqueiam o Asset. A alternativa seria exigir sucesso de todos os jobs do pipeline para marcar `ready`, o que parece intuitivo mas penaliza o caso real em que ffprobe falha em arquivo exótico enquanto FFmpeg gera HLS reproduzível. O critério de `ready` é "o vídeo pode ser assistido", não "toda informação auxiliar foi extraída". Falhas em metadata e thumbnail são problemas de enriquecimento, não de entrega.

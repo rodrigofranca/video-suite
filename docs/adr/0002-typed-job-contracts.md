@@ -1,0 +1,3 @@
+# Job inputs como structs Go tipadas em pacote compartilhado
+
+Cada tipo de Job (ex: `transcode-hls`, `generate-thumbnail`) tem uma struct Go própria definida em `packages/job-contracts`. A API serializa para JSON ao enfileirar; o Worker deserializa por tipo ao consumir. A alternativa natural seria `json.RawMessage` genérico — comum em job systems — mas exigiria validação espalhada nos workers e tornaria contratos invisíveis para o compilador. Com structs tipadas, quebras de contrato entre API e Worker são detectadas em tempo de compilação, e novos tipos de job têm um lugar canônico de definição. O custo é acoplamento de build entre os dois binários, aceito porque ambos vivem no mesmo monorepo e evoluem juntos.
