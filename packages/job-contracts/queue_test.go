@@ -44,7 +44,9 @@ func TestNextJobType(t *testing.T) {
 	cases := map[string]string{
 		JobTypeExtractMetadata:   JobTypeGenerateThumbnail,
 		JobTypeGenerateThumbnail: JobTypeTranscodeHLS,
-		JobTypeTranscodeHLS:      "",
+		JobTypeTranscodeHLS:      JobTypeExtractAudio,
+		JobTypeExtractAudio:      JobTypeTranscribeAudio,
+		JobTypeTranscribeAudio:   "",
 		"unknown":                "",
 	}
 	for in, want := range cases {

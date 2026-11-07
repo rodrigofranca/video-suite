@@ -6,7 +6,7 @@ Define como os arquivos de mídia são organizados no storage compatível com S3
 ## Requirements
 
 ### Requirement: Organização por asset
-Os arquivos SHALL ficar em `assets/{assetId}/source/input.mp4` (original), `assets/{assetId}/hls/` (playlist `index.m3u8` e segmentos) e `assets/{assetId}/thumbnails/thumbnail.jpg` (miniatura), com chaves geradas a partir do ID.
+Os arquivos SHALL ficar em `assets/{assetId}/source/input.mp4` (original), `assets/{assetId}/hls/` (playlist `index.m3u8` e segmentos), `assets/{assetId}/thumbnails/thumbnail.jpg` (miniatura), `assets/{assetId}/audio/audio.flac` (áudio para transcrição) e `assets/{assetId}/subtitles/{idioma}.vtt` (legendas), com chaves geradas a partir do ID.
 
 #### Scenario: Caminho do original
 - **WHEN** um asset é criado por upload
@@ -16,6 +16,10 @@ Os arquivos SHALL ficar em `assets/{assetId}/source/input.mp4` (original), `asse
 - **WHEN** o job de miniatura termina
 - **THEN** a imagem SHALL estar em `assets/{assetId}/thumbnails/thumbnail.jpg`
 
+#### Scenario: Caminho das legendas
+- **WHEN** a transcrição em inglês termina
+- **THEN** as legendas SHALL estar em `assets/{assetId}/subtitles/en.vtt`
+
 ### Requirement: Apenas a API S3
 O acesso ao storage SHALL usar somente a API S3 (endereçamento por caminho, checksums só quando exigidos), configurada por `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET` e `S3_PUBLIC_URL`.
 
@@ -24,7 +28,7 @@ O acesso ao storage SHALL usar somente a API S3 (endereçamento por caminho, che
 - **THEN** ele SHALL ser gravado por upload multipart e baixado de volta idêntico
 
 ### Requirement: Só as saídas derivadas são públicas
-O bucket SHALL permitir leitura anônima apenas em `assets/*/hls/*` e `assets/*/thumbnails/*`. O arquivo original SHALL exigir credenciais.
+O bucket SHALL permitir leitura anônima apenas em `assets/*/hls/*`, `assets/*/thumbnails/*` e `assets/*/subtitles/*`. O arquivo original e o áudio extraído SHALL exigir credenciais.
 
 #### Scenario: Leitura anônima
 - **WHEN** um navegador sem credenciais pede a playlist, a miniatura e o original de um asset

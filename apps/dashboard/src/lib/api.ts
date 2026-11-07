@@ -56,11 +56,31 @@ export interface Playback {
 	manifestUrl: string;
 }
 
+export interface Subtitles {
+	language: string;
+	url: string;
+}
+
+export interface TranscriptSegment {
+	start: number;
+	end: number;
+	text: string;
+}
+
+export interface Transcript {
+	language: string;
+	model: string;
+	text: string;
+	segments: TranscriptSegment[];
+	createdAt: string;
+}
+
 export interface AssetDetail extends Asset {
 	source: { storageKey: string; mimeType: string; sizeBytes: number; checksum: string } | null;
 	jobs: Job[];
 	artifacts: Artifact[];
 	playback: Playback | null;
+	subtitles: Subtitles[];
 }
 
 export interface JobLog {
@@ -93,6 +113,7 @@ async function getJSON<T>(path: string): Promise<T> {
 
 export const listAssets = () => getJSON<{ assets: Asset[] }>('/assets').then((r) => r.assets);
 export const getAsset = (id: string) => getJSON<AssetDetail>(`/assets/${encodeURIComponent(id)}`);
+export const getTranscript = (id: string) => getJSON<Transcript>(`/assets/${encodeURIComponent(id)}/transcript`);
 /** URL of the full metadata (summary and raw ffprobe output) as JSON. */
 export const metadataUrl = (id: string) => `${API_URL}/assets/${encodeURIComponent(id)}/metadata`;
 export const getJobLogs = (id: string) =>

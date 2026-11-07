@@ -84,7 +84,7 @@ func run(log *slog.Logger) error {
 			Store:   store.New(pool),
 			Storage: files,
 			Enqueue: func(ctx context.Context, msg jobcontracts.Message) error {
-				return rdb.XAdd(ctx, &redis.XAddArgs{Stream: jobcontracts.StreamJobs, Values: msg.Values()}).Err()
+				return rdb.XAdd(ctx, &redis.XAddArgs{Stream: msg.Stream(), Values: msg.Values()}).Err()
 			},
 			AllowedOrigin: origin,
 			Log:           log,

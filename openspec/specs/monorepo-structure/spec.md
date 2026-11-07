@@ -6,11 +6,11 @@ Define a organização do monorepo e o ambiente de desenvolvimento local: pastas
 ## Requirements
 
 ### Requirement: Estrutura de diretórios do monorepo
-O repositório SHALL seguir estrutura `apps/` para aplicações e `packages/` para pacotes compartilhados, sem tooling de monorepo (Turborepo/Nx) no MVP.
+O repositório SHALL seguir estrutura `apps/` para aplicações e `packages/` para pacotes compartilhados, sem tooling de monorepo (Turborepo/Nx) no MVP. O worker Python fica em `apps/ai-worker`, gerenciado com `uv`.
 
 #### Scenario: Estrutura de diretórios presente
 - **WHEN** o repositório é clonado
-- **THEN** os diretórios `apps/api`, `apps/worker`, `apps/dashboard`, `packages/job-contracts` e `packages/media-core` SHALL existir
+- **THEN** os diretórios `apps/api`, `apps/worker`, `apps/ai-worker`, `apps/dashboard`, `packages/job-contracts` e `packages/media-core` SHALL existir
 
 #### Scenario: Go Workspace configurado
 - **WHEN** o desenvolvedor executa `go work sync` na raiz
@@ -48,7 +48,7 @@ O repositório SHALL incluir `Makefile` na raiz com targets documentados para as
 
 #### Scenario: Targets obrigatórios presentes
 - **WHEN** o desenvolvedor executa `make help` ou `make`
-- **THEN** os targets `up`, `down`, `demo`, `demo-logs`, `sample`, `migrate`, `migrate-down`, `dev-api`, `dev-worker`, `dev-dashboard`, `build` e `test` SHALL estar listados
+- **THEN** os targets `up`, `down`, `demo`, `demo-logs`, `sample`, `sample-speech`, `migrate`, `migrate-down`, `dev-api`, `dev-worker`, `dev-ai-worker`, `dev-dashboard`, `build`, `test`, `test-go` e `test-ai` SHALL estar listados
 
 #### Scenario: Migrate executa migrações
 - **WHEN** o desenvolvedor executa `make migrate` com infraestrutura rodando

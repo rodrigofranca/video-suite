@@ -2,10 +2,30 @@
 	// Plays an HLS playlist: hls.js where Media Source Extensions exist,
 	// native HLS otherwise (Safari on iOS). UltraMedia replaces this later
 	// (docs/adr/0012).
-	let { src, poster }: { src: string; poster?: string | null } = $props();
+	import type { Subtitles } from '$lib/api';
+	import { languageName } from '$lib/format';
+
+	let {
+		src,
+		poster,
+		subtitles = [],
+		ontime
+	}: {
+		src: string;
+		poster?: string | null;
+		subtitles?: Subtitles[];
+		/** Called with the current time, in seconds, while the video plays. */
+		ontime?: (seconds: number) => void;
+	} = $props();
 
 	let video: HTMLVideoElement;
 	let error = $state('');
+
+	/** Jump to a time (seconds) and play. */
+	export function seek(seconds: number) {
+		video.currentTime = seconds;
+		video.play().catch(() => {}); // autoplay may be blocked; the jump still happens
+	}
 
 	$effect(() => {
 		const url = src;
@@ -37,15 +57,22 @@
 	});
 </script>
 
+<!-- Subtitles are sidecar WebVTT files read from storage, hence crossorigin. -->
 <!-- svelte-ignore a11y_media_has_caption -->
 <video
 	bind:this={video}
 	controls
 	playsinline
 	preload="metadata"
+	crossorigin="anonymous"
 	poster={poster ?? undefined}
+	ontimeupdate={() => ontime?.(video.currentTime)}
 	data-testid="player"
-></video>
+>
+	{#each subtitles as sub, i (sub.url)}
+		<track kind="subtitles" src={sub.url} srclang={sub.language} label={languageName(sub.language)} default={i === 0} />
+	{/each}
+</video>
 {#if error}
 	<p class="error">{error}</p>
 {/if}

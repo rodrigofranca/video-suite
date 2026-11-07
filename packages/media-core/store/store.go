@@ -303,6 +303,35 @@ func (s *Store) GetTechnicalMetadata(ctx context.Context, assetID string) (domai
 	return m, notFound(err)
 }
 
+// ---- Transcripts ----
+
+// SaveTranscript stores an asset's transcript, replacing any earlier one.
+func (s *Store) SaveTranscript(ctx context.Context, t domain.Transcript) error {
+	segments := t.Segments
+	if segments == nil {
+		segments = []byte("[]")
+	}
+	_, err := s.db.Exec(ctx,
+		`INSERT INTO transcripts (id, asset_id, job_id, language, text, segments, model)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT (asset_id) DO UPDATE
+		 SET id = EXCLUDED.id, job_id = EXCLUDED.job_id, language = EXCLUDED.language,
+		     text = EXCLUDED.text, segments = EXCLUDED.segments, model = EXCLUDED.model,
+		     created_at = NOW()`,
+		t.ID, t.AssetID, t.JobID, t.Language, t.Text, segments, t.Model)
+	return err
+}
+
+// GetTranscript returns an asset's transcript.
+func (s *Store) GetTranscript(ctx context.Context, assetID string) (domain.Transcript, error) {
+	var t domain.Transcript
+	err := s.db.QueryRow(ctx,
+		`SELECT id, asset_id, job_id, language, text, segments, model, created_at
+		 FROM transcripts WHERE asset_id = $1`, assetID).
+		Scan(&t.ID, &t.AssetID, &t.JobID, &t.Language, &t.Text, &t.Segments, &t.Model, &t.CreatedAt)
+	return t, notFound(err)
+}
+
 // ---- Artifacts ----
 
 func (s *Store) CreateArtifact(ctx context.Context, a domain.Artifact) error {

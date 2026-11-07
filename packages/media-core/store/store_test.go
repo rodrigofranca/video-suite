@@ -263,3 +263,26 @@ func TestCreateJobIfIdle(t *testing.T) {
 		t.Fatalf("unknown asset: err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestTranscripts(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+
+	if _, err := s.GetTranscript(ctx, asset.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("before: err = %v, want ErrNotFound", err)
+	}
+	first := domain.Transcript{ID: domain.NewID(), AssetID: asset.ID, JobID: jobs[0].ID, Language: "en", Text: "hello", Model: "tiny"}
+	if err := s.SaveTranscript(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	second := domain.Transcript{ID: domain.NewID(), AssetID: asset.ID, JobID: jobs[0].ID, Language: "pt", Text: "olá mundo",
+		Segments: []byte(`[{"start":0,"end":1.5,"text":"olá mundo"}]`), Model: "base"}
+	if err := s.SaveTranscript(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetTranscript(ctx, asset.ID)
+	if err != nil || got.Language != "pt" || got.Text != "olá mundo" || got.Model != "base" || !strings.Contains(string(got.Segments), `"end": 1.5`) {
+		t.Fatalf("GetTranscript = %+v (%s), %v", got, got.Segments, err)
+	}
+}

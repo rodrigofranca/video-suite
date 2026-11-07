@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -43,6 +44,11 @@ type fixture struct {
 }
 
 func newFixture(t *testing.T, seconds int, size string) *fixture {
+	t.Helper()
+	return newFixtureWith(t, func(path string) { testvideo.Make(t, path, seconds, size) })
+}
+
+func newFixtureWith(t *testing.T, makeVideo func(path string)) *fixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	t.Cleanup(cancel)
@@ -81,14 +87,14 @@ func newFixture(t *testing.T, seconds int, size string) *fixture {
 		t.Fatal(err)
 	}
 	video := filepath.Join(t.TempDir(), "in.mp4")
-	testvideo.Make(t, video, seconds, size)
+	makeVideo(video)
 	if err := files.UploadFile(ctx, f.src, video, "video/mp4"); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		bg := context.Background()
 		st.DeleteAsset(bg, f.asset)
-		for _, key := range []string{f.src, storage.ThumbnailKey(f.asset), storage.HLSManifestKey(f.asset)} {
+		for _, key := range []string{f.src, storage.ThumbnailKey(f.asset), storage.HLSManifestKey(f.asset), storage.AudioKey(f.asset)} {
 			files.Delete(bg, key)
 		}
 		for i := range 10 {
@@ -280,4 +286,50 @@ func httpGet(t *testing.T, url string) string {
 		t.Fatalf("GET %s: %d %s", url, resp.StatusCode, body)
 	}
 	return string(body)
+}
+
+func TestExtractAudio(t *testing.T) {
+	f := newFixture(t, 5, "320x240")
+	in := jobcontracts.ExtractAudioInput{AssetID: f.asset, StorageKey: f.src, AudioKey: storage.AudioKey(f.asset)}
+	if err := f.media.ExtractAudio(f.ctx, f.job(jobcontracts.JobTypeExtractAudio), in); err != nil {
+		t.Fatalf("ExtractAudio: %v\n%s", err, f.logs.String())
+	}
+	art, err := f.st.LatestArtifact(f.ctx, f.asset, domain.ArtifactAudio)
+	if err != nil || art.StorageKey != storage.AudioKey(f.asset) {
+		t.Fatalf("audio artifact = %+v, %v", art, err)
+	}
+
+	local := filepath.Join(t.TempDir(), "audio.flac")
+	if err := f.files.DownloadFile(f.ctx, art.StorageKey, local); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("ffprobe", "-v", "error", "-show_entries", "stream=codec_name,sample_rate,channels", "-of", "csv=p=0", local).Output()
+	if err != nil || strings.TrimSpace(string(out)) != "flac,16000,1" {
+		t.Fatalf("audio file = %q, %v; want flac,16000,1", out, err)
+	}
+	if strings.Contains(f.logs.String(), "X-Amz") {
+		t.Fatal("the signed URL leaked into the job logs")
+	}
+}
+
+func TestExtractAudioWithoutAudioTrack(t *testing.T) {
+	f := newFixtureWith(t, func(path string) { testvideo.MakeWithoutAudio(t, path, 3, "320x240") })
+	in := jobcontracts.ExtractAudioInput{AssetID: f.asset, StorageKey: f.src, AudioKey: storage.AudioKey(f.asset)}
+	if err := f.media.ExtractAudio(f.ctx, f.job(jobcontracts.JobTypeExtractAudio), in); err != nil {
+		t.Fatalf("a video without audio is not an error: %v", err)
+	}
+	if !strings.Contains(f.logs.String(), "no audio track") {
+		t.Fatalf("missing log:\n%s", f.logs.String())
+	}
+	if ok, _ := f.files.Exists(f.ctx, storage.AudioKey(f.asset)); ok {
+		t.Fatal("no audio file should be stored")
+	}
+}
+
+func TestExtractAudioRejectsForeignKey(t *testing.T) {
+	err := Media{}.ExtractAudio(context.Background(), Job{Log: slog.New(slog.DiscardHandler)},
+		jobcontracts.ExtractAudioInput{AssetID: domain.NewID(), StorageKey: "k", AudioKey: "assets/other/audio/audio.flac"})
+	if err == nil || !strings.Contains(err.Error(), "invalid input") {
+		t.Fatalf("want invalid input, got %v", err)
+	}
 }

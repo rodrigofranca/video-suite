@@ -1,4 +1,4 @@
-.PHONY: help up down demo demo-logs sample migrate migrate-down dev-api dev-worker dev-dashboard build test env-check
+.PHONY: help up down demo demo-logs sample sample-speech migrate migrate-down dev-api dev-worker dev-ai-worker dev-dashboard build test test-go test-ai env-check
 
 # Load local settings (copy .env.example to .env first).
 -include .env
@@ -25,7 +25,7 @@ demo: ## Build and start everything in Docker; open http://localhost:5173
 	@echo "UltraMedia is running: dashboard http://localhost:5173, API http://localhost:8080"
 
 demo-logs: ## Follow the API and worker logs of the demo stack
-	docker compose --profile app logs -f api worker
+	docker compose --profile app logs -f api worker ai-worker
 
 sample: ## Create samples/sample.mp4 (30 s, 720p, with sound) with the worker image's FFmpeg
 	@mkdir -p samples
@@ -36,6 +36,16 @@ sample: ## Create samples/sample.mp4 (30 s, 720p, with sound) with the worker im
 		-f lavfi -i "sine=frequency=440:duration=30" \
 		-c:v libx264 -preset veryfast -c:a aac -shortest /out/sample.mp4
 	@echo "Created samples/sample.mp4"
+
+sample-speech: ## Create samples/speech.mp4 with spoken English, to try transcription (local FFmpeg with flite)
+	@mkdir -p samples
+	@ffmpeg -hide_banner -filters 2>/dev/null | grep -q " flite " || \
+		(echo "Your FFmpeg has no flite filter (Ubuntu and Debian builds do). Use any MP4 with speech instead." && exit 1)
+	ffmpeg -hide_banner -loglevel error -y \
+		-f lavfi -i "testsrc2=duration=30:size=1280x720:rate=30" \
+		-f lavfi -i "flite=voice=slt:text='Welcome to the ultra media platform. This video was uploaded, encoded and transcribed automatically. The transcript and the subtitles were created by an A I worker running Whisper on this machine.'" \
+		-c:v libx264 -preset veryfast -c:a aac -ar 44100 -shortest samples/speech.mp4
+	@echo "Created samples/speech.mp4"
 
 migrate: env-check ## Apply all pending database migrations
 	@$(MIGRATE) -path $(MIGRATIONS) -database "$(DATABASE_URL)" up
@@ -49,15 +59,23 @@ dev-api: env-check ## Start API development server on port 8080
 dev-worker: env-check ## Start worker development process
 	@go run ./apps/worker/cmd/worker
 
+dev-ai-worker: env-check ## Start the AI worker (Python, needs uv); downloads the Whisper model on first run
+	@cd apps/ai-worker && uv run python -m ultramedia_ai
+
 dev-dashboard: ## Start SvelteKit dashboard dev server on port 5173
 	@cd apps/dashboard && (test -d node_modules || npm install) && npm run dev
 
 build: ## Build all Go modules
 	go build $(GO_PACKAGES)
 
-test: ## Run Go vet and unit tests
+test: test-go test-ai ## Run all tests (Go and Python)
+
+test-go: ## Run Go vet and tests
 	go vet $(GO_PACKAGES)
 	go test $(GO_PACKAGES)
+
+test-ai: ## Run the AI worker tests (Python, needs uv; transcription tests download the tiny model)
+	cd apps/ai-worker && uv run pytest -q
 
 env-check:
 	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is not set. Run: cp .env.example .env" && exit 1)

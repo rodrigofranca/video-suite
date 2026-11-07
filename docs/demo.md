@@ -6,8 +6,10 @@ A 5-minute walkthrough of the Milestone 1 pipeline. It needs only Docker.
 
 ```sh
 make demo     # builds and starts everything (first build takes a few minutes)
-make sample   # creates samples/sample.mp4: 30 s, 720p, with sound
+make sample   # creates samples/sample.mp4: 30 s, 720p, with a tone (no speech)
 ```
+
+For the transcription part, use a short MP4 with someone speaking (a phone recording works), or `make sample-speech` if your FFmpeg has flite (Ubuntu and Debian builds do). The first `make demo` downloads the Whisper model, so give the AI worker a minute before the first upload.
 
 Open http://localhost:5173. Keep `make demo-logs` running in a terminal if you want to show the worker output.
 
@@ -19,9 +21,10 @@ Open http://localhost:5173. Keep `make demo-logs` running in a terminal if you w
 4. **Logs.** Click **HLS encoding** to open its logs: the exact FFmpeg command, timings, segments uploaded. "When something fails, this is where you see why."
 5. **Metadata.** Show the details card (duration, resolution, codecs, bitrate) and open **ffprobe JSON**.
 6. **Playback.** Press play. "This is HLS, read straight from storage, played with hls.js."
-7. **Run a job again.** Open **Thumbnail**, click **Run again**. "A new attempt is added; the earlier one stays in the history."
-8. **The list.** Go back to **Videos**: thumbnail, duration, resolution, status.
-9. **What's next.** "Milestone 2 adds AI on top of the same jobs: transcription, subtitles, chapters."
+7. **Transcript and subtitles.** "After the video is playable, the Go worker extracts the audio and a Python worker transcribes it with Whisper, locally." Turn on the subtitles in the player, then click a line of the transcript to jump there.
+8. **Run a job again.** Open **Thumbnail**, click **Run again**. "A new attempt is added; the earlier one stays in the history."
+9. **The list.** Go back to **Videos**: thumbnail, duration, resolution, status.
+10. **What's next.** "Next: summaries, tags and chapters from the transcript."
 
 ## After the demo
 

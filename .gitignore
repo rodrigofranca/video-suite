@@ -31,3 +31,8 @@ storage-data/
 
 # Generated sample videos
 samples/
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/

@@ -24,3 +24,15 @@ func HLSManifestKey(assetID string) string {
 func ThumbnailKey(assetID string) string {
 	return "assets/" + assetID + "/thumbnails/thumbnail.jpg"
 }
+
+// AudioKey is where an asset's extracted audio (16 kHz mono FLAC) is stored.
+// It stays private: only the workers read it.
+func AudioKey(assetID string) string {
+	return "assets/" + assetID + "/audio/audio.flac"
+}
+
+// SubtitlesKey is where an asset's WebVTT subtitles for a language are
+// stored. Subtitles are publicly readable, like the HLS output (docs/adr/0017).
+func SubtitlesKey(assetID, language string) string {
+	return "assets/" + assetID + "/subtitles/" + language + ".vtt"
+}
