@@ -19,20 +19,20 @@ def client(fake, **kw) -> ChatClient:
 
 
 def test_completion(fake):
-    fake.answer("hello", model="deepseek-v4-flash")
+    fake.answer("hello", model="claude-haiku-5-5")
     c = client(fake).complete(MESSAGES, max_tokens=50)
     assert (c.text, c.model, c.finish_reason, c.prompt_tokens, c.completion_tokens) == (
-        "hello", "deepseek-v4-flash", "stop", 100, 50
+        "hello", "claude-haiku-5-5", "stop", 100, 50
     )
     req = fake.requests[0]
     assert req["path"] == "/v1/chat/completions"
     assert req["headers"]["Authorization"] == "Bearer sk-test-key-123456"
-    assert req["body"] == {"model": "ultramedia-text", "messages": MESSAGES, "max_tokens": 50, "temperature": 0.2}
+    assert req["body"] == {"model": "ultramedia-text", "messages": MESSAGES, "max_tokens": 50}
 
 
 def test_reports_the_model_behind_a_litellm_alias(fake):
-    fake.answer("hi", model="ultramedia-text", litellm_model="openai/deepseek-v4-flash")
-    assert client(fake).complete(MESSAGES, max_tokens=5).model == "deepseek-v4-flash"
+    fake.answer("hi", model="ultramedia-text", litellm_model="openai/claude-haiku-5-5")
+    assert client(fake).complete(MESSAGES, max_tokens=5).model == "claude-haiku-5-5"
 
 
 def test_retries_transient_errors(fake):
@@ -69,6 +69,12 @@ def test_auth_errors_are_not_retried_and_get_a_hint(fake):
     fake.fail(400, "No connected db.")  # LiteLLM without a database, given an unknown key
     with pytest.raises(LLMError, match=r"check LLM_API_KEY"):
         client(fake).complete(MESSAGES, max_tokens=5)
+
+
+def test_no_credits_is_not_retried(fake):
+    fake.fail(402, "Insufficient account funds")
+    with pytest.raises(LLMError, match=r"answered 402: Insufficient account funds \(the provider account has no credits left\)"):
+        client(fake).complete(MESSAGES, max_tokens=5, sleep=lambda s: pytest.fail("should not retry"))
 
 
 def test_long_retry_after_fails_fast(fake):

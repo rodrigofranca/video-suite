@@ -84,7 +84,7 @@ services:
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-ultramedia-dev}
       OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
-      OPENCODE_API_BASE: ${OPENCODE_API_BASE:-https://opencode.ai/zen/v1}
+      OPENCODE_API_BASE: ${OPENCODE_API_BASE:-https://opencode.ai/inference/openai/v1}
       # Use the price list shipped in the image instead of downloading it
       # from GitHub's main branch at every start.
       LITELLM_LOCAL_MODEL_COST_MAP: "True"

@@ -22,7 +22,7 @@ Segunda entrega do Milestone 2. Decisões de arquitetura nas ADRs 0018 (gateway 
 
 ## Risks / Trade-offs
 
-- **Qualidade depende do modelo:** o padrão é `deepseek-v4-flash` (barato e rápido); modelos maiores escrevem melhor e custam mais.
+- **Qualidade depende do modelo:** o padrão é o Claude Haiku 5.5 no OpenCode Zen (US$ 0,0005 medidos num vídeo de 2 minutos); modelos maiores escrevem melhor e custam mais. OpenCode Go e os modelos grátis do OpenCode não servem: o Go é para agentes de código e os grátis só funcionam dentro do OpenCode.
 - **Vídeos muito longos:** acima de `LLM_MAX_INPUT_CHARS` (200 mil caracteres, cerca de 4 horas de fala) o job falha com mensagem clara, em vez de truncar.
 - **Gateway sem banco:** localmente só existe a chave mestra. No VPS, cada projeto deve ter sua chave virtual, o que exige o banco do LiteLLM (próxima entrega).
 - **Reexecutar a transcrição não refaz a análise:** como os demais jobs, cada um roda de novo separadamente.

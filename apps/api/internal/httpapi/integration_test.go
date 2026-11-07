@@ -530,7 +530,7 @@ func TestAnalysis(t *testing.T) {
 		t.Helper()
 		err := e.store.SaveAnalysis(ctx, domain.Analysis{ID: domain.NewID(), AssetID: id, JobID: analyze.ID, Language: "pt",
 			Summary: summary, Tags: tags, Chapters: []byte(`[{"start":0,"title":"Abertura"},{"start":42.5,"title":"Demonstração"}]`),
-			Model: "deepseek-v4-flash"})
+			Model: "claude-haiku-5-5"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -549,7 +549,7 @@ func TestAnalysis(t *testing.T) {
 	if code := e.get("/assets/"+id+"/analysis", &got); code != 200 {
 		t.Fatalf("analysis: %d", code)
 	}
-	if got.Summary != "Um resumo." || got.Language != "pt" || got.Model != "deepseek-v4-flash" ||
+	if got.Summary != "Um resumo." || got.Language != "pt" || got.Model != "claude-haiku-5-5" ||
 		strings.Join(got.Tags, ",") != "vídeo,demo" || len(got.Chapters) != 2 || got.Chapters[1].Start != 42.5 {
 		t.Fatalf("analysis = %+v", got)
 	}

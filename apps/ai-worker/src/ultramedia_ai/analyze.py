@@ -132,7 +132,7 @@ class Analyzer:
 
     def _complete(self, ctx: JobContext, messages: list[dict]):
         completion = self.client.complete(
-            messages, max_tokens=MAX_TOKENS, temperature=0.2, sleep=ctx.stop.wait, check=ctx.check
+            messages, max_tokens=MAX_TOKENS, sleep=ctx.stop.wait, check=ctx.check
         )
         if not completion.text.strip() and completion.finish_reason == "length":
             raise InvalidAnswer(f"the model used all {MAX_TOKENS} output tokens without answering")

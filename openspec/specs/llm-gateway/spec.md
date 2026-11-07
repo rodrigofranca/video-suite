@@ -17,7 +17,7 @@ Os serviços SHALL chamar modelos de linguagem só pelo gateway, com a API de ch
 - **THEN** ele SHALL ter só a chave do gateway (`LLM_API_KEY`), nunca `OPENCODE_API_KEY`
 
 ### Requirement: OpenCode como primeiro provedor
-`ultramedia-text` SHALL apontar para um modelo do OpenCode pelo endpoint compatível com a OpenAI, com a URL em `OPENCODE_API_BASE` (Zen, padrão, ou Go) e a chave em `OPENCODE_API_KEY`.
+`ultramedia-text` SHALL apontar para um modelo do OpenCode Zen (padrão: `claude-haiku-5-5`) pelo endpoint compatível com a OpenAI, com a URL em `OPENCODE_API_BASE` (padrão `https://opencode.ai/inference/openai/v1`) e a chave em `OPENCODE_API_KEY`.
 
 #### Scenario: Teste da chave
 - **WHEN** o desenvolvedor executa `make llm-check` com uma chave válida

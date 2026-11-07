@@ -170,14 +170,14 @@ def save_transcript(store, asset, segments=SEGMENTS, language="pt"):
 
 def test_saves_summary_tags_and_chapters(cfg, store, asset, fake):
     save_transcript(store, asset)
-    fake.answer(GOOD, model="deepseek-v4-flash")
+    fake.answer(GOOD, model="claude-haiku-5-5")
     run(analyzer(cfg, store, fake), asset)
     assert store.get_analysis(asset["id"]) == {
         "language": "pt",
         "summary": GOOD["summary"],
         "tags": ["hls", "legendas"],
         "chapters": [{"start": 0.0, "title": "Abertura"}, {"start": 30.5, "title": "HLS"}],
-        "model": "deepseek-v4-flash",
+        "model": "claude-haiku-5-5",
     }
     sent = fake.requests[0]["body"]
     assert sent["model"] == "ultramedia-text"

@@ -41,7 +41,7 @@ make sample            # optional: creates samples/sample.mp4 to upload
 
 Open http://localhost:5173 and upload an MP4; videos with speech also get a transcript, subtitles, a summary, tags and chapters. The first start downloads the Whisper model (about 140 MB) into a Docker volume. `make demo-logs` follows the API and worker logs; `make down` stops everything. A walkthrough for presenting it is in [docs/demo.md](docs/demo.md).
 
-**Summaries need a language model.** Create an API key in the [OpenCode](https://opencode.ai) console and set `OPENCODE_API_KEY` in `.env` (and `OPENCODE_API_BASE` to `https://opencode.ai/zen/go/v1` if you use the Go subscription instead of Zen). Then `make llm-check` should print `OK`. Without a key everything else works and only the **Summary** job fails, saying which key to check. To use another model or provider, edit [`infra/litellm/config.yaml`](infra/litellm/config.yaml) and restart the gateway (`docker compose restart litellm`).
+**Summaries need a language model.** In the [OpenCode](https://opencode.ai) console, add credits to Zen (pay per use), create an API key and set `OPENCODE_API_KEY` in `.env`. Then `make llm-check` should print `OK`. The default model is Claude Haiku 5.5: a 2-minute video cost US$ 0.0005 in testing, so a 10-minute one stays under US$ 0.001. OpenCode Go and the free models do not work here (Go is meant for coding agents; the free models only work inside OpenCode). Without a key everything else works and only the **Summary** job fails, saying which key to check. To use another model or provider, edit [`infra/litellm/config.yaml`](infra/litellm/config.yaml) and restart the gateway (`docker compose restart litellm`).
 
 ## Development
 
@@ -130,7 +130,7 @@ All settings come from environment variables; see [`.env.example`](.env.example)
 | `LLM_TIMEOUT_SECONDS`, `LLM_MAX_INPUT_CHARS` | AI worker | `120`, `200000` (about 4 hours of speech) |
 | `LITELLM_MASTER_KEY` | gateway (its admin key) | `sk-ultramedia-dev` |
 | `OPENCODE_API_KEY` | gateway (provider key) | empty |
-| `OPENCODE_API_BASE` | gateway | `https://opencode.ai/zen/v1` (Zen); Go: `https://opencode.ai/zen/go/v1` |
+| `OPENCODE_API_BASE` | gateway | `https://opencode.ai/inference/openai/v1` (Zen) |
 
 ## Known limitations
 

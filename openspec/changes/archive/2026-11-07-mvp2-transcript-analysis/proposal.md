@@ -2,7 +2,7 @@
 
 ## Why
 
-Segunda entrega do Milestone 2 (AI metadata). Com a transcrição pronta, um modelo de linguagem pode descrever o vídeo: um resumo curto, tags de assunto e capítulos clicáveis. É o que torna uma biblioteca de vídeos navegável e pesquisável. Decisões confirmadas em 2026-11-07: as chamadas a modelos de linguagem passam por um gateway LiteLLM, que no futuro roda num VPS e atende vários projetos por rede privada; o primeiro provedor atrás dele é o OpenCode; o VPS fica para a próxima entrega.
+Segunda entrega do Milestone 2 (AI metadata). Com a transcrição pronta, um modelo de linguagem pode descrever o vídeo: um resumo curto, tags de assunto e capítulos clicáveis. É o que torna uma biblioteca de vídeos navegável e pesquisável. Decisões confirmadas em 2026-11-07: as chamadas a modelos de linguagem passam por um gateway LiteLLM, que no futuro roda num VPS e atende vários projetos por rede privada; o primeiro provedor atrás dele é o OpenCode Zen, pago por uso, com o Claude Haiku 5.5; o VPS fica para a próxima entrega.
 
 ## What Changes
 

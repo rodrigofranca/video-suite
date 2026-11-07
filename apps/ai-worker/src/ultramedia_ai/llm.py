@@ -66,7 +66,6 @@ class ChatClient:
         messages: list[dict],
         *,
         max_tokens: int,
-        temperature: float = 0.2,
         sleep: Callable[[float], object] = time.sleep,
         check: Callable[[], None] | None = None,
     ) -> Completion:
@@ -75,7 +74,9 @@ class ChatClient:
         sleep waits between attempts (a job passes its stop event's wait) and
         check runs before each attempt, so a shutdown or timeout stops retries.
         """
-        body = {"model": self.model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature}
+        # No temperature: the provider's default is fine for this work, and
+        # some models (recent Claude models called directly) reject it.
+        body = {"model": self.model, "messages": messages, "max_tokens": max_tokens}
         error: LLMError | None = None
         for attempt in range(1, self.attempts + 1):
             if check is not None:
@@ -159,7 +160,7 @@ def _completion(raw: bytes, headers: dict, fallback_model: str) -> Completion:
 def _answering_model(headers: dict) -> str:
     """The provider's model behind the alias. LiteLLM answers with the alias
     in the body and names the real model in a header, with its own provider
-    prefix ("openai/deepseek-v4-flash")."""
+    prefix ("openai/claude-haiku-5-5")."""
     name = next((v for k, v in headers.items() if k.lower() == "x-litellm-model-name"), "")
     return name.split("/", 1)[1] if "/" in name else name
 
@@ -190,6 +191,8 @@ def _is_auth_error(message: str) -> bool:
 def _hint(status: int, message: str) -> str:
     if _is_auth_error(message):
         return " (check the provider key set in the gateway, e.g. OPENCODE_API_KEY)"
+    if status == 402 or "insufficient" in message.lower():
+        return " (the provider account has no credits left)"
     if status in (401, 403) or "no connected db" in message.lower():
         # Without a database, LiteLLM answers an unknown key with "No connected db".
         return " (check LLM_API_KEY: the gateway does not accept it)"

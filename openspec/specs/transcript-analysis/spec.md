@@ -13,8 +13,8 @@ O job SHALL ler a transcrição do asset no banco, enviá-la ao gateway (`LLM_BA
 - **THEN** a análise SHALL ser gravada com idioma `pt`, o resumo, as tags e os capítulos
 
 #### Scenario: Modelo atrás de um apelido
-- **WHEN** o gateway responde com o cabeçalho `x-litellm-model-name: openai/deepseek-v4-flash`
-- **THEN** o modelo gravado SHALL ser `deepseek-v4-flash`
+- **WHEN** o gateway responde com o cabeçalho `x-litellm-model-name: openai/claude-haiku-5-5`
+- **THEN** o modelo gravado SHALL ser `claude-haiku-5-5`
 
 ### Requirement: Resposta conferida
 O job SHALL aceitar o JSON da resposta mesmo com cercas de código, blocos de raciocínio ou texto em volta. Se a resposta não tiver um `summary` não vazio ou não for JSON, o job SHALL pedir uma correção ao modelo uma única vez e, se a segunda resposta também falhar, SHALL terminar `failed` sem gravar análise.
