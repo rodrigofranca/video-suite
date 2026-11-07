@@ -17,6 +17,7 @@ JOB_GENERATE_THUMBNAIL = "generate-thumbnail"
 JOB_TRANSCODE_HLS = "transcode-hls"
 JOB_EXTRACT_AUDIO = "extract-audio"
 JOB_TRANSCRIBE_AUDIO = "transcribe-audio"
+JOB_ANALYZE_TRANSCRIPT = "analyze-transcript"
 
 # Order in which an upload's jobs run (see jobcontracts.Pipeline).
 PIPELINE = [
@@ -25,6 +26,7 @@ PIPELINE = [
     JOB_TRANSCODE_HLS,
     JOB_EXTRACT_AUDIO,
     JOB_TRANSCRIBE_AUDIO,
+    JOB_ANALYZE_TRANSCRIPT,
 ]
 
 STREAM_MEDIA = "jobs"  # Go media worker
@@ -35,7 +37,7 @@ FIELD_JOB_ID = "job_id"
 FIELD_TYPE = "type"
 FIELD_PAYLOAD = "payload"
 
-AI_JOB_TYPES = {JOB_TRANSCRIBE_AUDIO}
+AI_JOB_TYPES = {JOB_TRANSCRIBE_AUDIO, JOB_ANALYZE_TRANSCRIPT}
 
 _UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
@@ -103,6 +105,18 @@ class TranscribeAudioInput:
             audio_key=str(data.get("audio_key", "")),
             language=str(data.get("language") or ""),
         )
+
+
+@dataclass(frozen=True)
+class AnalyzeTranscriptInput:
+    """See jobcontracts.AnalyzeTranscriptInput. The transcript is read from the database."""
+
+    asset_id: str
+
+    @classmethod
+    def from_json(cls, payload: str | bytes) -> "AnalyzeTranscriptInput":
+        data = json.loads(payload)
+        return cls(asset_id=str(data.get("asset_id", "")))
 
 
 def audio_key(asset_id: str) -> str:

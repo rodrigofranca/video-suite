@@ -1,8 +1,18 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { getAsset, getTranscript, metadataUrl, rerunJob, type AssetDetail, type Transcript } from '$lib/api';
+	import {
+		getAnalysis,
+		getAsset,
+		getTranscript,
+		metadataUrl,
+		rerunJob,
+		type Analysis,
+		type AssetDetail,
+		type Transcript
+	} from '$lib/api';
 	import { formatBitrate, formatBytes, formatClock, formatDate, formatResolution } from '$lib/format';
 	import { poll } from '$lib/poll.svelte';
+	import AnalysisPanel from '$lib/components/Analysis.svelte';
 	import HlsPlayer from '$lib/components/HlsPlayer.svelte';
 	import JobList from '$lib/components/JobList.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
@@ -50,6 +60,27 @@
 			.catch(() => {
 				transcript = null;
 				transcriptMissing = true; // no audio track, so nothing was transcribed
+			});
+	});
+
+	// Summary, tags and chapters: fetched when the newest analysis job finishes.
+	let analysis = $state<Analysis | null>(null);
+	let analysisMissing = $state(false);
+	let analysisFor = '';
+	let analyzeJob = $derived(asset?.jobs.findLast((j) => j.type === 'analyze-transcript'));
+
+	$effect(() => {
+		const job = analyzeJob;
+		if (!job || job.status !== 'done' || !job.completedAt || job.completedAt === analysisFor) return;
+		analysisFor = job.completedAt;
+		getAnalysis(page.params.id!)
+			.then((a) => {
+				analysis = a;
+				analysisMissing = false;
+			})
+			.catch(() => {
+				analysis = null;
+				analysisMissing = true; // no speech, so nothing was analyzed
 			});
 	});
 
@@ -109,6 +140,23 @@
 			</div>
 		{/if}
 	</section>
+
+	{#if analyzeJob}
+		<section class="analysis-section">
+			<h2>Summary</h2>
+			{#if analysis}
+				<AnalysisPanel {analysis} {currentTime} onseek={(t) => player?.seek(t)} />
+			{:else if analyzeJob.status === 'failed'}
+				<p class="muted">The summary could not be written; open the Summary job below to see why.</p>
+			{:else if analyzeJob.status === 'done' && analysisMissing}
+				<p class="muted">No summary: nothing was said in the video.</p>
+			{:else if analyzeJob.status === 'running'}
+				<p class="muted" data-testid="summarizing">Writing the summary…</p>
+			{:else}
+				<p class="muted">The summary, tags and chapters appear here after the transcript.</p>
+			{/if}
+		</section>
+	{/if}
 
 	{#if transcribeJob}
 		<section class="transcript-section">
@@ -204,6 +252,7 @@
 	.player {
 		margin-bottom: 1.5rem;
 	}
+	.analysis-section,
 	.transcript-section {
 		margin-bottom: 1.5rem;
 	}

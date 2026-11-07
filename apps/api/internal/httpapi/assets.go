@@ -46,6 +46,15 @@ type transcriptDTO struct {
 	CreatedAt time.Time       `json:"createdAt"`
 }
 
+type analysisDTO struct {
+	Language  string          `json:"language"`
+	Model     string          `json:"model"`
+	Summary   string          `json:"summary"`
+	Tags      []string        `json:"tags"`
+	Chapters  json.RawMessage `json:"chapters"`
+	CreatedAt time.Time       `json:"createdAt"`
+}
+
 type sourceDTO struct {
 	StorageKey string `json:"storageKey"`
 	MimeType   string `json:"mimeType"`
@@ -262,6 +271,28 @@ func (a *api) getTranscript(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, transcriptDTO{
 		Language: t.Language, Model: t.Model, Text: t.Text, Segments: json.RawMessage(t.Segments), CreatedAt: t.CreatedAt,
+	})
+}
+
+// getAnalysis returns the summary, tags and chapters written from the
+// transcript by a language model.
+func (a *api) getAnalysis(w http.ResponseWriter, r *http.Request) {
+	asset, ok := a.loadAsset(w, r)
+	if !ok {
+		return
+	}
+	an, err := a.Store.GetAnalysis(r.Context(), asset.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "analysis not available yet")
+		return
+	}
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, analysisDTO{
+		Language: an.Language, Model: an.Model, Summary: an.Summary, Tags: an.Tags,
+		Chapters: json.RawMessage(an.Chapters), CreatedAt: an.CreatedAt,
 	})
 }
 

@@ -46,7 +46,8 @@ func TestNextJobType(t *testing.T) {
 		JobTypeGenerateThumbnail: JobTypeTranscodeHLS,
 		JobTypeTranscodeHLS:      JobTypeExtractAudio,
 		JobTypeExtractAudio:      JobTypeTranscribeAudio,
-		JobTypeTranscribeAudio:   "",
+		JobTypeTranscribeAudio:   JobTypeAnalyzeTranscript,
+		JobTypeAnalyzeTranscript: "",
 		"unknown":                "",
 	}
 	for in, want := range cases {

@@ -72,6 +72,34 @@ services:
         echo "bucket ultramedia ready"
     restart: "no"
 
+  # Language model gateway (docs/adr/0018). The AI worker calls it with the
+  # OpenAI API and the model name "ultramedia-text"; infra/litellm/config.yaml
+  # maps that name to a provider's model (OpenCode). The provider key is only
+  # set here, from OPENCODE_API_KEY in .env.
+  # Pinned by digest and signature-checked: LiteLLM 1.107.0 (Oct 2026) was a
+  # malicious release. Upgrade deliberately, never to a floating tag.
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.108.2@sha256:d8b4ac356743d647a13bb93f45b941fcd5f5354122cfd205948a1b192790389d
+    command: ["--config", "/config/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-ultramedia-dev}
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+      OPENCODE_API_BASE: ${OPENCODE_API_BASE:-https://opencode.ai/zen/v1}
+      # Use the price list shipped in the image instead of downloading it
+      # from GitHub's main branch at every start.
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      LITELLM_TELEMETRY_DISABLED: "true"
+    volumes:
+      - ./infra/litellm:/config:ro
+    ports:
+      # Only this machine: the gateway holds the provider key.
+      - "127.0.0.1:4000:4000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
   # ---- Application (profile "app", started by `make demo`) ----
   # For development, run these with `make dev-api`, `make dev-worker` and
   # `make dev-dashboard` instead; they use the same ports.
@@ -147,10 +175,16 @@ services:
       AI_WORKER_NAME: ai-worker-1
       # tiny, base, small, medium...: bigger is more accurate and slower.
       WHISPER_MODEL: base
+      LLM_BASE_URL: http://litellm:4000/v1
+      LLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-ultramedia-dev}
+      LLM_MODEL: ultramedia-text
     volumes:
       # Downloaded Whisper models survive restarts and rebuilds.
       - whisper_models:/models
-    depends_on: *app-deps
+    depends_on:
+      <<: *app-deps
+      litellm:
+        condition: service_healthy
     restart: unless-stopped
 
   dashboard:

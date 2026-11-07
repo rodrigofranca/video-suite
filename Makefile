@@ -1,4 +1,4 @@
-.PHONY: help up down demo demo-logs sample sample-speech migrate migrate-down dev-api dev-worker dev-ai-worker dev-dashboard build test test-go test-ai env-check
+.PHONY: help up down demo demo-logs sample sample-speech llm-check migrate migrate-down dev-api dev-worker dev-ai-worker dev-dashboard build test test-go test-ai env-check
 
 # Load local settings (copy .env.example to .env first).
 -include .env
@@ -13,8 +13,8 @@ help: ## Show available targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-up: ## Start infrastructure (postgres, redis, storage) and create the bucket
-	docker compose up -d --wait postgres redis storage
+up: ## Start infrastructure (postgres, redis, storage, LiteLLM gateway) and create the bucket
+	docker compose up -d --wait postgres redis storage litellm
 	docker compose run --rm storage-init
 
 down: ## Stop and remove all containers, including the demo stack (data volumes are kept)
@@ -25,7 +25,7 @@ demo: ## Build and start everything in Docker; open http://localhost:5173
 	@echo "UltraMedia is running: dashboard http://localhost:5173, API http://localhost:8080"
 
 demo-logs: ## Follow the API and worker logs of the demo stack
-	docker compose --profile app logs -f api worker ai-worker
+	docker compose --profile app logs -f api worker ai-worker litellm
 
 sample: ## Create samples/sample.mp4 (30 s, 720p, with sound) with the worker image's FFmpeg
 	@mkdir -p samples
@@ -46,6 +46,12 @@ sample-speech: ## Create samples/speech.mp4 with spoken English, to try transcri
 		-f lavfi -i "flite=voice=slt:text='Welcome to the ultra media platform. This video was uploaded, encoded and transcribed automatically. The transcript and the subtitles were created by an A I worker running Whisper on this machine.'" \
 		-c:v libx264 -preset veryfast -c:a aac -ar 44100 -shortest samples/speech.mp4
 	@echo "Created samples/speech.mp4"
+
+llm-check: ## Ask the language model one short question through the gateway (checks OPENCODE_API_KEY)
+	@curl -sS --max-time 60 http://localhost:4000/v1/chat/completions \
+		-H "Authorization: Bearer $${LITELLM_MASTER_KEY:-sk-ultramedia-dev}" -H "Content-Type: application/json" \
+		-d '{"model": "ultramedia-text", "max_tokens": 20, "messages": [{"role": "user", "content": "Reply with: OK"}]}' \
+		| python3 -c 'import json, sys; d = json.load(sys.stdin); print(d["choices"][0]["message"]["content"] if "choices" in d else d)'
 
 migrate: env-check ## Apply all pending database migrations
 	@$(MIGRATE) -path $(MIGRATIONS) -database "$(DATABASE_URL)" up

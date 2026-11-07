@@ -150,7 +150,7 @@ func TestPipelineHappyPath(t *testing.T) {
 	// Each job goes to the stream of the worker that runs it.
 	for _, m := range h.enqueued {
 		want := jobcontracts.StreamJobs
-		if m.Type == jobcontracts.JobTypeTranscribeAudio {
+		if m.Type == jobcontracts.JobTypeTranscribeAudio || m.Type == jobcontracts.JobTypeAnalyzeTranscript {
 			want = jobcontracts.StreamAIJobs
 		}
 		if m.Stream() != want {

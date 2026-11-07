@@ -1,0 +1,26 @@
+# LiteLLM gateway (docs/adr/0018). UltraMedia services call it with the
+# OpenAI API and a model name defined here, never a provider's: the provider,
+# its model ID and its key live only in this file and the gateway's
+# environment. To switch models or providers, change this file and restart
+# the gateway; no service changes.
+model_list:
+  # Text model for transcript analysis: summary, tags and chapters.
+  - model_name: ultramedia-text
+    litellm_params:
+      # OpenCode, through its OpenAI-compatible endpoint ("openai/" + the
+      # OpenCode model ID). Other models on that endpoint: glm-5.2,
+      # kimi-k2.6, deepseek-v4-pro. The full list: GET <OPENCODE_API_BASE>/models.
+      model: openai/deepseek-v4-flash
+      # Zen (pay per use): https://opencode.ai/zen/v1
+      # Go (subscription): https://opencode.ai/zen/go/v1
+      api_base: os.environ/OPENCODE_API_BASE
+      api_key: os.environ/OPENCODE_API_KEY
+
+litellm_settings:
+  # Leave out parameters a provider does not accept instead of failing.
+  drop_params: true
+
+general_settings:
+  # Callers send this key as "Authorization: Bearer ...". On a shared
+  # server, give each project its own virtual key instead (needs a database).
+  master_key: os.environ/LITELLM_MASTER_KEY

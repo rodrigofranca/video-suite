@@ -126,3 +126,26 @@ class Store:
             return None
         segments = row[2] if not isinstance(row[2], str) else json.loads(row[2])
         return {"language": row[0], "text": row[1], "segments": segments, "model": row[3]}
+
+    def save_analysis(
+        self, asset_id: str, job_id: str, language: str, summary: str, tags: list[str], chapters: list[dict], model: str
+    ) -> None:
+        """Store an asset's analysis, replacing any earlier one (see SaveAnalysis in Go)."""
+        self.conn.execute(
+            """INSERT INTO analyses (id, asset_id, job_id, language, summary, tags, chapters, model)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (asset_id) DO UPDATE
+               SET id = EXCLUDED.id, job_id = EXCLUDED.job_id, language = EXCLUDED.language,
+                   summary = EXCLUDED.summary, tags = EXCLUDED.tags, chapters = EXCLUDED.chapters,
+                   model = EXCLUDED.model, created_at = NOW()""",
+            (str(uuid.uuid4()), asset_id, job_id, language, summary, list(tags), Jsonb(chapters), model),
+        )
+
+    def get_analysis(self, asset_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT language, summary, tags, chapters, model FROM analyses WHERE asset_id = %s", (asset_id,)
+        ).fetchone()
+        if not row:
+            return None
+        chapters = row[3] if not isinstance(row[3], str) else json.loads(row[3])
+        return {"language": row[0], "summary": row[1], "tags": list(row[2]), "chapters": chapters, "model": row[4]}

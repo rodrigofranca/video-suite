@@ -26,6 +26,12 @@ class Config:
     whisper_compute_type: str
     temp_dir: str | None
     job_timeout_seconds: float
+    # Language model gateway (LiteLLM, docs/adr/0018). Empty base URL: not configured.
+    llm_base_url: str = ""
+    llm_api_key: str = ""
+    llm_model: str = "ultramedia-text"
+    llm_timeout_seconds: float = 120
+    llm_max_input_chars: int = 200_000
 
 
 def from_env(env: dict[str, str] | None = None) -> Config:
@@ -51,4 +57,24 @@ def from_env(env: dict[str, str] | None = None) -> Config:
         whisper_compute_type=env.get("WHISPER_COMPUTE_TYPE") or "int8",
         temp_dir=env.get("WORKER_TEMP_DIR") or None,
         job_timeout_seconds=30 * 60,  # same limit as the Go worker (CONTEXT.md)
+        # OpenAI-compatible endpoint of the LiteLLM gateway, e.g. http://localhost:4000/v1.
+        llm_base_url=(env.get("LLM_BASE_URL") or "").rstrip("/"),
+        llm_api_key=env.get("LLM_API_KEY") or "",
+        # A model name defined in the gateway (infra/litellm/config.yaml), not a provider's.
+        llm_model=env.get("LLM_MODEL") or "ultramedia-text",
+        llm_timeout_seconds=_number(env, "LLM_TIMEOUT_SECONDS", 120),
+        llm_max_input_chars=int(_number(env, "LLM_MAX_INPUT_CHARS", 200_000)),
     )
+
+
+def _number(env: dict[str, str], name: str, default: float) -> float:
+    raw = env.get(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ConfigError(f"{name} must be a number, got {raw!r}") from None
+    if value <= 0:
+        raise ConfigError(f"{name} must be positive, got {raw!r}")
+    return value

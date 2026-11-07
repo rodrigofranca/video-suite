@@ -36,14 +36,18 @@ Quando um job termina, com sucesso ou falha, o worker que o executou SHALL enfil
 
 #### Scenario: Depois do HLS
 - **WHEN** `transcode-hls` termina
-- **THEN** `extract-audio` SHALL ser enfileirado em `jobs` e, quando ele terminar, `transcribe-audio` SHALL ser enfileirado em `jobs:ai`
+- **THEN** `extract-audio` SHALL ser enfileirado em `jobs`; quando ele terminar, `transcribe-audio` SHALL ser enfileirado em `jobs:ai`; e quando a transcrição terminar, `analyze-transcript` SHALL ser enfileirado em `jobs:ai`
 
 ### Requirement: Status do asset pelo job HLS
 O worker SHALL marcar o asset `ready` quando `transcode-hls` termina com sucesso e `failed` quando ele falha. Os passos seguintes SHALL não mudar o status do asset.
 
 #### Scenario: Pipeline completo
 - **WHEN** os jobs até o `transcode-hls` terminam com sucesso
-- **THEN** o asset SHALL ficar `ready`, mesmo com a extração de áudio e a transcrição ainda pendentes
+- **THEN** o asset SHALL ficar `ready`, mesmo com a extração de áudio, a transcrição e a análise ainda pendentes
+
+#### Scenario: Análise com falha
+- **WHEN** `analyze-transcript` falha
+- **THEN** o asset SHALL continuar `ready`
 
 ### Requirement: Limite de tempo e panics
 Cada job SHALL ter limite de 30 minutos. Estourar o limite ou entrar em panic SHALL marcar o job como `failed`, sem derrubar o worker.

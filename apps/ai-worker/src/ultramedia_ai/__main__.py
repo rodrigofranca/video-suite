@@ -10,7 +10,9 @@ import threading
 import redis
 
 from . import contracts
+from .analyze import Analyzer
 from .config import ConfigError, from_env
+from .llm import ChatClient
 from .queue import Consumer
 from .runner import Runner
 from .storage import Storage
@@ -61,12 +63,21 @@ def main() -> int:
         log.error("ai worker stopped: could not load the Whisper model: %s", e)
         return 1
 
+    llm = None
+    if cfg.llm_base_url:
+        llm = ChatClient(cfg.llm_base_url, cfg.llm_api_key, cfg.llm_model, timeout=cfg.llm_timeout_seconds)
+        check_gateway(llm, log)
+    else:
+        log.warning("no language model configured (LLM_BASE_URL): analyze-transcript jobs will fail")
+
     def enqueue(msg: contracts.Message) -> None:
         client.xadd(msg.stream, msg.values())
 
-    runner = Runner(
-        store, {contracts.JOB_TRANSCRIBE_AUDIO: transcriber}, enqueue, log, stop, cfg.job_timeout_seconds
-    )
+    handlers = {
+        contracts.JOB_TRANSCRIBE_AUDIO: transcriber,
+        contracts.JOB_ANALYZE_TRANSCRIPT: Analyzer(cfg, store, llm, log),
+    }
+    runner = Runner(store, handlers, enqueue, log, stop, cfg.job_timeout_seconds)
     consumer = Consumer(client, runner.process, log, cfg.worker_name, stop)
     log.info(
         "consuming jobs stream=%s group=%s consumer=%s",
@@ -76,6 +87,20 @@ def main() -> int:
     store.close()
     log.info("ai worker shut down")
     return 0
+
+
+def check_gateway(llm: ChatClient, log: logging.Logger) -> None:
+    """Warn early about a gateway that is down or lacks the model. Not fatal:
+    transcription works without it, and the gateway may start later."""
+    try:
+        models = llm.models()
+    except Exception as e:  # noqa: BLE001
+        log.warning("language model gateway at %s not reachable yet: %s", llm.host, e)
+        return
+    if llm.model not in models:
+        log.warning("language model gateway at %s has no model %r (it has: %s)", llm.host, llm.model, ", ".join(models) or "none")
+        return
+    log.info("language model: %s via gateway %s", llm.model, llm.host)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -108,6 +109,22 @@ func (e *env) get(path string, out any) int {
 		json.Unmarshal(rec.Body.Bytes(), out)
 	}
 	return rec.Code
+}
+
+// jobOfType returns the asset's newest job of a type.
+func (e *env) jobOfType(assetID, jobType string) domain.Job {
+	e.t.Helper()
+	jobs, err := e.store.ListJobs(context.Background(), assetID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	for i := len(jobs) - 1; i >= 0; i-- {
+		if jobs[i].Type == jobType {
+			return jobs[i]
+		}
+	}
+	e.t.Fatalf("asset %s has no %s job", assetID, jobType)
+	return domain.Job{}
 }
 
 // fakeMP4 starts with an ftyp box, which is all the upload checks.
@@ -462,8 +479,7 @@ func TestTranscriptAndSubtitles(t *testing.T) {
 		t.Fatalf("subtitles before = %#v, want an empty list", before.Subtitles)
 	}
 
-	jobs, _ := e.store.ListJobs(ctx, id)
-	transcribe := jobs[len(jobs)-1]
+	transcribe := e.jobOfType(id, jobcontracts.JobTypeTranscribeAudio)
 	e.store.SaveTranscript(ctx, domain.Transcript{ID: domain.NewID(), AssetID: id, JobID: transcribe.ID, Language: "en",
 		Text: "hello world", Segments: []byte(`[{"start":0,"end":1.2,"text":"hello world"}]`), Model: "base"})
 	for _, lang := range []string{"en", "en", "pt"} { // two English attempts: the newest wins
@@ -489,5 +505,60 @@ func TestTranscriptAndSubtitles(t *testing.T) {
 		if s.URL != e.storage.PublicURL(storage.SubtitlesKey(id, s.Language)) {
 			t.Fatalf("subtitles URL = %q", s.URL)
 		}
+	}
+}
+
+func TestAnalysis(t *testing.T) {
+	e := newEnv(t, 0)
+	rec := e.upload("talk.mp4", fakeMP4(1024))
+	var created struct{ AssetID string }
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	e.cleanupAsset(created.AssetID)
+	id := created.AssetID
+	ctx := context.Background()
+
+	if code := e.get("/assets/"+id+"/analysis", nil); code != http.StatusNotFound {
+		t.Fatalf("analysis before: %d, want 404", code)
+	}
+	analyze := e.jobOfType(id, jobcontracts.JobTypeAnalyzeTranscript)
+	var input jobcontracts.AnalyzeTranscriptInput
+	if err := json.Unmarshal(analyze.InputJSON, &input); err != nil || input.AssetID != id {
+		t.Fatalf("analyze input = %s (%v)", analyze.InputJSON, err)
+	}
+
+	save := func(summary string, tags []string) {
+		t.Helper()
+		err := e.store.SaveAnalysis(ctx, domain.Analysis{ID: domain.NewID(), AssetID: id, JobID: analyze.ID, Language: "pt",
+			Summary: summary, Tags: tags, Chapters: []byte(`[{"start":0,"title":"Abertura"},{"start":42.5,"title":"Demonstração"}]`),
+			Model: "deepseek-v4-flash"})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("primeira versão", []string{"old"})
+	save("Um resumo.", []string{"vídeo", "demo"}) // a re-run replaces the analysis
+
+	var got struct {
+		Language, Model, Summary string
+		Tags                     []string
+		Chapters                 []struct {
+			Start float64
+			Title string
+		}
+	}
+	if code := e.get("/assets/"+id+"/analysis", &got); code != 200 {
+		t.Fatalf("analysis: %d", code)
+	}
+	if got.Summary != "Um resumo." || got.Language != "pt" || got.Model != "deepseek-v4-flash" ||
+		strings.Join(got.Tags, ",") != "vídeo,demo" || len(got.Chapters) != 2 || got.Chapters[1].Start != 42.5 {
+		t.Fatalf("analysis = %+v", got)
+	}
+
+	// No tags or chapters: empty lists, not null.
+	e.store.SaveAnalysis(ctx, domain.Analysis{ID: domain.NewID(), AssetID: id, JobID: analyze.ID, Language: "en", Summary: "Short.", Model: "m"})
+	var raw map[string]json.RawMessage
+	e.get("/assets/"+id+"/analysis", &raw)
+	if string(raw["tags"]) != "[]" || string(raw["chapters"]) != "[]" {
+		t.Fatalf("empty analysis: tags %s, chapters %s", raw["tags"], raw["chapters"])
 	}
 }

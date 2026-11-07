@@ -19,8 +19,8 @@ These parts of the PRD v0.1 and the roadmap are superseded:
 | Asset statuses | `created`, `processing`, `ready`, `failed` | `uploading`, `processing`, `ready`, `failed` | `CONTEXT.md`, migration 0001 |
 | Job statuses | `completed` | `done` | migration 0003, `media-core/domain` |
 | When an asset is `ready` | all jobs succeeded | the HLS job succeeded | ADR 0003 |
-| Job order | all jobs created and run independently | `extract-metadata` → `generate-thumbnail` → `transcode-hls`, one at a time | `CONTEXT.md` |
-| Tables | `assets`, `media_files`, `processing_jobs`, `job_logs` | `media_assets`, `media_sources`, `processing_jobs`, `job_logs`, `artifacts`, `technical_metadata` | migrations 0001–0007 |
+| Job order | all jobs created and run independently | `extract-metadata` → `generate-thumbnail` → `transcode-hls` → `extract-audio` → `transcribe-audio` → `analyze-transcript`, one at a time | `CONTEXT.md` |
+| Tables | `assets`, `media_files`, `processing_jobs`, `job_logs` | `media_assets`, `media_sources`, `processing_jobs`, `job_logs`, `artifacts`, `technical_metadata`, `transcripts`, `analyses` | migrations 0001–0010 |
 | Upload title | `title` field | only `filename` for now | migration 0001 |
 | Health route | `GET /health` | `GET /healthz` | `api-skeleton` spec |
 | Local storage | MinIO | RustFS (S3 API) | ADR 0008 |
@@ -47,3 +47,5 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 
 - [0016](adr/0016-python-ai-worker-own-stream.md): the AI worker is Python, reads its own `jobs:ai` stream and mirrors the Go contracts.
 - [0017](adr/0017-transcription-after-hls.md): transcription runs after HLS; transcripts in the database, public WebVTT subtitles.
+- [0018](adr/0018-llm-gateway-litellm.md): language models only through a LiteLLM gateway; OpenCode is the first provider; the image is pinned by digest.
+- [0019](adr/0019-transcript-analysis.md): one analysis per asset after transcription: summary, tags and chapters from one checked JSON answer.

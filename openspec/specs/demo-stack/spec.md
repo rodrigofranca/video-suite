@@ -6,7 +6,7 @@ Define como subir a plataforma inteira em Docker, sem Go, Node.js ou FFmpeg inst
 ## Requirements
 
 ### Requirement: Um comando para tudo
-`make demo` SHALL construir as imagens da API, do worker, do worker de IA e do dashboard e subir infraestrutura, migrações, API, workers e dashboard, terminando só quando todos estiverem prontos. Os modelos Whisper baixados SHALL ficar num volume.
+`make demo` SHALL construir as imagens da API, do worker, do worker de IA e do dashboard e subir infraestrutura, gateway de modelos de linguagem, migrações, API, workers e dashboard, terminando só quando todos estiverem prontos. Os modelos Whisper baixados SHALL ficar num volume. O worker de IA SHALL esperar o gateway estar saudável.
 
 #### Scenario: Primeira execução
 - **WHEN** o desenvolvedor executa `make demo` numa máquina só com Docker
@@ -15,6 +15,10 @@ Define como subir a plataforma inteira em Docker, sem Go, Node.js ou FFmpeg inst
 #### Scenario: Reinício sem novo download
 - **WHEN** a pilha é derrubada com `make down` e subida de novo
 - **THEN** o worker de IA SHALL carregar o modelo do volume, sem baixá-lo outra vez
+
+#### Scenario: Sem chave do provedor
+- **WHEN** `make demo` roda sem `OPENCODE_API_KEY`
+- **THEN** a pilha SHALL subir, os vídeos SHALL ficar prontos e transcritos, e só o job de resumo SHALL falhar, dizendo qual chave conferir
 
 ### Requirement: Imagens
 A imagem do worker SHALL incluir `ffmpeg` e `ffprobe` com libx264 e aac. As imagens da API e do worker SHALL rodar com usuário sem privilégios. O dashboard SHALL ser servido como arquivos estáticos, abrindo qualquer rota do app diretamente.

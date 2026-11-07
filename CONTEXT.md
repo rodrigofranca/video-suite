@@ -44,19 +44,30 @@ A Job can be run again (`POST /assets/{id}/jobs`) once every Job of its Asset ha
 
 ## Pipeline
 
-Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbnail` → `transcode-hls` → `extract-audio` → `transcribe-audio` (order in `jobcontracts.Pipeline`). No manual trigger required. Each worker processes one job at a time (no parallelism in MVP).
+Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbnail` → `transcode-hls` → `extract-audio` → `transcribe-audio` → `analyze-transcript` (order in `jobcontracts.Pipeline`). No manual trigger required. Each worker processes one job at a time (no parallelism in MVP).
 
 - `extract-metadata`: ffprobe → technical metadata.
 - `generate-thumbnail`: a JPEG (max 1280 px wide) at `AtSecond`, or at the middle of the video when it is shorter; first frame as a last resort.
 - `transcode-hls`: single-rendition HLS; reports progress (0–99 while encoding, 100 when done). The Asset becomes `ready` here; the next steps run while it is already playable (ADR 0017).
 - `extract-audio`: the first audio track as 16 kHz mono FLAC, private. A video without audio is not an error.
 - `transcribe-audio`: Whisper (AI worker) → Transcript and WebVTT subtitles.
+- `analyze-transcript`: a language model, through the LLM gateway (AI worker) → Analysis. Nothing to do when there is no speech.
 
 The API creates all the Job rows as `pending` and enqueues only the first. When a Job ends, done or failed, the worker enqueues the next pending Job of the same Asset (ADR 0009). Job statuses: `pending → running → done | failed`.
 
 ## Transcript
 
 What was said in an Asset, written by the `transcribe-audio` Job: language (detected unless given), full text, segments with start and end times, and the Whisper model used. One per Asset in `transcripts`; a re-run replaces it. Subtitles are built from it.
+
+## Analysis
+
+What a language model wrote about an Asset from its Transcript, by the `analyze-transcript` Job: a summary, topic tags and chapters (start in seconds and a title), in the Transcript's language, plus the model that answered. One per Asset in `analyses`; a re-run replaces it (ADR 0019). Chapters always start where a transcript passage starts.
+
+**Not**: technical metadata (ffprobe) or the metadata `summary` object, which describe the file, not its content.
+
+## LLM gateway
+
+The LiteLLM service every language model call goes through (ADR 0018). Services use the OpenAI API with a model name defined in the gateway (`ultramedia-text`); the provider (OpenCode first), its model ID and its key exist only in `infra/litellm/config.yaml` and the gateway's environment.
 
 ## Limits
 
@@ -77,7 +88,7 @@ The player reads HLS straight from storage: only `assets/*/hls/*`, `assets/*/thu
 Process that picks pending Jobs and executes them. Separate from the API process. Two kinds, each reading its own stream (ADR 0016):
 
 - **Media worker** (Go, `apps/worker`): stream `jobs`, group `workers`; FFmpeg jobs.
-- **AI worker** (Python, `apps/ai-worker`): stream `jobs:ai`, group `ai-workers`; `transcribe-audio`. It mirrors the media worker's lifecycle, and its contracts are checked against `packages/job-contracts/testdata/contracts.json`.
+- **AI worker** (Python, `apps/ai-worker`): stream `jobs:ai`, group `ai-workers`; `transcribe-audio` and `analyze-transcript`. It mirrors the media worker's lifecycle, and its contracts are checked against `packages/job-contracts/testdata/contracts.json`.
 
 `jobcontracts.StreamFor` decides which stream a Job goes to.
 
