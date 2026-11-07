@@ -4,11 +4,18 @@
     {
       "Sid": "PublicReadDerivedOutputs",
       "Effect": "Allow",
-      "Principal": { "AWS": ["*"] },
-      "Action": ["s3:GetObject"],
+      "Principal": {
+        "AWS": [
+          "*"
+        ]
+      },
+      "Action": [
+        "s3:GetObject"
+      ],
       "Resource": [
         "arn:aws:s3:::ultramedia/assets/*/hls/*",
-        "arn:aws:s3:::ultramedia/assets/*/thumbnails/*"
+        "arn:aws:s3:::ultramedia/assets/*/thumbnails/*",
+        "arn:aws:s3:::ultramedia/assets/*/subtitles/*"
       ]
     }
   ]

@@ -28,8 +28,21 @@ export function formatDuration(start: string | null, end: string | null): string
 const jobLabels: Record<string, string> = {
 	'extract-metadata': 'Metadata',
 	'generate-thumbnail': 'Thumbnail',
-	'transcode-hls': 'HLS encoding'
+	'transcode-hls': 'HLS encoding',
+	'extract-audio': 'Audio',
+	'transcribe-audio': 'Transcription'
 };
+
+const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
+
+/** "en" → "English"; falls back to the code. */
+export function languageName(code: string): string {
+	try {
+		return languageNames.of(code) ?? code;
+	} catch {
+		return code;
+	}
+}
 
 export const jobLabel = (type: string) => jobLabels[type] ?? type;
 

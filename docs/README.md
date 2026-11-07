@@ -42,3 +42,8 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 
 - [0013](adr/0013-public-thumbnails.md): thumbnails are public, like the HLS output.
 - [0014](adr/0014-signed-urls-for-source-reads.md): the metadata and thumbnail jobs read the source through signed URLs instead of downloading it.
+
+## Decisions taken in Milestone 2
+
+- [0016](adr/0016-python-ai-worker-own-stream.md): the AI worker is Python, reads its own `jobs:ai` stream and mirrors the Go contracts.
+- [0017](adr/0017-transcription-after-hls.md): transcription runs after HLS; transcripts in the database, public WebVTT subtitles.

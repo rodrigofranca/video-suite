@@ -136,6 +136,23 @@ services:
     depends_on: *app-deps
     restart: unless-stopped
 
+  ai-worker:
+    image: ultramedia/ai-worker:dev
+    build:
+      context: .
+      dockerfile: infra/docker/ai-worker.Dockerfile
+    profiles: [app]
+    environment:
+      <<: *app-env
+      AI_WORKER_NAME: ai-worker-1
+      # tiny, base, small, medium...: bigger is more accurate and slower.
+      WHISPER_MODEL: base
+    volumes:
+      # Downloaded Whisper models survive restarts and rebuilds.
+      - whisper_models:/models
+    depends_on: *app-deps
+    restart: unless-stopped
+
   dashboard:
     image: ultramedia/dashboard:dev
     build:
@@ -155,3 +172,4 @@ volumes:
   postgres_data:
   redis_data:
   storage_data:
+  whisper_models:

@@ -66,3 +66,10 @@ A tabela `technical_metadata` SHALL ter no máximo um registro por asset, garant
 #### Scenario: Migração em banco com duplicatas
 - **WHEN** a migração `0008` roda num banco com mais de um registro para o mesmo asset
 - **THEN** SHALL manter só o mais recente e criar o índice único
+
+### Requirement: Transcrições
+A migração `0009` SHALL criar a tabela `transcripts` (`asset_id`, `job_id`, `language`, `text`, `segments` em JSONB, `model`, `created_at`) com no máximo um registro por asset e remoção em cascata com o asset.
+
+#### Scenario: Transcrição substituída
+- **WHEN** uma segunda transcrição é salva para o mesmo asset
+- **THEN** SHALL existir um único registro, com os dados da segunda

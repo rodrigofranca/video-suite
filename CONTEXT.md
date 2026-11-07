@@ -44,13 +44,19 @@ A Job can be run again (`POST /assets/{id}/jobs`) once every Job of its Asset ha
 
 ## Pipeline
 
-Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbnail` → `transcode-hls` (order in `jobcontracts.Pipeline`). No manual trigger required. Worker processes one job at a time (no parallelism in MVP).
+Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbnail` → `transcode-hls` → `extract-audio` → `transcribe-audio` (order in `jobcontracts.Pipeline`). No manual trigger required. Each worker processes one job at a time (no parallelism in MVP).
 
 - `extract-metadata`: ffprobe → technical metadata.
 - `generate-thumbnail`: a JPEG (max 1280 px wide) at `AtSecond`, or at the middle of the video when it is shorter; first frame as a last resort.
-- `transcode-hls`: single-rendition HLS; reports progress (0–99 while encoding, 100 when done).
+- `transcode-hls`: single-rendition HLS; reports progress (0–99 while encoding, 100 when done). The Asset becomes `ready` here; the next steps run while it is already playable (ADR 0017).
+- `extract-audio`: the first audio track as 16 kHz mono FLAC, private. A video without audio is not an error.
+- `transcribe-audio`: Whisper (AI worker) → Transcript and WebVTT subtitles.
 
-The API creates all three Job rows as `pending` and enqueues only the first. When a Job ends, done or failed, the worker enqueues the next pending Job of the same Asset (ADR 0009). Job statuses: `pending → running → done | failed`.
+The API creates all the Job rows as `pending` and enqueues only the first. When a Job ends, done or failed, the worker enqueues the next pending Job of the same Asset (ADR 0009). Job statuses: `pending → running → done | failed`.
+
+## Transcript
+
+What was said in an Asset, written by the `transcribe-audio` Job: language (detected unless given), full text, segments with start and end times, and the Whisper model used. One per Asset in `transcripts`; a re-run replaces it. Subtitles are built from it.
 
 ## Limits
 
@@ -64,12 +70,17 @@ Directory structure follows monorepo conventions (`apps/`, `packages/`) but no T
 
 UltraMedia is the intended primary player in the dashboard, with `hls.js` as the fallback. Until UltraMedia is packaged, the dashboard uses `hls.js` (native HLS where MSE is missing), isolated in `HlsPlayer.svelte` (ADR 0012). No other player dependency in MVP.
 
-The player reads HLS straight from storage: only `assets/*/hls/*` is publicly readable; sources stay private (ADR 0010).
+The player reads HLS straight from storage: only `assets/*/hls/*`, `assets/*/thumbnails/*` and `assets/*/subtitles/*` are publicly readable; sources and extracted audio stay private (ADR 0010, 0013, 0017). Subtitles are sidecar WebVTT `<track>` files.
 
 ## Worker
 
-Process that picks pending Jobs and executes them. Separate from the API process. In MVP: single worker binary, same machine.
+Process that picks pending Jobs and executes them. Separate from the API process. Two kinds, each reading its own stream (ADR 0016):
+
+- **Media worker** (Go, `apps/worker`): stream `jobs`, group `workers`; FFmpeg jobs.
+- **AI worker** (Python, `apps/ai-worker`): stream `jobs:ai`, group `ai-workers`; `transcribe-audio`. It mirrors the media worker's lifecycle, and its contracts are checked against `packages/job-contracts/testdata/contracts.json`.
+
+`jobcontracts.StreamFor` decides which stream a Job goes to.
 
 Queue: Redis Streams (XADD/XREADGROUP) for at-least-once delivery and job re-claim on worker crash. NATS is a future upgrade path.
 
-Queue message: fields `job_id`, `type` and `payload` (JSON of the typed input), defined in `packages/job-contracts`. The PostgreSQL job row is the source of truth; the message only says which job to run. The worker acks every message, even when the job fails. It does not ack a job interrupted by shutdown (the job stays `running`), and on restart it first re-runs messages it received but never acked, so `WORKER_NAME` must stay stable. A duplicate delivery of a finished job is skipped.
+Queue message: fields `job_id`, `type` and `payload` (JSON of the typed input), defined in `packages/job-contracts`. The PostgreSQL job row is the source of truth; the message only says which job to run. The worker acks every message, even when the job fails. It does not ack a job interrupted by shutdown (the job stays `running`), and on restart it first re-runs messages it received but never acked, so `WORKER_NAME` (and `AI_WORKER_NAME`) must stay stable. A duplicate delivery of a finished job is skipped.

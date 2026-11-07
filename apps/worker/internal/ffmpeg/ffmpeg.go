@@ -160,3 +160,16 @@ func ThumbnailArgs(input string, atSecond float64, output string) []string {
 		output,
 	}
 }
+
+// AudioArgs returns the arguments to save the first audio track of input as
+// 16 kHz mono FLAC, the format Whisper works with (about 1 MB per minute).
+func AudioArgs(input, output string) []string {
+	return []string{
+		"-hide_banner", "-nostdin", "-y", "-loglevel", "error",
+		"-i", input,
+		"-map", "0:a:0", "-vn",
+		"-ac", "1", "-ar", "16000",
+		"-c:a", "flac",
+		output,
+	}
+}

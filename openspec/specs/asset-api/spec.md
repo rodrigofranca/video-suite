@@ -21,11 +21,11 @@ Define as rotas de leitura da API que o dashboard e outras ferramentas usam para
 - **THEN** o item SHALL trazer a URL pública da miniatura e o resumo com duração e resolução
 
 ### Requirement: Detalhe do asset
-`GET /assets/{id}` SHALL retornar o asset com `source`, `jobs` (na ordem do pipeline), `artifacts`, `playback` (que é `null` enquanto o asset não está `ready`), `thumbnailUrl` e `metadata`.
+`GET /assets/{id}` SHALL retornar o asset com `source`, `jobs` (na ordem do pipeline), `artifacts`, `playback` (que é `null` enquanto o asset não está `ready`), `thumbnailUrl`, `metadata` e `subtitles` (lista com `language` e `url`, a mais recente por idioma).
 
 #### Scenario: Asset em processamento
 - **WHEN** o asset está `processing`
-- **THEN** a resposta SHALL trazer os três jobs com status e `playback: null`
+- **THEN** a resposta SHALL trazer os jobs com status e `playback: null`
 
 #### Scenario: ID inexistente ou malformado
 - **WHEN** o ID não existe ou não é um UUID
@@ -34,6 +34,10 @@ Define as rotas de leitura da API que o dashboard e outras ferramentas usam para
 #### Scenario: Antes dos metadados
 - **WHEN** o job de metadata ainda não terminou
 - **THEN** `thumbnailUrl` e `metadata` SHALL ser `null`
+
+#### Scenario: Antes da transcrição
+- **WHEN** a transcrição ainda não terminou
+- **THEN** `subtitles` SHALL ser uma lista vazia
 
 ### Requirement: Informações de playback
 `GET /assets/{id}/playback` SHALL retornar `{"type": "hls", "manifestUrl"}` para um asset `ready`, com a URL pública da playlist montada a partir de `S3_PUBLIC_URL`.
@@ -62,3 +66,10 @@ A API SHALL responder com `Access-Control-Allow-Origin` apenas para a origem em 
 #### Scenario: Metadados ainda não extraídos
 - **WHEN** o job de metadata não terminou com sucesso
 - **THEN** SHALL responder 404 com `{"error": "metadata not extracted yet"}`
+
+### Requirement: Transcrição
+`GET /assets/{id}/transcript` SHALL retornar `language`, `model`, `text`, `segments` (com `start`, `end` e `text`) e `createdAt`.
+
+#### Scenario: Ainda não transcrito
+- **WHEN** não há transcrição para o asset
+- **THEN** SHALL responder 404 com `{"error": "transcript not available yet"}`

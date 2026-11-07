@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { getAsset, metadataUrl, rerunJob, type AssetDetail } from '$lib/api';
+	import { getAsset, getTranscript, metadataUrl, rerunJob, type AssetDetail, type Transcript } from '$lib/api';
 	import { formatBitrate, formatBytes, formatClock, formatDate, formatResolution } from '$lib/format';
 	import { poll } from '$lib/poll.svelte';
 	import HlsPlayer from '$lib/components/HlsPlayer.svelte';
 	import JobList from '$lib/components/JobList.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
+	import TranscriptPanel from '$lib/components/Transcript.svelte';
 
 	let asset = $state<AssetDetail | null>(null);
 	let error = $state('');
@@ -28,6 +29,29 @@
 	);
 
 	let hlsJob = $derived(asset?.jobs.findLast((j) => j.type === 'transcode-hls'));
+
+	// Transcript: fetched when the newest transcription job finishes.
+	let player = $state<HlsPlayer>();
+	let currentTime = $state(0);
+	let transcript = $state<Transcript | null>(null);
+	let transcriptMissing = $state(false);
+	let transcriptFor = ''; // completedAt of the job the transcript was loaded for
+	let transcribeJob = $derived(asset?.jobs.findLast((j) => j.type === 'transcribe-audio'));
+
+	$effect(() => {
+		const job = transcribeJob;
+		if (!job || job.status !== 'done' || !job.completedAt || job.completedAt === transcriptFor) return;
+		transcriptFor = job.completedAt;
+		getTranscript(page.params.id!)
+			.then((t) => {
+				transcript = t;
+				transcriptMissing = false;
+			})
+			.catch(() => {
+				transcript = null;
+				transcriptMissing = true; // no audio track, so nothing was transcribed
+			});
+	});
 
 	async function rerun(type: string) {
 		await rerunJob(page.params.id!, type);
@@ -59,7 +83,13 @@
 
 	<section class="player">
 		{#if asset.playback}
-			<HlsPlayer src={asset.playback.manifestUrl} poster={asset.thumbnailUrl} />
+			<HlsPlayer
+				bind:this={player}
+				src={asset.playback.manifestUrl}
+				poster={asset.thumbnailUrl}
+				subtitles={asset.subtitles}
+				ontime={(t) => (currentTime = t)}
+			/>
 		{:else}
 			<div
 				class="placeholder card"
@@ -79,6 +109,25 @@
 			</div>
 		{/if}
 	</section>
+
+	{#if transcribeJob}
+		<section class="transcript-section">
+			<h2>Transcript</h2>
+			{#if transcript}
+				<TranscriptPanel {transcript} {currentTime} onseek={(t) => player?.seek(t)} />
+			{:else if transcribeJob.status === 'failed'}
+				<p class="muted">Transcription failed; open the Transcription job below to see why.</p>
+			{:else if transcribeJob.status === 'done' && transcriptMissing}
+				<p class="muted">No transcript: the video has no audio track.</p>
+			{:else if transcribeJob.status === 'running'}
+				<p class="muted" data-testid="transcribing">
+					Transcribing…{transcribeJob.progress > 0 ? ` ${transcribeJob.progress}%` : ''}
+				</p>
+			{:else}
+				<p class="muted">The transcript appears here after HLS encoding and audio extraction.</p>
+			{/if}
+		</section>
+	{/if}
 
 	<div class="columns">
 		<section>
@@ -153,6 +202,9 @@
 		overflow-wrap: anywhere;
 	}
 	.player {
+		margin-bottom: 1.5rem;
+	}
+	.transcript-section {
 		margin-bottom: 1.5rem;
 	}
 	.placeholder {

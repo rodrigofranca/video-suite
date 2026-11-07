@@ -61,6 +61,8 @@ const (
 const (
 	ArtifactHLS       = "hls"       // storage_key points to the HLS playlist (index.m3u8)
 	ArtifactThumbnail = "thumbnail" // storage_key points to a JPEG image
+	ArtifactAudio     = "audio"     // 16 kHz mono FLAC for transcription
+	ArtifactSubtitles = "subtitles" // WebVTT; metadata has the language
 )
 
 // Job log levels (job_logs.level).
@@ -69,3 +71,15 @@ const (
 	LogWarning = "warning"
 	LogError   = "error"
 )
+
+// Transcript is the speech found in an asset, written by the AI worker.
+type Transcript struct {
+	ID        string
+	AssetID   string
+	JobID     string
+	Language  string // ISO 639-1 code, detected or requested
+	Text      string
+	Segments  []byte // JSON: [{"start": 0.0, "end": 2.5, "text": "..."}]
+	Model     string // Whisper model used, e.g. "base"
+	CreatedAt time.Time
+}

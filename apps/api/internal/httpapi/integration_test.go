@@ -168,7 +168,7 @@ func TestUploadCreatesAssetJobsAndEnqueuesFirst(t *testing.T) {
 		t.Fatal("source file not in storage")
 	}
 
-	if len(detail.Jobs) != 3 {
+	if len(detail.Jobs) != len(jobcontracts.Pipeline) {
 		t.Fatalf("jobs = %+v", detail.Jobs)
 	}
 	for i, typ := range jobcontracts.Pipeline {
@@ -429,8 +429,8 @@ func TestRerunJob(t *testing.T) {
 	}
 
 	// The history keeps both attempts.
-	if jobs, _ := e.store.ListJobs(ctx, id); len(jobs) != 4 {
-		t.Fatalf("jobs = %d, want 4", len(jobs))
+	if jobs, _ := e.store.ListJobs(ctx, id); len(jobs) != len(jobcontracts.Pipeline)+1 {
+		t.Fatalf("jobs = %d, want one more than the pipeline", len(jobs))
 	}
 
 	// Re-running HLS makes the asset processing again.
@@ -441,5 +441,53 @@ func TestRerunJob(t *testing.T) {
 	}
 	if a, _ := e.store.GetAsset(ctx, id); a.Status != domain.AssetProcessing {
 		t.Fatalf("asset = %s after HLS re-run, want processing", a.Status)
+	}
+}
+
+func TestTranscriptAndSubtitles(t *testing.T) {
+	e := newEnv(t, 0)
+	rec := e.upload("speech.mp4", fakeMP4(1024))
+	var created struct{ AssetID string }
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	e.cleanupAsset(created.AssetID)
+	id := created.AssetID
+	ctx := context.Background()
+
+	if code := e.get("/assets/"+id+"/transcript", nil); code != http.StatusNotFound {
+		t.Fatalf("transcript before: %d, want 404", code)
+	}
+	var before struct{ Subtitles []any }
+	e.get("/assets/"+id, &before)
+	if before.Subtitles == nil || len(before.Subtitles) != 0 {
+		t.Fatalf("subtitles before = %#v, want an empty list", before.Subtitles)
+	}
+
+	jobs, _ := e.store.ListJobs(ctx, id)
+	transcribe := jobs[len(jobs)-1]
+	e.store.SaveTranscript(ctx, domain.Transcript{ID: domain.NewID(), AssetID: id, JobID: transcribe.ID, Language: "en",
+		Text: "hello world", Segments: []byte(`[{"start":0,"end":1.2,"text":"hello world"}]`), Model: "base"})
+	for _, lang := range []string{"en", "en", "pt"} { // two English attempts: the newest wins
+		e.store.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: id, JobID: transcribe.ID, Type: domain.ArtifactSubtitles,
+			StorageKey: storage.SubtitlesKey(id, lang), MetadataJSON: []byte(`{"language":"` + lang + `"}`)})
+	}
+
+	var tr struct {
+		Language, Model, Text string
+		Segments              []struct{ Start, End float64 }
+	}
+	if code := e.get("/assets/"+id+"/transcript", &tr); code != 200 || tr.Text != "hello world" || tr.Language != "en" || len(tr.Segments) != 1 || tr.Segments[0].End != 1.2 {
+		t.Fatalf("transcript: %d %+v", code, tr)
+	}
+	var detail struct {
+		Subtitles []struct{ Language, URL string }
+	}
+	e.get("/assets/"+id, &detail)
+	if len(detail.Subtitles) != 2 {
+		t.Fatalf("subtitles = %+v, want one per language", detail.Subtitles)
+	}
+	for _, s := range detail.Subtitles {
+		if s.URL != e.storage.PublicURL(storage.SubtitlesKey(id, s.Language)) {
+			t.Fatalf("subtitles URL = %q", s.URL)
+		}
 	}
 }

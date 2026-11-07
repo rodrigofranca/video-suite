@@ -127,7 +127,8 @@ func (r *Runner) progressReporter(ctx context.Context, jobID string) func(int) {
 
 // advance updates the asset and enqueues the next pipeline step. An asset is
 // ready when its HLS job succeeds and failed when it fails (docs/adr/0003);
-// metadata and thumbnail failures do not stop the pipeline (docs/adr/0009).
+// other failures do not stop the pipeline (docs/adr/0009). Steps after HLS
+// (audio, transcription) run while the video is already playable.
 func (r *Runner) advance(ctx context.Context, job domain.Job, runErr error, log *slog.Logger) {
 	if job.Type == jobcontracts.JobTypeTranscodeHLS {
 		status := domain.AssetReady
@@ -137,7 +138,6 @@ func (r *Runner) advance(ctx context.Context, job domain.Job, runErr error, log 
 		if err := r.Store.SetAssetStatus(ctx, job.AssetID, status); err != nil {
 			r.log().Error("could not update asset status", "asset_id", job.AssetID, "error", err)
 		}
-		return
 	}
 
 	nextType, ok := jobcontracts.NextJobType(job.Type)

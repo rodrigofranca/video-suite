@@ -26,10 +26,24 @@ type assetDTO struct {
 
 type assetDetailDTO struct {
 	assetDTO
-	Source    *sourceDTO    `json:"source"`
-	Jobs      []jobDTO      `json:"jobs"`
-	Artifacts []artifactDTO `json:"artifacts"`
-	Playback  *playbackDTO  `json:"playback"`
+	Source    *sourceDTO     `json:"source"`
+	Jobs      []jobDTO       `json:"jobs"`
+	Artifacts []artifactDTO  `json:"artifacts"`
+	Playback  *playbackDTO   `json:"playback"`
+	Subtitles []subtitlesDTO `json:"subtitles"`
+}
+
+type subtitlesDTO struct {
+	Language string `json:"language"`
+	URL      string `json:"url"`
+}
+
+type transcriptDTO struct {
+	Language  string          `json:"language"`
+	Model     string          `json:"model"`
+	Text      string          `json:"text"`
+	Segments  json.RawMessage `json:"segments"`
+	CreatedAt time.Time       `json:"createdAt"`
 }
 
 type sourceDTO struct {
@@ -177,6 +191,7 @@ func (a *api) getAsset(w http.ResponseWriter, r *http.Request) {
 	detail.Artifacts = toArtifacts(arts)
 	detail.Playback = a.playbackFor(asset, arts)
 	detail.ThumbnailURL = a.publicURL(latestKey(arts, domain.ArtifactThumbnail))
+	detail.Subtitles = a.subtitlesOf(arts)
 
 	meta, err := a.Store.GetTechnicalMetadata(ctx, asset.ID)
 	switch {
@@ -207,6 +222,47 @@ func (a *api) getMetadata(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(meta.MetadataJSON)
+}
+
+// subtitlesOf lists the newest subtitles file per language.
+func (a *api) subtitlesOf(arts []domain.Artifact) []subtitlesDTO {
+	out := []subtitlesDTO{}
+	seen := map[string]bool{}
+	for i := len(arts) - 1; i >= 0; i-- {
+		if arts[i].Type != domain.ArtifactSubtitles {
+			continue
+		}
+		var meta struct {
+			Language string `json:"language"`
+		}
+		json.Unmarshal(arts[i].MetadataJSON, &meta)
+		if meta.Language == "" || seen[meta.Language] {
+			continue
+		}
+		seen[meta.Language] = true
+		out = append(out, subtitlesDTO{Language: meta.Language, URL: a.Storage.PublicURL(arts[i].StorageKey)})
+	}
+	return out
+}
+
+// getTranscript returns the speech transcript of an asset.
+func (a *api) getTranscript(w http.ResponseWriter, r *http.Request) {
+	asset, ok := a.loadAsset(w, r)
+	if !ok {
+		return
+	}
+	t, err := a.Store.GetTranscript(r.Context(), asset.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "transcript not available yet")
+		return
+	}
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, transcriptDTO{
+		Language: t.Language, Model: t.Model, Text: t.Text, Segments: json.RawMessage(t.Segments), CreatedAt: t.CreatedAt,
+	})
 }
 
 // summaryOf picks the "summary" object out of stored metadata.

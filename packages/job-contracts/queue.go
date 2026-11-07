@@ -6,12 +6,17 @@ import (
 	"fmt"
 )
 
-// Queue conventions shared by the API (producer) and the worker (consumer).
+// Queue conventions shared by the API, the Go media worker and the Python AI
+// worker. Each kind of worker reads its own stream (docs/adr/0016).
 const (
-	// StreamJobs is the Redis stream that carries processing jobs.
+	// StreamJobs carries the jobs of the Go media worker (FFmpeg).
 	StreamJobs = "jobs"
-	// ConsumerGroup is the Redis consumer group the workers read from.
+	// ConsumerGroup is the consumer group of the media workers.
 	ConsumerGroup = "workers"
+	// StreamAIJobs carries the jobs of the Python AI worker.
+	StreamAIJobs = "jobs:ai"
+	// ConsumerGroupAI is the consumer group of the AI workers.
+	ConsumerGroupAI = "ai-workers"
 
 	FieldJobID   = "job_id"
 	FieldType    = "type"
@@ -24,6 +29,24 @@ type Message struct {
 	JobID   string
 	Type    string
 	Payload json.RawMessage // JSON-encoded input struct for Type
+}
+
+// aiJobTypes are the job types run by the Python AI worker.
+var aiJobTypes = map[string]bool{
+	JobTypeTranscribeAudio: true,
+}
+
+// StreamFor returns the stream a job type is queued on.
+func StreamFor(jobType string) string {
+	if aiJobTypes[jobType] {
+		return StreamAIJobs
+	}
+	return StreamJobs
+}
+
+// Stream returns the stream this message belongs on.
+func (m Message) Stream() string {
+	return StreamFor(m.Type)
 }
 
 // NewMessage builds a message from a typed job input (e.g. TranscodeHLSInput).

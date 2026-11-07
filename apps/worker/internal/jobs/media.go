@@ -30,6 +30,7 @@ func (m Media) Register(d *Dispatcher) {
 	Handle(d, jobcontracts.JobTypeExtractMetadata, m.ExtractMetadata)
 	Handle(d, jobcontracts.JobTypeGenerateThumbnail, m.GenerateThumbnail)
 	Handle(d, jobcontracts.JobTypeTranscodeHLS, m.TranscodeHLS)
+	Handle(d, jobcontracts.JobTypeExtractAudio, m.ExtractAudio)
 }
 
 // validInput rejects inputs that could point outside the asset's folder.

@@ -124,25 +124,38 @@ func TestPipelineHappyPath(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	for i := range 3 {
+	const hls = 2 // index of transcode-hls in the pipeline
+	last := len(h.jobs) - 1
+	for i := range h.jobs {
 		if err := h.process(ctx, i); err != nil {
 			t.Fatalf("job %d: %v", i, err)
 		}
 		if got := h.job(i); got.Status != domain.JobDone || got.Progress != 100 {
 			t.Fatalf("job %d = %s/%d, want done/100", i, got.Status, got.Progress)
 		}
-		if i < 2 && h.lastEnqueued() != h.jobs[i+1].ID {
+		if i < last && h.lastEnqueued() != h.jobs[i+1].ID {
 			t.Fatalf("after job %d the next job was not enqueued", i)
 		}
-		if i < 2 && h.assetStatus() != domain.AssetProcessing {
-			t.Fatalf("asset = %s before HLS finished", h.assetStatus())
+		want := domain.AssetProcessing
+		if i >= hls {
+			want = domain.AssetReady // playable while audio and transcription run
+		}
+		if got := h.assetStatus(); got != want {
+			t.Fatalf("after job %d (%s) asset = %s, want %s", i, h.jobs[i].Type, got, want)
 		}
 	}
-	if h.assetStatus() != domain.AssetReady {
-		t.Fatalf("asset = %s, want ready", h.assetStatus())
+	if len(h.enqueued) != last {
+		t.Fatalf("enqueued %d messages, want %d", len(h.enqueued), last)
 	}
-	if len(h.enqueued) != 2 {
-		t.Fatalf("enqueued %d messages, want 2", len(h.enqueued))
+	// Each job goes to the stream of the worker that runs it.
+	for _, m := range h.enqueued {
+		want := jobcontracts.StreamJobs
+		if m.Type == jobcontracts.JobTypeTranscribeAudio {
+			want = jobcontracts.StreamAIJobs
+		}
+		if m.Stream() != want {
+			t.Fatalf("%s goes to %s, want %s", m.Type, m.Stream(), want)
+		}
 	}
 
 	logs, _ := h.store.ListJobLogs(ctx, h.jobs[0].ID)

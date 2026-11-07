@@ -32,11 +32,11 @@ A API SHALL aceitar apenas arquivos com extensão `.mp4` cujo conteúdo começa 
 - **THEN** a API SHALL responder 413, apagar o objeto parcial do storage e apagar o asset
 
 ### Requirement: Criação do asset e do pipeline
-Após o arquivo ser gravado, a API SHALL registrar o source e os três jobs do pipeline como `pending`, mudar o asset para `processing` numa única transação e enfileirar apenas o primeiro job.
+Após o arquivo ser gravado, a API SHALL registrar o source e um job `pending` por passo do pipeline, mudar o asset para `processing` numa única transação e enfileirar apenas o primeiro job.
 
 #### Scenario: Jobs criados e primeiro enfileirado
 - **WHEN** o upload termina com sucesso
-- **THEN** o asset SHALL ter os jobs `extract-metadata`, `generate-thumbnail` e `transcode-hls` em `pending`, nessa ordem, e só `extract-metadata` SHALL estar na fila
+- **THEN** o asset SHALL ter os jobs `extract-metadata`, `generate-thumbnail`, `transcode-hls`, `extract-audio` e `transcribe-audio` em `pending`, nessa ordem, e só `extract-metadata` SHALL estar na fila
 
 #### Scenario: Fila indisponível
 - **WHEN** o primeiro job não pode ser enfileirado

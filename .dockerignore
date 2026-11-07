@@ -7,3 +7,6 @@ samples
 *.mp4
 openspec
 docs
+**/.venv
+**/__pycache__
+**/.pytest_cache

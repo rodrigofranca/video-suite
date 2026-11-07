@@ -171,6 +171,11 @@ func jobInput(jobType, assetID, sourceKey string) ([]byte, error) {
 		input = jobcontracts.GenerateThumbnailInput{AssetID: assetID, StorageKey: sourceKey, AtSecond: thumbnailAtSecond}
 	case jobcontracts.JobTypeTranscodeHLS:
 		input = jobcontracts.TranscodeHLSInput{AssetID: assetID, StorageKey: sourceKey}
+	case jobcontracts.JobTypeExtractAudio:
+		input = jobcontracts.ExtractAudioInput{AssetID: assetID, StorageKey: sourceKey, AudioKey: storage.AudioKey(assetID)}
+	case jobcontracts.JobTypeTranscribeAudio:
+		// Empty language: Whisper detects it.
+		input = jobcontracts.TranscribeAudioInput{AssetID: assetID, AudioKey: storage.AudioKey(assetID)}
 	default:
 		return nil, fmt.Errorf("%w %q", errUnknownJobType, jobType)
 	}

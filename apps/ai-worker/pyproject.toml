@@ -1,0 +1,33 @@
+[project]
+name = "ultramedia-ai-worker"
+version = "0.1.0"
+description = "UltraMedia AI worker: runs AI jobs (transcription) from the jobs:ai stream"
+requires-python = ">=3.12"
+dependencies = [
+    "faster-whisper==1.2.1",
+    # faster-whisper 1.2.1 passes an argument that PyAV 19 removed.
+    "av>=16,<19",
+    "redis>=8.1,<9",
+    "psycopg[binary]>=3.3,<4",
+    "boto3>=1.43,<2",
+]
+
+[dependency-groups]
+dev = ["pytest>=9.1,<10"]
+
+[project.scripts]
+ultramedia-ai-worker = "ultramedia_ai.__main__:main"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ultramedia_ai"]
+
+[tool.uv]
+# Only resolve packages that have been public for at least two weeks.
+exclude-newer = "2026-10-24T00:00:00Z"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
