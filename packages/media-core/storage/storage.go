@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -61,6 +62,7 @@ func ConfigFromEnv() (Config, error) {
 // Client is a bucket-scoped storage client. Safe for concurrent use.
 type Client struct {
 	s3        *s3.Client
+	presign   *s3.PresignClient
 	transfer  *transfermanager.Client
 	bucket    string
 	publicURL string
@@ -86,6 +88,7 @@ func New(cfg Config) *Client {
 	})
 	return &Client{
 		s3:        s3Client,
+		presign:   s3.NewPresignClient(s3Client),
 		transfer:  transfer,
 		bucket:    cfg.Bucket,
 		publicURL: strings.TrimRight(cfg.PublicURL, "/"),
@@ -164,6 +167,19 @@ func (c *Client) Exists(ctx context.Context, key string) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+// PresignGet returns a temporary URL that reads the object at key without
+// credentials. FFmpeg uses it to read only the parts of a large file it needs
+// (HTTP range requests) instead of downloading it. Treat the URL as a secret:
+// never log it.
+func (c *Client) PresignGet(ctx context.Context, key string, expires time.Duration) (string, error) {
+	req, err := c.presign.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: &c.bucket, Key: &key},
+		s3.WithPresignExpires(expires))
+	if err != nil {
+		return "", fmt.Errorf("presign %s: %w", key, err)
+	}
+	return req.URL, nil
 }
 
 // PublicURL is the browser-facing URL of a public object (path-style).

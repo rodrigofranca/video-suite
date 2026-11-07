@@ -2,7 +2,7 @@
 
 An open source, modular video operations platform. It turns raw video files into structured, playable and observable media assets: upload, metadata extraction, thumbnails, HLS encoding, job logs and playback preview, with AI workflows planned on top.
 
-> **Status:** early development. Upload → HLS encoding → playback works end to end in the dashboard, with job status and logs. Metadata extraction and thumbnails are still stubs (they log and succeed). See the [Milestone 1 roadmap](docs/ultramedia-platform-roadmap-milestone-1.md).
+> **Status:** early development. The Milestone 1 pipeline works end to end in the dashboard: upload, technical metadata (ffprobe), thumbnail, HLS encoding with progress, job logs and playback. See the [Milestone 1 roadmap](docs/ultramedia-platform-roadmap-milestone-1.md).
 
 ## Architecture
 
@@ -13,10 +13,10 @@ SvelteKit dashboard ──► Go API ──► PostgreSQL (assets, jobs, logs)
        │                  │                         │
        │                  └──────────► S3 storage ◄─┘  (sources and HLS output)
        │                                   │
-       └──── HLS playback (hls.js) ◄───────┘  only assets/*/hls/* is public
+       └── HLS playback, thumbnails ◄──────┘  only hls/ and thumbnails/ are public
 ```
 
-An upload creates an asset and three jobs: `extract-metadata` → `generate-thumbnail` → `transcode-hls`. The API queues the first; the worker runs each job, records its status and logs in PostgreSQL, and queues the next. The asset is `ready` when the HLS job succeeds.
+An upload creates an asset and three jobs: `extract-metadata` → `generate-thumbnail` → `transcode-hls`. The API queues the first; the worker runs each job, records its status, progress and logs in PostgreSQL, and queues the next. The asset is `ready` when the HLS job succeeds. Metadata and thumbnail jobs read the source through signed URLs (only the bytes they need); the HLS job downloads it.
 
 | Path | What it is |
 |---|---|
@@ -25,7 +25,7 @@ An upload creates an asset and three jobs: `extract-metadata` → `generate-thum
 | `apps/dashboard` | Web dashboard (SvelteKit): upload, video list, job logs, player |
 | `packages/job-contracts` | Job types, typed inputs, pipeline order and queue message format |
 | `packages/media-core` | Domain entities, SQL (`store`), S3 client (`storage`), DB pool |
-| `infra/` | Local infrastructure config (bucket CORS and public HLS policy) |
+| `infra/` | Local infrastructure config (bucket CORS and public-read policy) |
 | `docs/` | PRD, roadmap and architecture decisions ([map](docs/README.md)) |
 | `openspec/` | Specs and change proposals |
 
@@ -34,7 +34,7 @@ An upload creates an asset and three jobs: `extract-metadata` → `generate-thum
 - Go 1.25+
 - Node.js 22+ and npm
 - Docker with Compose v2
-- FFmpeg with libx264 (the worker refuses to start without it)
+- FFmpeg with libx264, including `ffprobe` (the worker refuses to start without them)
 
 ## Getting started
 
@@ -52,16 +52,17 @@ make dev-worker
 make dev-dashboard  # http://localhost:5173
 ```
 
-Open http://localhost:5173, click **Upload**, pick an MP4 and watch the jobs run. When the HLS job finishes, the video plays on the same page. The storage console is at http://localhost:9001 (user `ultramedia`, password `ultramedia`).
+Open http://localhost:5173, click **Upload**, pick an MP4 and watch the jobs run: metadata and thumbnail take a moment, then HLS encoding shows its progress. When it finishes, the video plays on the same page. The storage console is at http://localhost:9001 (user `ultramedia`, password `ultramedia`).
 
 ## API
 
 | Method | Path | Returns |
 |---|---|---|
 | `POST` | `/assets/upload` | Upload (multipart field `file`, `.mp4`, up to 2 GB) → `201 {"assetId", "status"}` |
-| `GET` | `/assets?status=` | Assets, newest first, optionally filtered by status |
-| `GET` | `/assets/{id}` | Asset with source, jobs, artifacts and `playback` (when ready) |
-| `GET` | `/assets/{id}/jobs` | Jobs in pipeline order |
+| `GET` | `/assets?status=` | Assets, newest first, with `thumbnailUrl` and `metadata` summary |
+| `GET` | `/assets/{id}` | Asset with source, jobs, artifacts, `thumbnailUrl`, `metadata` and `playback` (when ready) |
+| `GET` | `/assets/{id}/metadata` | Metadata summary and full ffprobe output |
+| `GET` | `/assets/{id}/jobs` | Jobs in pipeline order, with `progress` (0–100) |
 | `GET` | `/assets/{id}/artifacts` | Files produced by jobs |
 | `GET` | `/assets/{id}/playback` | `{"type": "hls", "manifestUrl"}`, or `409` while not ready |
 | `GET` | `/jobs/{id}` | One job |

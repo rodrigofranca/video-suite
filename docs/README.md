@@ -37,3 +37,8 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 - [0010](adr/0010-public-hls-playback.md): the player reads HLS straight from storage; only `assets/*/hls/*` is public.
 - [0011](adr/0011-status-polling.md): the dashboard polls every 3 seconds.
 - [0012](adr/0012-hls-js-before-ultramedia.md): `hls.js` until the UltraMedia player is packaged.
+
+## Decisions taken in step 3
+
+- [0013](adr/0013-public-thumbnails.md): thumbnails are public, like the HLS output.
+- [0014](adr/0014-signed-urls-for-source-reads.md): the metadata and thumbnail jobs read the source through signed URLs instead of downloading it.

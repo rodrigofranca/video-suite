@@ -14,7 +14,7 @@ Status is persisted in the database: `uploading → processing → ready | faile
 
 ## Source
 
-The original physical blob uploaded by the user. Tied 1:1 to an Asset in the MVP. Stored in S3-compatible storage under a generated key (never user-provided path).
+The original physical blob uploaded by the user. Tied 1:1 to an Asset in the MVP. Stored in S3-compatible storage under a generated key (never user-provided path). Never public: the metadata and thumbnail jobs read it through short-lived signed URLs, which are secrets and never logged or stored (ADR 0014).
 
 **Not**: a rendition, a processed output, or an artifact.
 
@@ -28,7 +28,11 @@ In MVP: single HLS rendition only (no ABR). Multi-rendition is post-MVP.
 
 ## Artifact
 
-Any file output produced by a Job and associated with an Asset (e.g., HLS manifest, thumbnail image, ffprobe JSON). Linked to both Asset and Job.
+Any file output produced by a Job and associated with an Asset: the HLS playlist (`hls`) and the thumbnail image (`thumbnail`). Linked to both Asset and Job. HLS output and thumbnails are publicly readable (ADR 0010, 0013).
+
+## Technical metadata
+
+What ffprobe found in the Source, one row per Asset in `technical_metadata`: `{"summary": {...}, "ffprobe": {...}}`. The summary (duration, resolution, codecs, bitrate, frame rate, container, size) is what the dashboard shows; the full ffprobe output is kept for debugging.
 
 ## Job
 
@@ -39,6 +43,10 @@ Input is a typed Go struct defined in the `job-contracts` package, shared betwee
 ## Pipeline
 
 Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbnail` → `transcode-hls` (order in `jobcontracts.Pipeline`). No manual trigger required. Worker processes one job at a time (no parallelism in MVP).
+
+- `extract-metadata`: ffprobe → technical metadata.
+- `generate-thumbnail`: a JPEG (max 1280 px wide) at `AtSecond`, or at the middle of the video when it is shorter; first frame as a last resort.
+- `transcode-hls`: single-rendition HLS; reports progress (0–99 while encoding, 100 when done).
 
 The API creates all three Job rows as `pending` and enqueues only the first. When a Job ends, done or failed, the worker enqueues the next pending Job of the same Asset (ADR 0009). Job statuses: `pending → running → done | failed`.
 

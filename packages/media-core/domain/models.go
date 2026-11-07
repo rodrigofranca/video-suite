@@ -59,7 +59,8 @@ const (
 
 // Artifact types (artifacts.type).
 const (
-	ArtifactHLS = "hls" // storage_key points to the HLS playlist (index.m3u8)
+	ArtifactHLS       = "hls"       // storage_key points to the HLS playlist (index.m3u8)
+	ArtifactThumbnail = "thumbnail" // storage_key points to a JPEG image
 )
 
 // Job log levels (job_logs.level).

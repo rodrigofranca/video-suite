@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"ultramedia/media-core/domain"
@@ -98,7 +99,30 @@ func (r *Runner) run(ctx context.Context, job domain.Job, log *slog.Logger) (err
 	}()
 	return r.Dispatcher.Dispatch(runCtx, jobs.Job{
 		ID: job.ID, AssetID: job.AssetID, Type: job.Type, Payload: job.InputJSON, Log: log,
+		Progress: r.progressReporter(ctx, job.ID),
 	})
+}
+
+// progressInterval is the shortest time between two progress writes.
+const progressInterval = time.Second
+
+// progressReporter returns a func that saves a job's progress, skipping
+// repeated values and writing at most once per progressInterval.
+func (r *Runner) progressReporter(ctx context.Context, jobID string) func(int) {
+	var mu sync.Mutex
+	last, lastAt := -1, time.Time{}
+	return func(percent int) {
+		mu.Lock()
+		defer mu.Unlock()
+		if percent == last || time.Since(lastAt) < progressInterval {
+			return
+		}
+		if err := r.Store.SetJobProgress(context.WithoutCancel(ctx), jobID, percent); err != nil {
+			r.log().Warn("could not save job progress", "job_id", jobID, "error", err)
+			return
+		}
+		last, lastAt = percent, time.Now()
+	}
 }
 
 // advance updates the asset and enqueues the next pipeline step. An asset is

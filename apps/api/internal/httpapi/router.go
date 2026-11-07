@@ -57,6 +57,7 @@ func NewRouter(deps Deps) http.Handler {
 	mux.HandleFunc("GET /assets/{id}/jobs", a.listAssetJobs)
 	mux.HandleFunc("GET /assets/{id}/artifacts", a.listArtifacts)
 	mux.HandleFunc("GET /assets/{id}/playback", a.playback)
+	mux.HandleFunc("GET /assets/{id}/metadata", a.getMetadata)
 	mux.HandleFunc("POST /assets/{id}/jobs", notImplemented)
 
 	mux.HandleFunc("GET /jobs/{id}", a.getJob)

@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -60,16 +61,44 @@ func (s *Store) GetAsset(ctx context.Context, id string) (domain.Asset, error) {
 	return scanAsset(s.db.QueryRow(ctx, `SELECT `+assetColumns+` FROM media_assets WHERE id = $1`, id))
 }
 
-// ListAssets returns assets newest first, optionally filtered by status.
-func (s *Store) ListAssets(ctx context.Context, status string) ([]domain.Asset, error) {
+// AssetListItem is an asset with what the video list shows next to it.
+type AssetListItem struct {
+	domain.Asset
+	ThumbnailKey string          // empty until a thumbnail exists
+	Summary      json.RawMessage // metadata summary; nil until extracted
+}
+
+// ListAssets returns assets newest first, optionally filtered by status,
+// with their latest thumbnail and metadata summary.
+func (s *Store) ListAssets(ctx context.Context, status string) ([]AssetListItem, error) {
 	rows, err := s.db.Query(ctx,
-		`SELECT `+assetColumns+` FROM media_assets
-		 WHERE $1 = '' OR status = $1
-		 ORDER BY created_at DESC LIMIT 200`, status)
+		`SELECT a.id, a.filename, a.status, a.created_at, a.updated_at,
+		        th.storage_key, tm.metadata_json->'summary'
+		 FROM media_assets a
+		 LEFT JOIN LATERAL (
+		     SELECT storage_key FROM artifacts
+		     WHERE asset_id = a.id AND type = $2
+		     ORDER BY created_at DESC LIMIT 1
+		 ) th ON true
+		 LEFT JOIN technical_metadata tm ON tm.asset_id = a.id
+		 WHERE $1 = '' OR a.status = $1
+		 ORDER BY a.created_at DESC LIMIT 200`, status, domain.ArtifactThumbnail)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (domain.Asset, error) { return scanAsset(r) })
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (AssetListItem, error) {
+		var it AssetListItem
+		var thumb *string
+		var summary []byte
+		err := r.Scan(&it.ID, &it.Filename, &it.Status, &it.CreatedAt, &it.UpdatedAt, &thumb, &summary)
+		if thumb != nil {
+			it.ThumbnailKey = *thumb
+		}
+		if summary != nil {
+			it.Summary = summary
+		}
+		return it, err
+	})
 }
 
 func (s *Store) SetAssetStatus(ctx context.Context, id, status string) error {
@@ -172,6 +201,15 @@ func (s *Store) FinishJob(ctx context.Context, id string, jobErr error) error {
 	return err
 }
 
+// SetJobProgress records how far a running job is, from 0 to 100.
+func (s *Store) SetJobProgress(ctx context.Context, id string, progress int) error {
+	progress = max(0, min(progress, 100))
+	_, err := s.db.Exec(ctx,
+		`UPDATE processing_jobs SET progress = $2 WHERE id = $1 AND status = $3`,
+		id, progress, domain.JobRunning)
+	return err
+}
+
 // NextPendingJob returns the asset's pending job of the given type.
 func (s *Store) NextPendingJob(ctx context.Context, assetID, jobType string) (domain.Job, error) {
 	return scanJob(s.db.QueryRow(ctx,
@@ -202,6 +240,29 @@ func (s *Store) ListJobLogs(ctx context.Context, jobID string) ([]domain.JobLog,
 		err := r.Scan(&l.ID, &l.JobID, &l.Level, &l.Message, &l.Timestamp)
 		return l, err
 	})
+}
+
+// ---- Technical metadata ----
+
+// SaveTechnicalMetadata stores an asset's metadata, replacing any earlier
+// result. metadataJSON holds {"summary": {...}, "ffprobe": {...}}.
+func (s *Store) SaveTechnicalMetadata(ctx context.Context, assetID string, metadataJSON []byte) error {
+	_, err := s.db.Exec(ctx,
+		`INSERT INTO technical_metadata (id, asset_id, metadata_json, extracted_at)
+		 VALUES ($1, $2, $3, NOW())
+		 ON CONFLICT (asset_id) DO UPDATE
+		 SET metadata_json = EXCLUDED.metadata_json, extracted_at = EXCLUDED.extracted_at`,
+		domain.NewID(), assetID, metadataJSON)
+	return err
+}
+
+// GetTechnicalMetadata returns the stored metadata JSON of an asset.
+func (s *Store) GetTechnicalMetadata(ctx context.Context, assetID string) (domain.TechnicalMetadata, error) {
+	var m domain.TechnicalMetadata
+	err := s.db.QueryRow(ctx,
+		`SELECT id, asset_id, metadata_json, extracted_at FROM technical_metadata WHERE asset_id = $1`, assetID).
+		Scan(&m.ID, &m.AssetID, &m.MetadataJSON, &m.ExtractedAt)
+	return m, notFound(err)
 }
 
 // ---- Artifacts ----

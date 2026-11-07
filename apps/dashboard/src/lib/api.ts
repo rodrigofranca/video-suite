@@ -6,12 +6,27 @@ export const API_URL = (env.PUBLIC_API_URL || 'http://localhost:8080').replace(/
 export type AssetStatus = 'uploading' | 'processing' | 'ready' | 'failed';
 export type JobStatus = 'pending' | 'running' | 'done' | 'failed';
 
+/** Technical metadata extracted by ffprobe. */
+export interface MediaSummary {
+	durationSeconds: number;
+	width?: number;
+	height?: number;
+	videoCodec?: string;
+	audioCodec?: string;
+	bitRate?: number;
+	frameRate?: number;
+	container?: string;
+	sizeBytes?: number;
+}
+
 export interface Asset {
 	id: string;
 	filename: string;
 	status: AssetStatus;
 	createdAt: string;
 	updatedAt: string;
+	thumbnailUrl: string | null;
+	metadata: MediaSummary | null;
 }
 
 export interface Job {
@@ -78,6 +93,8 @@ async function getJSON<T>(path: string): Promise<T> {
 
 export const listAssets = () => getJSON<{ assets: Asset[] }>('/assets').then((r) => r.assets);
 export const getAsset = (id: string) => getJSON<AssetDetail>(`/assets/${encodeURIComponent(id)}`);
+/** URL of the full metadata (summary and raw ffprobe output) as JSON. */
+export const metadataUrl = (id: string) => `${API_URL}/assets/${encodeURIComponent(id)}/metadata`;
 export const getJobLogs = (id: string) =>
 	getJSON<{ logs: JobLog[] }>(`/jobs/${encodeURIComponent(id)}/logs`).then((r) => r.logs);
 

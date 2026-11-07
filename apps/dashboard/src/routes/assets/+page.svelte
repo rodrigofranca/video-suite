@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { listAssets, type Asset } from '$lib/api';
-	import { formatDate } from '$lib/format';
+	import { formatClock, formatDate, formatResolution } from '$lib/format';
 	import { poll } from '$lib/poll.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 
@@ -37,9 +37,23 @@
 		{#each assets as asset (asset.id)}
 			<li>
 				<a class="card item" href="/assets/{asset.id}" data-testid="asset-row">
-					<span class="name">{asset.filename}</span>
-					<StatusBadge status={asset.status} />
-					<span class="muted date">{formatDate(asset.createdAt)}</span>
+					<div class="thumb">
+						{#if asset.thumbnailUrl}
+							<img src={asset.thumbnailUrl} alt="" loading="lazy" data-testid="thumbnail" />
+						{/if}
+						{#if asset.metadata?.durationSeconds}
+							<span class="duration">{formatClock(asset.metadata.durationSeconds)}</span>
+						{/if}
+					</div>
+					<div class="info">
+						<span class="name">{asset.filename}</span>
+						<span class="muted meta">
+							{[formatResolution(asset.metadata?.width, asset.metadata?.height), formatDate(asset.createdAt)]
+								.filter(Boolean)
+								.join(' · ')}
+						</span>
+						<StatusBadge status={asset.status} />
+					</div>
 				</a>
 			</li>
 		{/each}
@@ -63,34 +77,59 @@
 	}
 	.item {
 		display: grid;
-		grid-template-columns: 1fr auto;
-		grid-template-areas: 'name status' 'date date';
-		gap: 0.25rem 0.75rem;
+		grid-template-columns: 8rem 1fr;
+		gap: 0.85rem;
 		align-items: center;
+		padding: 0.6rem;
 		color: inherit;
 		text-decoration: none;
 	}
 	.item:hover {
 		border-color: var(--accent);
 	}
+	.thumb {
+		position: relative;
+		aspect-ratio: 16 / 9;
+		border-radius: 6px;
+		overflow: hidden;
+		background: var(--badge-neutral-bg);
+	}
+	.thumb img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		display: block;
+	}
+	.duration {
+		position: absolute;
+		right: 0.3rem;
+		bottom: 0.3rem;
+		padding: 0 0.3rem;
+		border-radius: 4px;
+		background: rgb(0 0 0 / 0.75);
+		color: #fff;
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+	}
+	.info {
+		display: grid;
+		gap: 0.2rem;
+		justify-items: start;
+		min-width: 0;
+	}
 	.name {
-		grid-area: name;
 		font-weight: 600;
+		max-width: 100%;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-	.date {
-		grid-area: date;
+	.meta {
 		font-size: 0.85rem;
 	}
 	@media (min-width: 640px) {
 		.item {
-			grid-template-columns: 1fr auto 12rem;
-			grid-template-areas: 'name status date';
-		}
-		.date {
-			text-align: right;
+			grid-template-columns: 10rem 1fr;
 		}
 	}
 </style>

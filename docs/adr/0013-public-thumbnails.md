@@ -1,0 +1,3 @@
+# Miniaturas são públicas, como o HLS
+
+A ADR 0010 deixou pública só a pasta `assets/*/hls/*`. A lista de vídeos e o player precisam mostrar a miniatura, então `assets/*/thumbnails/*` passa a ter a mesma leitura anônima (política `infra/storage/public-read-policy.json`). A miniatura é um quadro do próprio vídeo que já é público via HLS, então não expõe nada novo. A alternativa — servir a miniatura pela API, ou por URL assinada a cada listagem — adicionaria tráfego e complexidade sem ganho de privacidade. O arquivo original continua privado. Se um dia o conteúdo precisar de proteção, HLS e miniaturas são revistos juntos.

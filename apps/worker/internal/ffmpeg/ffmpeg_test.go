@@ -3,12 +3,14 @@ package ffmpeg
 import (
 	"bytes"
 	"context"
+	"image/jpeg"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"ultramedia/worker/internal/testvideo"
 )
@@ -29,7 +31,9 @@ func TestHLSOutput(t *testing.T) {
 	os.Mkdir(out, 0o755)
 
 	var logs bytes.Buffer
-	if err := Run(context.Background(), HLSArgs(src, out), slog.New(slog.NewTextHandler(&logs, nil))); err != nil {
+	var progress []time.Duration
+	record := func(d time.Duration) { progress = append(progress, d) }
+	if err := Run(context.Background(), HLSArgs(src, out), slog.New(slog.NewTextHandler(&logs, nil)), Options{Progress: record}); err != nil {
 		t.Fatalf("Run: %v\n%s", err, logs.String())
 	}
 
@@ -47,6 +51,50 @@ func TestHLSOutput(t *testing.T) {
 	if len(segments) != 3 { // 13s in 6s segments
 		t.Errorf("got %d segments, want 3", len(segments))
 	}
+
+	if len(progress) < 2 || progress[len(progress)-1] < 12*time.Second {
+		t.Fatalf("progress = %v, want reports up to about 13s", progress)
+	}
+	for i := 1; i < len(progress); i++ {
+		if progress[i] < progress[i-1] {
+			t.Fatalf("progress went backwards: %v", progress)
+		}
+	}
+}
+
+func TestThumbnail(t *testing.T) {
+	needFFmpeg(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "in.mp4")
+	testvideo.Make(t, src, 3, "1920x1080")
+
+	out := filepath.Join(dir, "thumb.jpg")
+	if err := Run(context.Background(), ThumbnailArgs(src, 1.5, out), slog.New(slog.DiscardHandler), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	cfg, err := jpeg.DecodeConfig(f)
+	if err != nil || cfg.Width != 1280 || cfg.Height != 720 {
+		t.Fatalf("thumbnail = %dx%d, %v; want 1280x720", cfg.Width, cfg.Height, err)
+	}
+
+	// Past the end FFmpeg succeeds but writes nothing: callers must check.
+	late := filepath.Join(dir, "late.jpg")
+	Run(context.Background(), ThumbnailArgs(src, 10, late), slog.New(slog.DiscardHandler), Options{})
+	if _, err := os.Stat(late); err == nil {
+		t.Fatal("expected no image for a time past the end")
+	}
+}
+
+func TestCommandLineRedacts(t *testing.T) {
+	got := CommandLine([]string{"-i", "http://s3/x?sig=abc", "out.jpg"}, "http://s3/x?sig=abc")
+	if got != "ffmpeg -i <source> out.jpg" {
+		t.Fatalf("CommandLine = %q", got)
+	}
 }
 
 func TestRunReportsFFmpegError(t *testing.T) {
@@ -56,7 +104,7 @@ func TestRunReportsFFmpegError(t *testing.T) {
 	os.WriteFile(bad, []byte("\x00\x00\x00\x20ftypisom but not really a video"), 0o644)
 
 	var logs bytes.Buffer
-	err := Run(context.Background(), HLSArgs(bad, dir), slog.New(slog.NewTextHandler(&logs, nil)))
+	err := Run(context.Background(), HLSArgs(bad, dir), slog.New(slog.NewTextHandler(&logs, nil)), Options{})
 	if err == nil {
 		t.Fatal("want an error for a broken file")
 	}
@@ -69,7 +117,7 @@ func TestRunStopsOnCancel(t *testing.T) {
 	needFFmpeg(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := Run(ctx, []string{"-f", "lavfi", "-i", "testsrc2", "-f", "null", "-"}, slog.New(slog.DiscardHandler))
+	err := Run(ctx, []string{"-f", "lavfi", "-i", "testsrc2", "-f", "null", "-"}, slog.New(slog.DiscardHandler), Options{})
 	if err == nil {
 		t.Fatal("want an error when the context is canceled")
 	}

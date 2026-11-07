@@ -21,7 +21,7 @@ O repositório SHALL seguir estrutura `apps/` para aplicações e `packages/` pa
 - **THEN** nenhum desses arquivos SHALL ser ignorado; apenas os binários `/apps/api/api` e `/apps/worker/worker` SHALL ser ignorados
 
 ### Requirement: Docker Compose para infraestrutura local
-O repositório SHALL incluir `docker-compose.yml` na raiz que sobe PostgreSQL, Redis e um storage compatível com S3 (RustFS) prontos para desenvolvimento, com o bucket `ultramedia` criado, CORS liberado para o dashboard local e leitura pública apenas para a saída HLS.
+O repositório SHALL incluir `docker-compose.yml` na raiz que sobe PostgreSQL, Redis e um storage compatível com S3 (RustFS) prontos para desenvolvimento, com o bucket `ultramedia` criado, CORS liberado para o dashboard local e leitura pública apenas para a saída HLS e as miniaturas.
 
 #### Scenario: Infraestrutura sobe em um comando
 - **WHEN** o desenvolvedor executa `make up`
@@ -33,7 +33,7 @@ O repositório SHALL incluir `docker-compose.yml` na raiz que sobe PostgreSQL, R
 
 #### Scenario: Política de leitura pública do HLS
 - **WHEN** `make up` termina
-- **THEN** objetos em `assets/*/hls/*` SHALL poder ser lidos sem credenciais e os demais SHALL continuar privados
+- **THEN** objetos em `assets/*/hls/*` e `assets/*/thumbnails/*` SHALL poder ser lidos sem credenciais e os demais SHALL continuar privados
 
 #### Scenario: make up é idempotente
 - **WHEN** `make up` é executado de novo com a infraestrutura já de pé

@@ -1,10 +1,8 @@
 package jobs
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"log/slog"
 	"strings"
 	"testing"
 
@@ -47,22 +45,5 @@ func TestDispatchPropagatesErrors(t *testing.T) {
 	}
 	if err := d.Dispatch(context.Background(), Job{Type: "fails", Payload: []byte(`"not an object"`)}); err == nil {
 		t.Fatal("want decode error for bad payload")
-	}
-}
-
-func TestStubsLogAndSucceed(t *testing.T) {
-	var buf bytes.Buffer
-	log := slog.New(slog.NewTextHandler(&buf, nil))
-	d := NewDispatcher()
-	RegisterStubs(d)
-
-	for _, jobType := range jobcontracts.Pipeline {
-		job := Job{ID: "j1", Type: jobType, Payload: []byte(`{"asset_id":"a1","storage_key":"k"}`), Log: log}
-		if err := d.Dispatch(context.Background(), job); err != nil {
-			t.Fatalf("%s: %v", jobType, err)
-		}
-		if want := "stub: " + jobType + " called for asset a1"; !strings.Contains(buf.String(), want) {
-			t.Fatalf("log missing %q:\n%s", want, buf.String())
-		}
 	}
 }

@@ -18,3 +18,9 @@ func HLSPrefix(assetID string) string {
 func HLSManifestKey(assetID string) string {
 	return HLSPrefix(assetID) + "index.m3u8"
 }
+
+// ThumbnailKey is where an asset's thumbnail image is stored. Thumbnails are
+// publicly readable, like the HLS output (docs/adr/0013).
+func ThumbnailKey(assetID string) string {
+	return "assets/" + assetID + "/thumbnails/thumbnail.jpg"
+}

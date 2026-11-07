@@ -47,8 +47,9 @@ services:
       retries: 30
 
   # One-shot job: creates the bucket, applies CORS and makes only the HLS
-  # output (assets/*/hls/*) publicly readable, so the dashboard player
-  # (localhost:5173) can fetch it straight from storage. See docs/adr/0010.
+  # output and thumbnails (assets/*/hls/*, assets/*/thumbnails/*) publicly
+  # readable, so the dashboard (localhost:5173) loads them straight from
+  # storage. See docs/adr/0010 and 0013.
   storage-init:
     image: amazon/aws-cli:2.39.6
     depends_on:
@@ -67,7 +68,7 @@ services:
         S3="aws --endpoint-url http://storage:9000"
         $$S3 s3api head-bucket --bucket ultramedia 2>/dev/null || $$S3 s3api create-bucket --bucket ultramedia
         $$S3 s3api put-bucket-cors --bucket ultramedia --cors-configuration file:///config/cors.json
-        $$S3 s3api put-bucket-policy --bucket ultramedia --policy file:///config/public-hls-policy.json
+        $$S3 s3api put-bucket-policy --bucket ultramedia --policy file:///config/public-read-policy.json
         echo "bucket ultramedia ready"
     restart: "no"
 
