@@ -179,7 +179,7 @@ services:
       LLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-ultramedia-dev}
       LLM_MODEL: ultramedia-text
     volumes:
-      # Downloaded Whisper models survive restarts and rebuilds.
+      # Downloaded Whisper models and the face detector survive restarts and rebuilds.
       - whisper_models:/models
     depends_on:
       <<: *app-deps

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -66,6 +67,9 @@ type probeOutput struct {
 		Disposition  struct {
 			AttachedPic int `json:"attached_pic"`
 		} `json:"disposition"`
+		SideData []struct {
+			Rotation float64 `json:"rotation"`
+		} `json:"side_data_list"`
 	} `json:"streams"`
 }
 
@@ -86,6 +90,13 @@ func Summarize(raw []byte) (Summary, error) {
 		switch {
 		case st.CodecType == "video" && st.Disposition.AttachedPic == 0 && s.VideoCodec == "":
 			s.VideoCodec, s.Width, s.Height = st.CodecName, st.Width, st.Height
+			// Phone videos are stored sideways with a rotation to apply when
+			// shown, as FFmpeg does when decoding: report the size as shown.
+			for _, d := range st.SideData {
+				if int(math.Abs(d.Rotation)+0.5)%180 == 90 {
+					s.Width, s.Height = s.Height, s.Width
+				}
+			}
 			s.FrameRate = frameRate(st.AvgFrameRate)
 			if s.FrameRate == 0 {
 				s.FrameRate = frameRate(st.RFrameRate)

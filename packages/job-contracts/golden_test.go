@@ -36,6 +36,7 @@ func contractsDoc() map[string]any {
 			JobTypeTranscribeAudio:   example(TranscribeAudioInput{AssetID: "11111111-1111-4111-8111-111111111111", AudioKey: "assets/11111111-1111-4111-8111-111111111111/audio/audio.flac", Language: "pt"}),
 			JobTypeAnalyzeTranscript: example(AnalyzeTranscriptInput{AssetID: "11111111-1111-4111-8111-111111111111"}),
 			JobTypeSuggestClips:      example(SuggestClipsInput{AssetID: "11111111-1111-4111-8111-111111111111"}),
+			JobTypeTrackFaces:        example(TrackFacesInput{AssetID: "11111111-1111-4111-8111-111111111111", StorageKey: "assets/11111111-1111-4111-8111-111111111111/source/input.mp4"}),
 		},
 	}
 }
@@ -63,7 +64,7 @@ func TestContractsGoldenFile(t *testing.T) {
 
 func TestStreamFor(t *testing.T) {
 	if StreamFor(JobTypeTranscribeAudio) != StreamAIJobs || StreamFor(JobTypeAnalyzeTranscript) != StreamAIJobs ||
-		StreamFor(JobTypeSuggestClips) != StreamAIJobs || StreamFor(JobTypeExportClip) != StreamJobs ||
+		StreamFor(JobTypeSuggestClips) != StreamAIJobs || StreamFor(JobTypeTrackFaces) != StreamAIJobs || StreamFor(JobTypeExportClip) != StreamJobs ||
 		StreamFor(JobTypeExtractAudio) != StreamJobs || StreamFor("unknown") != StreamJobs {
 		t.Fatal("unexpected routing")
 	}

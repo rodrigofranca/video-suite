@@ -48,7 +48,8 @@ func TestNextJobType(t *testing.T) {
 		JobTypeExtractAudio:      JobTypeTranscribeAudio,
 		JobTypeTranscribeAudio:   JobTypeAnalyzeTranscript,
 		JobTypeAnalyzeTranscript: JobTypeSuggestClips,
-		JobTypeSuggestClips:      "",
+		JobTypeSuggestClips:      JobTypeTrackFaces,
+		JobTypeTrackFaces:        "",
 		JobTypeExportClip:        "", // on request, not in the pipeline
 		"unknown":                "",
 	}

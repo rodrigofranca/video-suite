@@ -373,7 +373,7 @@ const clipColumns = `id, asset_id, job_id, start_seconds, end_seconds, title, re
 
 func scanClip(row pgx.Row) (domain.Clip, error) {
 	var c domain.Clip
-	err := row.Scan(&c.ID, &c.AssetID, &c.JobID, &c.Start, &c.End, &c.Title, &c.Reason, &c.Score, &c.Rank, &c.Model, &c.CreatedAt)
+	err := row.Scan(&c.ID, &c.AssetID, &c.JobID, &c.Start, &c.End, &c.Title, &c.Reason, &c.Score, &c.Rank, &c.Model, &c.CreatedAt, &c.FaceTrack)
 	return c, notFound(err)
 }
 
@@ -397,7 +397,7 @@ func (s *Store) ReplaceClips(ctx context.Context, assetID string, clips []domain
 
 // ListClips returns an asset's clips, best first.
 func (s *Store) ListClips(ctx context.Context, assetID string) ([]domain.Clip, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+clipColumns+` FROM clips WHERE asset_id = $1 ORDER BY rank, start_seconds`, assetID)
+	rows, err := s.db.Query(ctx, `SELECT `+clipColumns+`, face_track FROM clips WHERE asset_id = $1 ORDER BY rank, start_seconds`, assetID)
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +415,13 @@ func (s *Store) ListClips(ctx context.Context, assetID string) ([]domain.Clip, e
 
 // GetClip returns one clip.
 func (s *Store) GetClip(ctx context.Context, id string) (domain.Clip, error) {
-	return scanClip(s.db.QueryRow(ctx, `SELECT `+clipColumns+` FROM clips WHERE id = $1`, id))
+	return scanClip(s.db.QueryRow(ctx, `SELECT `+clipColumns+`, face_track FROM clips WHERE id = $1`, id))
+}
+
+// SetFaceTrack stores where the main face is through a clip.
+func (s *Store) SetFaceTrack(ctx context.Context, clipID string, track []byte) error {
+	_, err := s.db.Exec(ctx, `UPDATE clips SET face_track = $2 WHERE id = $1`, clipID, track)
+	return err
 }
 
 // ---- Artifacts ----

@@ -1,0 +1,1 @@
+ALTER TABLE clips DROP COLUMN IF EXISTS face_track;

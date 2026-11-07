@@ -86,7 +86,7 @@ A API SHALL responder com `Access-Control-Allow-Origin` apenas para a origem em 
 - **THEN** a rota SHALL retornar só a análise mais recente
 
 ### Requirement: Cortes do asset
-`GET /assets/{id}/clips` SHALL retornar `{"clips": [...], "wordTimings": <bool>}`, com os cortes do melhor para o pior, cada um com `id`, `start`, `end`, `duration`, `title`, `reason`, `score`, `rank`, `model` e `exports`: por formato, o job de exportação mais recente (`status`, `progress`, `error`) e, quando há arquivo, `ready`, `captions`, `captionStyle`, `width`, `height` e `sizeBytes`. `wordTimings` SHALL dizer se a transcrição tem as palavras com tempo.
+`GET /assets/{id}/clips` SHALL retornar `{"clips": [...], "wordTimings": <bool>}`, do melhor corte ao pior, cada um com `id`, `start`, `end`, `duration`, `title`, `reason`, `score`, `rank`, `model`, `faceCoverage` e `exports`: por formato, a exportação mais recente (`status`, `progress`, `error`) e, com arquivo, `ready`, `captions`, `captionStyle`, `framing`, `width`, `height` e `sizeBytes`. `wordTimings` SHALL dizer se há palavras com tempo.
 
 #### Scenario: Exportação em andamento
 - **WHEN** um corte tem uma exportação `pending` em `vertical`
@@ -95,6 +95,10 @@ A API SHALL responder com `Access-Control-Allow-Origin` apenas para a origem em 
 #### Scenario: Transcrição antiga
 - **WHEN** a transcrição do asset não tem palavras
 - **THEN** `wordTimings` SHALL ser `false`
+
+#### Scenario: Antes e depois do rastreio de rostos
+- **WHEN** o corte ainda não tem `face_track`, e depois ganha um com `coverage` 0,85
+- **THEN** `faceCoverage` SHALL ser `null`, e depois `0.85`
 
 ### Requirement: Pedir uma exportação
 `POST /assets/{id}/clips/{clipId}/exports` com `{"format", "captions", "captionStyle"}` SHALL criar e enfileirar um job `export-clip` e responder 202 com o job. `captions` SHALL valer `true` e `captionStyle` SHALL valer `highlight` quando ausentes; os estilos são `highlight`, `box`, `karaoke`, `one-word` e `lines`. Formato ou estilo desconhecido SHALL responder 400; corte inexistente ou de outro asset, 404; e algum job do asset pendente ou rodando, 409.

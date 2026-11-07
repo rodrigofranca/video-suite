@@ -2,6 +2,7 @@ package ffmpeg
 
 import (
 	"context"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,6 +32,20 @@ func TestSummarize(t *testing.T) {
 	}
 }
 
+func TestSummarizeRotatedVideo(t *testing.T) {
+	for rotation, want := range map[string][2]int{"90": {1080, 1920}, "-90": {1080, 1920}, "-180": {1920, 1080}, "0": {1920, 1080}} {
+		raw := `{"streams":[{"codec_type":"video","codec_name":"h264","width":1920,"height":1080,` +
+			`"side_data_list":[{"side_data_type":"Display Matrix","rotation":` + rotation + `}]}],"format":{"duration":"3"}}`
+		s, err := Summarize([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if [2]int{s.Width, s.Height} != want {
+			t.Errorf("rotation %s: size %dx%d, want %dx%d (as shown)", rotation, s.Width, s.Height, want[0], want[1])
+		}
+	}
+}
+
 func TestSummarizeWithoutVideo(t *testing.T) {
 	_, err := Summarize([]byte(`{"streams":[{"codec_type":"audio","codec_name":"mp3"}],"format":{"duration":"3"}}`))
 	if err == nil || !strings.Contains(err.Error(), "no video stream") {
@@ -54,6 +69,23 @@ func TestProbeRealFile(t *testing.T) {
 	}
 	if strings.Contains(string(raw), path) || !strings.Contains(string(raw), `"filename":"assets/x/source/input.mp4"`) {
 		t.Fatal("the input path must be replaced by the given name in the stored output")
+	}
+}
+
+func TestProbeRotatedPhoneVideo(t *testing.T) {
+	dir := t.TempDir()
+	stored, rotated := filepath.Join(dir, "stored.mp4"), filepath.Join(dir, "rotated.mp4")
+	testvideo.Make(t, stored, 1, "640x360")
+	// A portrait phone video: stored as 640x360, shown turned a quarter.
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-y", "-display_rotation", "90", "-i", stored, "-c", "copy", rotated).CombinedOutput(); err != nil {
+		t.Skipf("this FFmpeg cannot set a rotation: %v: %s", err, out)
+	}
+	_, s, err := Probe(context.Background(), rotated, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Width != 360 || s.Height != 640 {
+		t.Fatalf("size = %dx%d, want 360x640 (as FFmpeg decodes it)", s.Width, s.Height)
 	}
 }
 

@@ -1,0 +1,15 @@
+# Cortes verticais que seguem o rosto, com o caminho calculado no pipeline
+
+O 9:16 com recorte central perde quem fala sempre que a pessoa não está no meio do quadro, o caso comum em entrevistas, podcasts e vídeos com duas pessoas. O novo formato `vertical-face` recorta a mesma janela 9:16, mas ela acompanha o rosto principal.
+
+Achar o rosto é um passo do pipeline, `track-faces`, no worker de IA, logo depois de `suggest-clips`, e não parte da exportação. Detectar rostos pede decodificar quadros e rodar um modelo, o que já é o papel do worker Python; rodando uma vez, a exportação continua sendo só FFmpeg no worker Go, e o dashboard pode dizer, antes de exportar, em quanto do corte há rosto. O job lê o vídeo por um link assinado e decodifica só os trechos dos cortes, 5 quadros por segundo, reduzidos a 640 px de largura. Num vídeo de 2 minutos com 4 cortes, levou cerca de 7 s.
+
+O detector é o YuNet, do OpenCV: 230 KB, licença MIT, rápido em CPU e bom com rostos de frente e de lado. Fica fixado numa revisão do repositório `opencv/face_detection_yunet` no Hugging Face e é baixado no primeiro uso para o mesmo cache do Whisper, que no Docker é um volume. Se não puder ser baixado na inicialização, o worker só avisa: a transcrição não depende dele e o job tenta de novo.
+
+O rosto principal é o maior, com peso menor para rostos longe de onde o principal estava, para não pular entre duas pessoas de tamanho parecido. Amostras sem rosto repetem a última posição, e uma mediana de 5 amostras remove saltos isolados. Dessas posições sai um caminho de câmera: a janela fica parada enquanto o rosto está perto do seu centro (até 12% da largura da janela), anda no máximo 2 larguras de janela por segundo quando ele se afasta, e corta direto quando o rosto sai da janela e fica fora por 3 amostras, porque uma panorâmica atravessando o quadro parece erro. O caminho é simplificado (Ramer-Douglas-Peucker) e guardado no corte, em `clips.face_track`, com os tempos a partir do início do corte e as posições como fração da largura.
+
+Na exportação, o worker Go transforma os pontos numa expressão de `t` por partes, retas entre os pontos, presa às bordas, no `x` do filtro `crop`. Não há segunda passada nem filtro novo. Quando não há o que seguir (rastreio não rodou, rosto em menos de 30% do corte, vídeo já mais estreito que 9:16, ou tamanho diferente do rastreado), o corte sai no centro, o log diz por quê e o artefato registra `framing: "center"`, que o dashboard mostra como "centred".
+
+Vídeos de celular são gravados de lado, com uma rotação a aplicar na exibição, que o FFmpeg aplica ao decodificar. O ffprobe, porém, informa o tamanho gravado, e o recorte 9:16 era calculado sobre ele: um vídeo em pé saía recortado errado. Agora o resumo de metadados traz o tamanho exibido, e o rastreio gira cada quadro da mesma forma antes de procurar rostos.
+
+Limites conhecidos: a janela segue o maior rosto, não necessariamente quem está falando; escolher pela voz exigiria cruzar com o áudio. Sugerir os cortes de novo, pelo dashboard, roda só aquele job: os cortes novos ficam sem caminho, e no centro, até o `track-faces` ser rodado também.

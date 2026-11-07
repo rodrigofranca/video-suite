@@ -180,6 +180,8 @@ func jobInput(jobType, assetID, sourceKey string) ([]byte, error) {
 		input = jobcontracts.AnalyzeTranscriptInput{AssetID: assetID}
 	case jobcontracts.JobTypeSuggestClips:
 		input = jobcontracts.SuggestClipsInput{AssetID: assetID}
+	case jobcontracts.JobTypeTrackFaces:
+		input = jobcontracts.TrackFacesInput{AssetID: assetID, StorageKey: sourceKey}
 	default:
 		return nil, fmt.Errorf("%w %q", errUnknownJobType, jobType)
 	}

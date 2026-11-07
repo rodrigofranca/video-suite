@@ -91,11 +91,11 @@ export interface Analysis {
 	createdAt: string;
 }
 
-export type ClipFormat = 'original' | 'vertical' | 'vertical-blur';
+export type ClipFormat = 'original' | 'vertical' | 'vertical-face' | 'vertical-blur';
 /** Burned-in captions. All but 'lines' follow the transcript's word timings. */
 export type CaptionStyle = 'highlight' | 'box' | 'karaoke' | 'one-word' | 'lines';
 export const captionStyles: CaptionStyle[] = ['highlight', 'box', 'karaoke', 'one-word', 'lines'];
-export const clipFormats: ClipFormat[] = ['original', 'vertical', 'vertical-blur'];
+export const clipFormats: ClipFormat[] = ['original', 'vertical', 'vertical-face', 'vertical-blur'];
 
 /** The newest export of a clip in one format. */
 export interface ClipExport {
@@ -106,6 +106,8 @@ export interface ClipExport {
 	error: string | null;
 	captions: boolean;
 	captionStyle?: CaptionStyle;
+	/** How a 'vertical-face' file was framed. */
+	framing?: 'face' | 'center';
 	width?: number;
 	height?: number;
 	sizeBytes?: number;
@@ -125,6 +127,8 @@ export interface Clip {
 	rank: number;
 	model: string;
 	createdAt: string;
+	/** Share of the clip with a face, or null before face tracking. */
+	faceCoverage: number | null;
 	exports: ClipExport[];
 }
 

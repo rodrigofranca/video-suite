@@ -102,10 +102,12 @@
 	$effect(() => {
 		const job = suggestJob;
 		if (!job || job.status !== 'done' || !job.completedAt) return;
-		// A new transcription may bring word timings.
+		// A new transcription may bring word timings; face tracking adds face tracks.
+		const trackJob = asset?.jobs.findLast((j) => j.type === 'track-faces');
 		const key =
 			job.completedAt +
 			(transcribeJob?.completedAt ?? '') +
+			(trackJob?.completedAt ?? '') +
 			exportJobs.map((j) => `${j.id}:${j.status}:${j.progress}`).join(',');
 		if (key === clipsFor) return;
 		clipsFor = key;

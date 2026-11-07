@@ -2,7 +2,7 @@ package jobcontracts
 
 // Job types. The Go media worker runs the FFmpeg jobs (metadata, thumbnail,
 // HLS, audio and clip export); the Python AI worker (apps/ai-worker) runs
-// transcribe-audio, analyze-transcript and suggest-clips. See StreamFor.
+// transcribe-audio, analyze-transcript, suggest-clips and track-faces. See StreamFor.
 const (
 	JobTypeExtractMetadata   = "extract-metadata"
 	JobTypeGenerateThumbnail = "generate-thumbnail"
@@ -11,6 +11,7 @@ const (
 	JobTypeTranscribeAudio   = "transcribe-audio"
 	JobTypeAnalyzeTranscript = "analyze-transcript"
 	JobTypeSuggestClips      = "suggest-clips"
+	JobTypeTrackFaces        = "track-faces"
 	// JobTypeExportClip runs on request, not in the Pipeline.
 	JobTypeExportClip = "export-clip"
 )
@@ -21,12 +22,15 @@ const (
 	ClipFormatOriginal = "original"
 	// ClipFormatVertical crops the middle of the frame to 9:16 (1080x1920).
 	ClipFormatVertical = "vertical"
+	// ClipFormatVerticalFace crops 9:16 around the main face, following it
+	// (the clip's face track); the middle when there is no face.
+	ClipFormatVerticalFace = "vertical-face"
 	// ClipFormatVerticalBlur fits the whole frame into 9:16 over a blurred copy.
 	ClipFormatVerticalBlur = "vertical-blur"
 )
 
 // ClipFormats lists the export formats, in the order the dashboard shows them.
-var ClipFormats = []string{ClipFormatOriginal, ClipFormatVertical, ClipFormatVerticalBlur}
+var ClipFormats = []string{ClipFormatOriginal, ClipFormatVertical, ClipFormatVerticalFace, ClipFormatVerticalBlur}
 
 // Burned-in caption styles (ExportClipInput.CaptionStyle). All but
 // CaptionStyleLines follow the transcript's word timings; without them the
@@ -94,6 +98,14 @@ type SuggestClipsInput struct {
 	AssetID string `json:"asset_id"`
 }
 
+// TrackFacesInput asks the AI worker to follow the main face through each
+// of the asset's clips, for vertical exports that keep it in frame
+// (docs/adr/0022). It reads the source through a signed URL.
+type TrackFacesInput struct {
+	AssetID    string `json:"asset_id"`
+	StorageKey string `json:"storage_key"`
+}
+
 // ExportClipInput asks the media worker to cut a clip out of the source as an
 // MP4 at OutputKey. The clip's start and end are read from the database when
 // the job runs. Captions burns the asset's speech into the picture, in
@@ -121,6 +133,7 @@ var Pipeline = []string{
 	JobTypeTranscribeAudio,
 	JobTypeAnalyzeTranscript,
 	JobTypeSuggestClips,
+	JobTypeTrackFaces,
 }
 
 // NextJobType returns the job type that follows jobType in the Pipeline.

@@ -66,6 +66,10 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 		Input: url, Start: clip.Start, Duration: duration, Format: in.Format,
 		SourceWidth: src.Width, SourceHeight: src.Height, Output: filepath.Join(dir, "clip.mp4"),
 	}
+	framing := ""
+	if in.Format == jobcontracts.ClipFormatVerticalFace {
+		spec.Track, framing = faceTrack(job, clip, src.Width, src.Height)
+	}
 	language, style := "", ""
 	if in.Captions {
 		spec.SubtitlesFile, language, style, err = m.clipCaptions(ctx, job, in, clip, width, height, dir)
@@ -99,7 +103,8 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	}
 	job.Log.Info("uploaded clip", "key", in.OutputKey)
 	meta, _ := json.Marshal(map[string]any{
-		"clipId": clip.ID, "format": in.Format, "captions": spec.SubtitlesFile != "", "captionStyle": style, "language": language,
+		"clipId": clip.ID, "format": in.Format, "framing": framing,
+		"captions": spec.SubtitlesFile != "", "captionStyle": style, "language": language,
 		"start": clip.Start, "end": clip.End, "durationSeconds": duration,
 		"width": width, "height": height, "sizeBytes": info.Size(),
 	})
@@ -245,4 +250,40 @@ func writeFile(path string, write func(*os.File) error) error {
 		return err
 	}
 	return f.Close()
+}
+
+// minFaceCoverage is the share of a clip in which a face must be found for
+// the crop to follow it (the track-faces job leaves the points empty below it).
+const minFaceCoverage = 0.3
+
+// faceTrack returns the points a "vertical-face" crop follows and the framing
+// used: "face", or "center" when there is nothing to follow, with the reason
+// in the log.
+func faceTrack(job Job, clip domain.Clip, width, height int) ([]ffmpeg.TrackPoint, string) {
+	if len(clip.FaceTrack) == 0 {
+		job.Log.Warn("this clip has no face track (the Face tracking job has not run since the clips were suggested); using the centre")
+		return nil, "center"
+	}
+	var track struct {
+		Coverage      float64             `json:"coverage"`
+		Points        []ffmpeg.TrackPoint `json:"points"`
+		Width, Height int
+	}
+	if err := json.Unmarshal(clip.FaceTrack, &track); err != nil {
+		job.Log.Warn("unreadable face track; using the centre: " + err.Error())
+		return nil, "center"
+	}
+	switch {
+	case track.Width != width || track.Height != height:
+		job.Log.Warn(fmt.Sprintf("the face track was made for a %dx%d picture, not %dx%d; using the centre", track.Width, track.Height, width, height))
+		return nil, "center"
+	case len(track.Points) == 0 && track.Coverage < minFaceCoverage:
+		job.Log.Warn(fmt.Sprintf("a face was found in only %.0f%% of the clip; using the centre", track.Coverage*100))
+		return nil, "center"
+	case len(track.Points) == 0:
+		job.Log.Info("the picture is already narrower than 9:16; using the centre")
+		return nil, "center"
+	}
+	job.Log.Info(fmt.Sprintf("following the face (found in %.0f%% of the clip, %d camera points)", track.Coverage*100, len(track.Points)))
+	return track.Points, "face"
 }

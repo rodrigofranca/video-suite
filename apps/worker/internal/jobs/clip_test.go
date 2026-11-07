@@ -316,3 +316,97 @@ func TestExportClipWordCaptionsFallBackToLines(t *testing.T) {
 		t.Error("accepted an unknown caption style")
 	}
 }
+
+// whiteCenter returns the mean column of the white pixels in the frame at
+// second at, scaled to 108x192, or -1 when there are none.
+func whiteCenter(t *testing.T, path string, at float64) float64 {
+	t.Helper()
+	px := grayFrame(t, path, at)
+	sum, n := 0, 0
+	for i, v := range px {
+		if v > 200 {
+			sum += i % 108
+			n++
+		}
+	}
+	if n == 0 {
+		return -1
+	}
+	return float64(sum) / float64(n)
+}
+
+// The "vertical-face" crop follows the track: a white square moving right
+// stays in the middle of the clip, where the centre crop would lose it.
+func TestExportClipFollowsTheFaceTrack(t *testing.T) {
+	f := newFixtureWith(t, func(path string) {
+		// overlay, not drawbox: in drawbox, t is the box's thickness, not the time.
+		cmd := exec.Command("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x404040:s=1280x720:r=25:d=6",
+			"-f", "lavfi", "-i", "color=c=white:s=120x120:r=25:d=6", "-f", "lavfi", "-i", "sine=duration=6",
+			"-filter_complex", "[0][1]overlay=x='300+t*130':y=300", "-map", "2:a",
+			"-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", path)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("ffmpeg not available: %v %s", err, out)
+		}
+	})
+	f.jobs[jobcontracts.JobTypeExportClip] = f.jobs[jobcontracts.JobTypeSuggestClips]
+	clip := f.addClip(0, 5, "")
+	// The square's centre: (300 + 60 + 130 t) / 1280 of the width.
+	track := `{"coverage":1,"width":1280,"height":720,"points":[{"t":0,"x":0.28125},{"t":5,"x":0.7890625}]}`
+	if err := f.st.SetFaceTrack(f.ctx, clip.ID, []byte(track)); err != nil {
+		t.Fatal(err)
+	}
+	clip, _ = f.st.GetClip(f.ctx, clip.ID)
+
+	face, err := f.exportClip(clip, jobcontracts.ClipFormatVerticalFace, false)
+	if err != nil {
+		t.Fatalf("%v\nlogs:\n%s", err, f.logs.String())
+	}
+	for _, at := range []float64{0.5, 4.5} {
+		if c := whiteCenter(t, face, at); c < 46 || c > 62 {
+			t.Errorf("at %.1fs the square is at column %.0f of 108, want the middle (54)", at, c)
+		}
+	}
+	if !strings.Contains(f.logs.String(), "following the face (found in 100% of the clip, 2 camera points)") {
+		t.Errorf("logs:\n%s", f.logs.String())
+	}
+	var meta struct{ Framing string }
+	arts, _ := f.st.ListArtifacts(f.ctx, f.asset)
+	for _, a := range arts {
+		if a.Type == domain.ArtifactClip {
+			json.Unmarshal(a.MetadataJSON, &meta)
+		}
+	}
+	if meta.Framing != "face" {
+		t.Errorf("framing = %q, want face", meta.Framing)
+	}
+
+	// The centre crop does not keep the square in the middle.
+	center, err := f.exportClip(clip, jobcontracts.ClipFormatVertical, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := whiteCenter(t, center, 4.5); c >= 0 && c > 40 && c < 68 {
+		t.Errorf("the centre crop also centres the square (column %.0f); the test proves nothing", c)
+	}
+}
+
+// Without a track, or with too little face, the face crop uses the centre.
+func TestExportClipFaceFallsBackToCentre(t *testing.T) {
+	f := newFixture(t, 4, "640x360")
+	f.jobs[jobcontracts.JobTypeExportClip] = f.jobs[jobcontracts.JobTypeSuggestClips]
+	clip := f.addClip(0, 3, "")
+	if _, err := f.exportClip(clip, jobcontracts.ClipFormatVerticalFace, false); err != nil {
+		t.Fatal(err)
+	}
+	f.st.SetFaceTrack(f.ctx, clip.ID, []byte(`{"coverage":0.1,"width":640,"height":360,"points":[]}`))
+	clip, _ = f.st.GetClip(f.ctx, clip.ID)
+	if _, err := f.exportClip(clip, jobcontracts.ClipFormatVerticalFace, false); err != nil {
+		t.Fatal(err)
+	}
+	logs := f.logs.String()
+	for _, want := range []string{"has no face track", "a face was found in only 10% of the clip; using the centre"} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("logs miss %q:\n%s", want, logs)
+		}
+	}
+}

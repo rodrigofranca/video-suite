@@ -175,3 +175,21 @@ class Store:
         ).fetchall()
         keys = ("start", "end", "title", "reason", "score", "rank", "model")
         return [dict(zip(keys, r)) for r in rows]
+
+    def clip_ranges(self, asset_id: str) -> list[dict]:
+        """The asset's clips with their id, start and end, best first."""
+        rows = self.conn.execute(
+            "SELECT id::text, start_seconds, end_seconds FROM clips WHERE asset_id = %s ORDER BY rank", (asset_id,)
+        ).fetchall()
+        return [{"id": r[0], "start": r[1], "end": r[2]} for r in rows]
+
+    def set_face_track(self, clip_id: str, track: dict | None) -> None:
+        self.conn.execute(
+            "UPDATE clips SET face_track = %s WHERE id = %s", (Jsonb(track) if track is not None else None, clip_id)
+        )
+
+    def get_face_track(self, clip_id: str) -> dict | None:
+        row = self.conn.execute("SELECT face_track FROM clips WHERE id = %s", (clip_id,)).fetchone()
+        if not row or row[0] is None:
+            return None
+        return row[0] if not isinstance(row[0], str) else json.loads(row[0])
