@@ -36,7 +36,7 @@ Após o arquivo ser gravado, a API SHALL registrar o source e um job `pending` p
 
 #### Scenario: Jobs criados e primeiro enfileirado
 - **WHEN** o upload termina com sucesso
-- **THEN** o asset SHALL ter os jobs `extract-metadata`, `generate-thumbnail`, `transcode-hls`, `extract-audio` e `transcribe-audio` em `pending`, nessa ordem, e só `extract-metadata` SHALL estar na fila
+- **THEN** o asset SHALL ter os jobs `extract-metadata`, `generate-thumbnail`, `transcode-hls`, `extract-audio`, `transcribe-audio` e `analyze-transcript` em `pending`, nessa ordem, e só `extract-metadata` SHALL estar na fila
 
 #### Scenario: Fila indisponível
 - **WHEN** o primeiro job não pode ser enfileirado

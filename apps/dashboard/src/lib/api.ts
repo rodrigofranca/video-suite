@@ -75,6 +75,22 @@ export interface Transcript {
 	createdAt: string;
 }
 
+export interface Chapter {
+	/** Seconds from the start of the video. */
+	start: number;
+	title: string;
+}
+
+/** Summary, tags and chapters a language model wrote from the transcript. */
+export interface Analysis {
+	language: string;
+	model: string;
+	summary: string;
+	tags: string[];
+	chapters: Chapter[];
+	createdAt: string;
+}
+
 export interface AssetDetail extends Asset {
 	source: { storageKey: string; mimeType: string; sizeBytes: number; checksum: string } | null;
 	jobs: Job[];
@@ -114,6 +130,7 @@ async function getJSON<T>(path: string): Promise<T> {
 export const listAssets = () => getJSON<{ assets: Asset[] }>('/assets').then((r) => r.assets);
 export const getAsset = (id: string) => getJSON<AssetDetail>(`/assets/${encodeURIComponent(id)}`);
 export const getTranscript = (id: string) => getJSON<Transcript>(`/assets/${encodeURIComponent(id)}/transcript`);
+export const getAnalysis = (id: string) => getJSON<Analysis>(`/assets/${encodeURIComponent(id)}/analysis`);
 /** URL of the full metadata (summary and raw ffprobe output) as JSON. */
 export const metadataUrl = (id: string) => `${API_URL}/assets/${encodeURIComponent(id)}/metadata`;
 export const getJobLogs = (id: string) =>

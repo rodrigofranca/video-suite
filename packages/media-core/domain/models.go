@@ -83,3 +83,17 @@ type Transcript struct {
 	Model     string // Whisper model used, e.g. "base"
 	CreatedAt time.Time
 }
+
+// Analysis is what a language model wrote about an asset's transcript,
+// saved by the AI worker (docs/adr/0019).
+type Analysis struct {
+	ID        string
+	AssetID   string
+	JobID     string
+	Language  string // language of the summary, tags and titles (the transcript's)
+	Summary   string
+	Tags      []string
+	Chapters  []byte // JSON: [{"start": 0.0, "title": "..."}], sorted by start
+	Model     string // model that answered, as reported by the gateway
+	CreatedAt time.Time
+}

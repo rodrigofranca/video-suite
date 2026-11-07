@@ -21,11 +21,11 @@ O repositório SHALL seguir estrutura `apps/` para aplicações e `packages/` pa
 - **THEN** nenhum desses arquivos SHALL ser ignorado; apenas os binários `/apps/api/api` e `/apps/worker/worker` SHALL ser ignorados
 
 ### Requirement: Docker Compose para infraestrutura local
-O repositório SHALL incluir `docker-compose.yml` na raiz que sobe PostgreSQL, Redis e um storage compatível com S3 (RustFS) prontos para desenvolvimento, com o bucket `ultramedia` criado, CORS liberado para o dashboard local e leitura pública apenas para a saída HLS e as miniaturas.
+O repositório SHALL incluir `docker-compose.yml` na raiz que sobe PostgreSQL, Redis, um storage compatível com S3 (RustFS) e o gateway de modelos de linguagem (LiteLLM) prontos para desenvolvimento, com o bucket `ultramedia` criado, CORS liberado para o dashboard local e leitura pública apenas para a saída HLS e as miniaturas.
 
 #### Scenario: Infraestrutura sobe em um comando
 - **WHEN** o desenvolvedor executa `make up`
-- **THEN** PostgreSQL SHALL estar acessível em `localhost:5432`, Redis em `localhost:6379` e o storage S3 em `localhost:9000`
+- **THEN** PostgreSQL SHALL estar acessível em `localhost:5432`, Redis em `localhost:6379`, o storage S3 em `localhost:9000` e o gateway em `localhost:4000`, este só a partir da própria máquina
 
 #### Scenario: Bucket e CORS prontos após make up
 - **WHEN** `make up` termina
@@ -48,7 +48,7 @@ O repositório SHALL incluir `Makefile` na raiz com targets documentados para as
 
 #### Scenario: Targets obrigatórios presentes
 - **WHEN** o desenvolvedor executa `make help` ou `make`
-- **THEN** os targets `up`, `down`, `demo`, `demo-logs`, `sample`, `sample-speech`, `migrate`, `migrate-down`, `dev-api`, `dev-worker`, `dev-ai-worker`, `dev-dashboard`, `build`, `test`, `test-go` e `test-ai` SHALL estar listados
+- **THEN** os targets `up`, `down`, `demo`, `demo-logs`, `sample`, `sample-speech`, `llm-check`, `migrate`, `migrate-down`, `dev-api`, `dev-worker`, `dev-ai-worker`, `dev-dashboard`, `build`, `test`, `test-go` e `test-ai` SHALL estar listados
 
 #### Scenario: Migrate executa migrações
 - **WHEN** o desenvolvedor executa `make migrate` com infraestrutura rodando

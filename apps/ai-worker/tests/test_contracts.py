@@ -30,10 +30,17 @@ def test_transcribe_input_matches_go(golden):
     assert golden["examples"][contracts.JOB_EXTRACT_AUDIO]["audio_key"] == contracts.audio_key(inp.asset_id)
 
 
+def test_analyze_input_matches_go(golden):
+    example = golden["examples"][contracts.JOB_ANALYZE_TRANSCRIPT]
+    assert contracts.AnalyzeTranscriptInput.from_json(json.dumps(example)).asset_id == example["asset_id"]
+    assert set(example) == {"asset_id"}
+
+
 def test_next_job_type():
     assert contracts.next_job_type(contracts.JOB_TRANSCODE_HLS) == contracts.JOB_EXTRACT_AUDIO
     assert contracts.next_job_type(contracts.JOB_EXTRACT_AUDIO) == contracts.JOB_TRANSCRIBE_AUDIO
-    assert contracts.next_job_type(contracts.JOB_TRANSCRIBE_AUDIO) is None
+    assert contracts.next_job_type(contracts.JOB_TRANSCRIBE_AUDIO) == contracts.JOB_ANALYZE_TRANSCRIPT
+    assert contracts.next_job_type(contracts.JOB_ANALYZE_TRANSCRIPT) is None
     assert contracts.next_job_type("unknown") is None
 
 

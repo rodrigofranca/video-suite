@@ -332,6 +332,38 @@ func (s *Store) GetTranscript(ctx context.Context, assetID string) (domain.Trans
 	return t, notFound(err)
 }
 
+// ---- Analyses ----
+
+// SaveAnalysis stores an asset's analysis, replacing any earlier one.
+func (s *Store) SaveAnalysis(ctx context.Context, a domain.Analysis) error {
+	tags, chapters := a.Tags, a.Chapters
+	if tags == nil {
+		tags = []string{}
+	}
+	if chapters == nil {
+		chapters = []byte("[]")
+	}
+	_, err := s.db.Exec(ctx,
+		`INSERT INTO analyses (id, asset_id, job_id, language, summary, tags, chapters, model)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (asset_id) DO UPDATE
+		 SET id = EXCLUDED.id, job_id = EXCLUDED.job_id, language = EXCLUDED.language,
+		     summary = EXCLUDED.summary, tags = EXCLUDED.tags, chapters = EXCLUDED.chapters,
+		     model = EXCLUDED.model, created_at = NOW()`,
+		a.ID, a.AssetID, a.JobID, a.Language, a.Summary, tags, chapters, a.Model)
+	return err
+}
+
+// GetAnalysis returns an asset's analysis.
+func (s *Store) GetAnalysis(ctx context.Context, assetID string) (domain.Analysis, error) {
+	var a domain.Analysis
+	err := s.db.QueryRow(ctx,
+		`SELECT id, asset_id, job_id, language, summary, tags, chapters, model, created_at
+		 FROM analyses WHERE asset_id = $1`, assetID).
+		Scan(&a.ID, &a.AssetID, &a.JobID, &a.Language, &a.Summary, &a.Tags, &a.Chapters, &a.Model, &a.CreatedAt)
+	return a, notFound(err)
+}
+
 // ---- Artifacts ----
 
 func (s *Store) CreateArtifact(ctx context.Context, a domain.Artifact) error {

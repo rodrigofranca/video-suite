@@ -1,15 +1,17 @@
 # Demo script
 
-A 5-minute walkthrough of the Milestone 1 pipeline. It needs only Docker.
+A 5-minute walkthrough of the pipeline, from upload to AI summary. It needs Docker and, for the summary, an OpenCode API key.
 
 ## Before the demo
 
 ```sh
-make demo     # builds and starts everything (first build takes a few minutes)
-make sample   # creates samples/sample.mp4: 30 s, 720p, with a tone (no speech)
+cp .env.example .env   # set OPENCODE_API_KEY for summaries, tags and chapters
+make demo              # builds and starts everything (first build takes a few minutes)
+make llm-check         # should print OK: the language model answers through the gateway
+make sample            # creates samples/sample.mp4: 30 s, 720p, with a tone (no speech)
 ```
 
-For the transcription part, use a short MP4 with someone speaking (a phone recording works), or `make sample-speech` if your FFmpeg has flite (Ubuntu and Debian builds do). The first `make demo` downloads the Whisper model, so give the AI worker a minute before the first upload.
+For the transcription and summary part, use an MP4 of a minute or more with someone speaking about a few topics (a phone recording works; chapters only appear for videos that change topic), or `make sample-speech` if your FFmpeg has flite (Ubuntu and Debian builds do). The first `make demo` downloads the Whisper model, so give the AI worker a minute before the first upload.
 
 Open http://localhost:5173. Keep `make demo-logs` running in a terminal if you want to show the worker output.
 
@@ -22,9 +24,10 @@ Open http://localhost:5173. Keep `make demo-logs` running in a terminal if you w
 5. **Metadata.** Show the details card (duration, resolution, codecs, bitrate) and open **ffprobe JSON**.
 6. **Playback.** Press play. "This is HLS, read straight from storage, played with hls.js."
 7. **Transcript and subtitles.** "After the video is playable, the Go worker extracts the audio and a Python worker transcribes it with Whisper, locally." Turn on the subtitles in the player, then click a line of the transcript to jump there.
-8. **Run a job again.** Open **Thumbnail**, click **Run again**. "A new attempt is added; the earlier one stays in the history."
-9. **The list.** Go back to **Videos**: thumbnail, duration, resolution, status.
-10. **What's next.** "Next: summaries, tags and chapters from the transcript."
+8. **Summary, tags and chapters.** "Then a language model reads the transcript and writes a summary, tags and chapters. The call goes through a LiteLLM gateway, so the model or provider can change without touching the code." Click a chapter to jump there.
+9. **Run a job again.** Open **Thumbnail**, click **Run again**. "A new attempt is added; the earlier one stays in the history."
+10. **The list.** Go back to **Videos**: thumbnail, duration, resolution, status.
+11. **What's next.** "Next: the gateway moves to its own server, shared by other projects over a private network."
 
 ## After the demo
 

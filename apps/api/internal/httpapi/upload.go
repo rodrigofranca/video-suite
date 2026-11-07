@@ -176,6 +176,8 @@ func jobInput(jobType, assetID, sourceKey string) ([]byte, error) {
 	case jobcontracts.JobTypeTranscribeAudio:
 		// Empty language: Whisper detects it.
 		input = jobcontracts.TranscribeAudioInput{AssetID: assetID, AudioKey: storage.AudioKey(assetID)}
+	case jobcontracts.JobTypeAnalyzeTranscript:
+		input = jobcontracts.AnalyzeTranscriptInput{AssetID: assetID}
 	default:
 		return nil, fmt.Errorf("%w %q", errUnknownJobType, jobType)
 	}

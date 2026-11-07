@@ -1,0 +1,30 @@
+# LiteLLM gateway (docs/adr/0018). UltraMedia services call it with the
+# OpenAI API and a model name defined here, never a provider's: the provider,
+# its model ID and its key live only in this file and the gateway's
+# environment. To switch models or providers, change this file and restart
+# the gateway; no service changes.
+model_list:
+  # Text model for transcript analysis: summary, tags and chapters.
+  - model_name: ultramedia-text
+    litellm_params:
+      # OpenCode Zen (pay per use), through its OpenAI-compatible endpoint:
+      # "openai/" + the OpenCode model ID. Claude Haiku 5.5 is cheap ($0.10 in,
+      # $0.50 out per million tokens) and writes well in many languages.
+      # Others on the same endpoint: gpt-6-luna, deepseek-v4.1-flash,
+      # claude-sonnet-5-5. Full list: GET https://opencode.ai/zen/v1/models.
+      # Not usable here: OpenCode Go (meant for coding agents) and the free
+      # models (they only work inside OpenCode).
+      model: openai/claude-haiku-5-5
+      # https://opencode.ai/inference/openai/v1 unless set (tests point it
+      # at a fake provider).
+      api_base: os.environ/OPENCODE_API_BASE
+      api_key: os.environ/OPENCODE_API_KEY
+
+litellm_settings:
+  # Leave out parameters a provider does not accept instead of failing.
+  drop_params: true
+
+general_settings:
+  # Callers send this key as "Authorization: Bearer ...". On a shared
+  # server, give each project its own virtual key instead (needs a database).
+  master_key: os.environ/LITELLM_MASTER_KEY

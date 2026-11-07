@@ -30,7 +30,8 @@ const jobLabels: Record<string, string> = {
 	'generate-thumbnail': 'Thumbnail',
 	'transcode-hls': 'HLS encoding',
 	'extract-audio': 'Audio',
-	'transcribe-audio': 'Transcription'
+	'transcribe-audio': 'Transcription',
+	'analyze-transcript': 'Summary'
 };
 
 const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });

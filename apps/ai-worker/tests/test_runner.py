@@ -61,9 +61,15 @@ def test_success_chains_next_job(h):
     assert messages[3].startswith("queued next job next_type=transcribe-audio")
 
 
-def test_last_job_does_not_chain(h):
+def test_transcription_chains_analysis_on_the_ai_stream(h):
     h.process(contracts.JOB_TRANSCRIBE_AUDIO)
-    assert h.job(contracts.JOB_TRANSCRIBE_AUDIO).status == "done"
+    assert [m.job_id for m in h.enqueued] == [h.asset["jobs"][contracts.JOB_ANALYZE_TRANSCRIPT]]
+    assert h.enqueued[0].stream == contracts.STREAM_AI
+
+
+def test_last_job_does_not_chain(h):
+    h.process(contracts.JOB_ANALYZE_TRANSCRIPT)
+    assert h.job(contracts.JOB_ANALYZE_TRANSCRIPT).status == "done"
     assert h.enqueued == []
 
 

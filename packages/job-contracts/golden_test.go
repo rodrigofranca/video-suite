@@ -32,8 +32,9 @@ func contractsDoc() map[string]any {
 		"pipeline": Pipeline,
 		"routes":   routes,
 		"examples": map[string]json.RawMessage{
-			JobTypeExtractAudio:    example(ExtractAudioInput{AssetID: "11111111-1111-4111-8111-111111111111", StorageKey: "assets/11111111-1111-4111-8111-111111111111/source/input.mp4", AudioKey: "assets/11111111-1111-4111-8111-111111111111/audio/audio.flac"}),
-			JobTypeTranscribeAudio: example(TranscribeAudioInput{AssetID: "11111111-1111-4111-8111-111111111111", AudioKey: "assets/11111111-1111-4111-8111-111111111111/audio/audio.flac", Language: "pt"}),
+			JobTypeExtractAudio:      example(ExtractAudioInput{AssetID: "11111111-1111-4111-8111-111111111111", StorageKey: "assets/11111111-1111-4111-8111-111111111111/source/input.mp4", AudioKey: "assets/11111111-1111-4111-8111-111111111111/audio/audio.flac"}),
+			JobTypeTranscribeAudio:   example(TranscribeAudioInput{AssetID: "11111111-1111-4111-8111-111111111111", AudioKey: "assets/11111111-1111-4111-8111-111111111111/audio/audio.flac", Language: "pt"}),
+			JobTypeAnalyzeTranscript: example(AnalyzeTranscriptInput{AssetID: "11111111-1111-4111-8111-111111111111"}),
 		},
 	}
 }
@@ -60,7 +61,8 @@ func TestContractsGoldenFile(t *testing.T) {
 }
 
 func TestStreamFor(t *testing.T) {
-	if StreamFor(JobTypeTranscribeAudio) != StreamAIJobs || StreamFor(JobTypeExtractAudio) != StreamJobs || StreamFor("unknown") != StreamJobs {
+	if StreamFor(JobTypeTranscribeAudio) != StreamAIJobs || StreamFor(JobTypeAnalyzeTranscript) != StreamAIJobs ||
+		StreamFor(JobTypeExtractAudio) != StreamJobs || StreamFor("unknown") != StreamJobs {
 		t.Fatal("unexpected routing")
 	}
 	if (Message{Type: JobTypeTranscribeAudio}).Stream() != StreamAIJobs {

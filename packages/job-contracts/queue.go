@@ -33,7 +33,8 @@ type Message struct {
 
 // aiJobTypes are the job types run by the Python AI worker.
 var aiJobTypes = map[string]bool{
-	JobTypeTranscribeAudio: true,
+	JobTypeTranscribeAudio:   true,
+	JobTypeAnalyzeTranscript: true,
 }
 
 // StreamFor returns the stream a job type is queued on.
