@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { clipFileUrl, clipFormats, type CaptionStyle, type Clip, type ClipFormat } from '$lib/api';
-	import { clipFormatLabel, formatBytes, formatClock } from '$lib/format';
+	import { captionStyles, clipFileUrl, clipFormats, type CaptionStyle, type Clip, type ClipFormat } from '$lib/api';
+	import { captionStyleLabel, clipFormatLabel, formatBytes, formatClock } from '$lib/format';
 
 	let {
 		clips,
@@ -22,9 +22,10 @@
 	} = $props();
 
 	type Choice = CaptionStyle | 'off';
-	// Captions per clip: word by word when possible, else lines, else none.
+	// Captions per clip: highlighted words when possible, else lines, else none.
 	let choice = $state<Record<string, Choice>>({});
-	let fallback = $derived<Choice>(wordTimings ? 'words' : hasSubtitles ? 'lines' : 'off');
+	let fallback = $derived<Choice>(wordTimings ? 'highlight' : hasSubtitles ? 'lines' : 'off');
+	const available = (style: CaptionStyle) => (style === 'lines' ? hasSubtitles : wordTimings);
 	const captionsOf = (clip: Clip): Choice => choice[clip.id] ?? fallback;
 	let starting = $state(''); // "clipId:format" being queued
 	let error = $state('');
@@ -35,7 +36,7 @@
 		error = '';
 		try {
 			const c = captionsOf(clip);
-			await onexport(clip.id, format, c !== 'off', c === 'off' ? 'words' : c);
+			await onexport(clip.id, format, c !== 'off', c === 'off' ? 'highlight' : c);
 		} catch (e) {
 			error = (e as Error).message;
 		} finally {
@@ -49,7 +50,7 @@
 
 {#if hasSubtitles && !wordTimings}
 	<p class="muted hint">
-		Word-by-word captions need a new transcription: run <strong>Transcription</strong> again below.
+		Captions that follow each word need a new transcription: run <strong>Transcription</strong> again below.
 	</p>
 {/if}
 <ol class="clips" data-testid="clips">
@@ -75,8 +76,9 @@
 							onchange={(e) => (choice[clip.id] = e.currentTarget.value as Choice)}
 							data-testid="caption-style"
 						>
-							<option value="words" disabled={!wordTimings}>Word by word</option>
-							<option value="lines" disabled={!hasSubtitles}>Lines</option>
+							{#each captionStyles as style (style)}
+								<option value={style} disabled={!available(style)}>{captionStyleLabel(style)}</option>
+							{/each}
 							<option value="off">Off</option>
 						</select>
 					</label>
@@ -114,9 +116,7 @@
 							<a href={clipFileUrl(clip.id, format)} data-testid="download">Download</a>
 							<span class="status">
 								{ex.sizeBytes ? formatBytes(ex.sizeBytes) : ''}{ex.captions
-									? ex.captionStyle === 'lines'
-										? ' · CC lines'
-										: ' · CC words'
+									? ` · ${captionStyleLabel(ex.captionStyle ?? 'lines')}`
 									: ''}
 							</span>
 						{/if}

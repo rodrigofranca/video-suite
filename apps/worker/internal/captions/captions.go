@@ -168,9 +168,9 @@ func WriteASS(w io.Writer, cues []Cue, st Style) error {
 	return nil
 }
 
-// writeHeader writes the ASS script info and the Default style: bold white
-// DejaVu Sans with a dark outline, bottom center.
-func writeHeader(w io.Writer, st Style) error {
+// writeHeader writes the ASS script info, the Default style (bold white
+// DejaVu Sans with a dark outline, bottom center) and any extra style lines.
+func writeHeader(w io.Writer, st Style, extraStyles ...string) error {
 	outline := max(st.FontSize/12, 2)
 	margin := st.Width * 6 / 100
 	_, err := fmt.Fprintf(w, `[Script Info]
@@ -183,10 +183,10 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Default,DejaVu Sans,%d,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,%d,%d,2,%d,%d,%d,1
-
+%s
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-`, st.Width, st.Height, st.FontSize, outline, outline/2, margin, margin, st.MarginV)
+`, st.Width, st.Height, st.FontSize, outline, outline/2, margin, margin, st.MarginV, extraLines(extraStyles))
 	return err
 }
 
@@ -202,3 +202,11 @@ func assTime(sec float64) string {
 var escaper = strings.NewReplacer(`\`, "", "{", "(", "}", ")", "\n", " ")
 
 func escape(s string) string { return escaper.Replace(s) }
+
+func extraLines(lines []string) string {
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString(l + "\n")
+	}
+	return b.String()
+}

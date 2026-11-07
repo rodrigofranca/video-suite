@@ -28,18 +28,25 @@ const (
 // ClipFormats lists the export formats, in the order the dashboard shows them.
 var ClipFormats = []string{ClipFormatOriginal, ClipFormatVertical, ClipFormatVerticalBlur}
 
-// Burned-in caption styles (ExportClipInput.CaptionStyle).
+// Burned-in caption styles (ExportClipInput.CaptionStyle). All but
+// CaptionStyleLines follow the transcript's word timings; without them the
+// export falls back to CaptionStyleLines (docs/adr/0021).
 const (
-	// CaptionStyleWords shows short phrases with the word being said
-	// highlighted. It needs the transcript's word timings; without them the
-	// export falls back to CaptionStyleLines.
-	CaptionStyleWords = "words"
+	// CaptionStyleHighlight shows a short phrase with the word being said in yellow.
+	CaptionStyleHighlight = "highlight"
+	// CaptionStyleBox shows a short phrase with a box behind the word being said.
+	CaptionStyleBox = "box"
+	// CaptionStyleKaraoke shows a short phrase whose words fill with color as they are said.
+	CaptionStyleKaraoke = "karaoke"
+	// CaptionStyleOneWord shows only the word being said, big and in capitals.
+	CaptionStyleOneWord = "one-word"
 	// CaptionStyleLines shows the subtitle lines, as in the player.
 	CaptionStyleLines = "lines"
 )
 
-// CaptionStyles lists the caption styles; the first is the default.
-var CaptionStyles = []string{CaptionStyleWords, CaptionStyleLines}
+// CaptionStyles lists the caption styles, in the order the dashboard shows
+// them; the first is the default.
+var CaptionStyles = []string{CaptionStyleHighlight, CaptionStyleBox, CaptionStyleKaraoke, CaptionStyleOneWord, CaptionStyleLines}
 
 type ExtractMetadataInput struct {
 	AssetID    string `json:"asset_id"`
@@ -90,7 +97,7 @@ type SuggestClipsInput struct {
 // ExportClipInput asks the media worker to cut a clip out of the source as an
 // MP4 at OutputKey. The clip's start and end are read from the database when
 // the job runs. Captions burns the asset's speech into the picture, in
-// CaptionStyle (empty means CaptionStyleWords).
+// CaptionStyle (empty means CaptionStyleHighlight).
 type ExportClipInput struct {
 	AssetID      string `json:"asset_id"`
 	ClipID       string `json:"clip_id"`

@@ -92,8 +92,9 @@ export interface Analysis {
 }
 
 export type ClipFormat = 'original' | 'vertical' | 'vertical-blur';
-/** Burned-in captions: highlighted word by word, or subtitle lines. */
-export type CaptionStyle = 'words' | 'lines';
+/** Burned-in captions. All but 'lines' follow the transcript's word timings. */
+export type CaptionStyle = 'highlight' | 'box' | 'karaoke' | 'one-word' | 'lines';
+export const captionStyles: CaptionStyle[] = ['highlight', 'box', 'karaoke', 'one-word', 'lines'];
 export const clipFormats: ClipFormat[] = ['original', 'vertical', 'vertical-blur'];
 
 /** The newest export of a clip in one format. */

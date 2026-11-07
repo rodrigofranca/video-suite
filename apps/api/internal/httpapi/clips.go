@@ -183,7 +183,7 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 		body.CaptionStyle = jobcontracts.CaptionStyles[0]
 	}
 	if err != nil || !slices.Contains(jobcontracts.ClipFormats, body.Format) || !slices.Contains(jobcontracts.CaptionStyles, body.CaptionStyle) {
-		writeError(w, http.StatusBadRequest, `expected a JSON body like {"format": "vertical", "captions": true, "captionStyle": "words"}; formats: `+
+		writeError(w, http.StatusBadRequest, `expected a JSON body like {"format": "vertical", "captions": true, "captionStyle": "highlight"}; formats: `+
 			strings.Join(jobcontracts.ClipFormats, ", ")+"; caption styles: "+strings.Join(jobcontracts.CaptionStyles, ", "))
 		return
 	}

@@ -122,10 +122,14 @@ const (
 // the style used, or an empty path, not an error, when there is nothing to
 // burn in.
 func (m Media) clipCaptions(ctx context.Context, job Job, in jobcontracts.ExportClipInput, clip domain.Clip, width, height int, dir string) (string, string, string, error) {
-	if in.CaptionStyle != jobcontracts.CaptionStyleLines {
-		path, language, err := m.wordCaptions(ctx, job, in.AssetID, clip, width, height, dir)
+	style := in.CaptionStyle
+	if style == "" {
+		style = jobcontracts.CaptionStyles[0]
+	}
+	if style != jobcontracts.CaptionStyleLines {
+		path, language, err := m.wordCaptions(ctx, job, in.AssetID, style, clip, width, height, dir)
 		if err != nil || path != "" {
-			return path, language, jobcontracts.CaptionStyleWords, err
+			return path, language, style, err
 		}
 	}
 	path, language, err := m.lineCaptions(ctx, job, in.AssetID, clip, width, height, dir)
@@ -135,9 +139,10 @@ func (m Media) clipCaptions(ctx context.Context, job Job, in jobcontracts.Export
 	return path, language, jobcontracts.CaptionStyleLines, err
 }
 
-// wordCaptions returns an empty path when the transcript has no word
-// timings for the clip, so the caller can fall back to line captions.
-func (m Media) wordCaptions(ctx context.Context, job Job, assetID string, clip domain.Clip, width, height int, dir string) (string, string, error) {
+// wordCaptions writes captions that follow the transcript's word timings,
+// in one of the word styles. It returns an empty path when the transcript has
+// no word timings for the clip, so the caller can fall back to line captions.
+func (m Media) wordCaptions(ctx context.Context, job Job, assetID, style string, clip domain.Clip, width, height int, dir string) (string, string, error) {
 	tr, err := m.Store.GetTranscript(ctx, assetID)
 	if errors.Is(err, store.ErrNotFound) {
 		return "", "", nil
@@ -150,24 +155,36 @@ func (m Media) wordCaptions(ctx context.Context, job Job, assetID string, clip d
 		return "", "", err
 	}
 	if len(all) == 0 {
-		job.Log.Warn("this transcript has no word timings (it was made before they were saved); using line captions. Run the transcription again for word-by-word captions")
+		job.Log.Warn("this transcript has no word timings (it was made before they were saved); using line captions. Run the transcription again for the " + style + " style")
 		return "", "", nil
 	}
 	maxWords, maxChars := phraseWordsOriginal, phraseCharsOriginal
 	if height > width {
 		maxWords, maxChars = phraseWordsVertical, phraseCharsVertical
 	}
-	phrases := captions.Phrases(captions.CutWords(all, clip.Start, clip.End), maxWords, maxChars)
+	words := captions.CutWords(all, clip.Start, clip.End)
+	phrases := captions.Phrases(words, maxWords, maxChars)
 	if len(phrases) == 0 {
 		return "", "", nil
 	}
 	path := filepath.Join(dir, "captions.ass")
-	if err := writeFile(path, func(f *os.File) error {
-		return captions.WriteASSWords(f, phrases, captions.WordStyleFor(width, height))
-	}); err != nil {
+	err = writeFile(path, func(f *os.File) error {
+		phraseStyle := captions.WordStyleFor(width, height)
+		switch style {
+		case jobcontracts.CaptionStyleBox:
+			return captions.WriteBox(f, phrases, phraseStyle)
+		case jobcontracts.CaptionStyleKaraoke:
+			return captions.WriteKaraoke(f, phrases, phraseStyle)
+		case jobcontracts.CaptionStyleOneWord:
+			return captions.WriteOneWord(f, words, captions.OneWordStyleFor(width, height))
+		default:
+			return captions.WriteHighlight(f, phrases, phraseStyle)
+		}
+	})
+	if err != nil {
 		return "", "", err
 	}
-	job.Log.Info(fmt.Sprintf("burning in word-by-word captions: %d phrases (%s)", len(phrases), tr.Language))
+	job.Log.Info(fmt.Sprintf("burning in %s captions: %d words in %d phrases (%s)", style, len(words), len(phrases), tr.Language))
 	return path, tr.Language, nil
 }
 

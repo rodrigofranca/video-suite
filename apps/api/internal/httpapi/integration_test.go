@@ -614,7 +614,7 @@ func TestClips(t *testing.T) {
 	if code := e.post(exportPath, `{"format": "square"}`, nil); code != http.StatusBadRequest {
 		t.Fatalf("bad format: %d", code)
 	}
-	if code := e.post(exportPath, `{"format": "vertical", "captionStyle": "karaoke"}`, nil); code != http.StatusBadRequest {
+	if code := e.post(exportPath, `{"format": "vertical", "captionStyle": "comic-sans"}`, nil); code != http.StatusBadRequest {
 		t.Fatalf("bad caption style: %d", code)
 	}
 	if code := e.post("/assets/"+id+"/clips/"+domain.NewID()+"/exports", `{"format": "vertical"}`, nil); code != http.StatusNotFound {
@@ -630,7 +630,7 @@ func TestClips(t *testing.T) {
 	}
 	msg := e.enqueued[len(e.enqueued)-1]
 	in, err := jobcontracts.Decode[jobcontracts.ExportClipInput](msg)
-	if err != nil || msg.Stream() != jobcontracts.StreamJobs || in.ClipID != best || in.Format != "vertical" || in.Captions || in.CaptionStyle != "words" ||
+	if err != nil || msg.Stream() != jobcontracts.StreamJobs || in.ClipID != best || in.Format != "vertical" || in.Captions || in.CaptionStyle != "highlight" ||
 		in.StorageKey != storage.SourceKey(id) || in.OutputKey != storage.ClipKey(id, best, "vertical") {
 		t.Fatalf("queued %+v (%v) on %s", in, err, msg.Stream())
 	}
