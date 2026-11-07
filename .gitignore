@@ -1,7 +1,7 @@
-# Go build artifacts
-apps/api/api
-apps/worker/worker
-worker
+# Go build artifacts (anchored so they never match source folders like apps/worker/)
+/apps/api/api
+/apps/worker/worker
+/bin/
 
 # Dependencies
 node_modules
@@ -25,5 +25,6 @@ Thumbs.db
 data/
 volumes/
 
-# MinIO local data
+# Local object storage data
 minio-data/
+storage-data/

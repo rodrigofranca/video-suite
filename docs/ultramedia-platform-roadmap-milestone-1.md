@@ -7,6 +7,8 @@
 **Version:** 0.1  
 **Owner:** Rodrigo França  
 
+> **Note (2026-11-07):** the epics and order below are still the plan, but some details are out of date (statuses, tables, job order, MinIO). Where this roadmap disagrees with `CONTEXT.md`, `docs/adr/` or `openspec/specs/`, those win. See [`docs/README.md`](README.md).
+
 ---
 
 # 1. Milestone Goal

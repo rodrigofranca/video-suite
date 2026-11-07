@@ -1,29 +1,46 @@
-.PHONY: up down migrate migrate-down dev-api dev-worker dev-dashboard help
+.PHONY: help up down migrate migrate-down dev-api dev-worker dev-dashboard build test env-check
 
-include .env 2>/dev/null || true
+# Load local settings (copy .env.example to .env first).
+-include .env
 export
 
+GO_PACKAGES := ./apps/api/... ./apps/worker/... ./packages/job-contracts/... ./packages/media-core/...
+MIGRATIONS  := apps/api/migrations
+# Runs the golang-migrate CLI without installing it globally.
+MIGRATE     := go run -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.19.1
+
 help: ## Show available targets
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-up: ## Start all infrastructure services (postgres, redis, minio)
-	DOCKER_CONFIG=/tmp/dockercfg docker compose up -d 2>/dev/null || docker compose up -d
+up: ## Start infrastructure (postgres, redis, storage) and create the bucket
+	docker compose up -d --wait postgres redis storage
+	docker compose run --rm storage-init
 
-down: ## Stop and remove all infrastructure containers
+down: ## Stop and remove all infrastructure containers (data volumes are kept)
 	docker compose down
 
-migrate: ## Apply all pending database migrations
-	@migrate -path apps/api/migrations -database "$(DATABASE_URL)" up
+migrate: env-check ## Apply all pending database migrations
+	@$(MIGRATE) -path $(MIGRATIONS) -database "$(DATABASE_URL)" up
 
-migrate-down: ## Revert all database migrations
-	@migrate -path apps/api/migrations -database "$(DATABASE_URL)" down $$(migrate -path apps/api/migrations -database "$(DATABASE_URL)" version 2>/dev/null | awk '{print $$1}')
+migrate-down: env-check ## Revert all database migrations
+	@$(MIGRATE) -path $(MIGRATIONS) -database "$(DATABASE_URL)" down -all
 
-dev-api: ## Start API development server on port 8080
+dev-api: env-check ## Start API development server on port 8080
 	@go run ./apps/api/cmd/api
 
-dev-worker: ## Start worker development process
+dev-worker: env-check ## Start worker development process
 	@go run ./apps/worker/cmd/worker
 
 dev-dashboard: ## Start SvelteKit dashboard dev server on port 5173
-	@cd apps/dashboard && npm run dev
+	@cd apps/dashboard && (test -d node_modules || npm install) && npm run dev
+
+build: ## Build all Go modules
+	go build $(GO_PACKAGES)
+
+test: ## Run Go vet and unit tests
+	go vet $(GO_PACKAGES)
+	go test $(GO_PACKAGES)
+
+env-check:
+	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is not set. Run: cp .env.example .env" && exit 1)

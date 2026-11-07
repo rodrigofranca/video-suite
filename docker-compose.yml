@@ -9,6 +9,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ultramedia -d ultramedia"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
   redis:
     image: redis:7-alpine
@@ -16,20 +21,57 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
+  # S3-compatible object storage (see docs/adr/0008-rustfs-for-local-storage.md).
+  # API on :9000, web console on :9001.
+  storage:
+    image: rustfs/rustfs:1.0.4
     environment:
-      MINIO_ROOT_USER: ultramedia
-      MINIO_ROOT_PASSWORD: ultramedia
+      RUSTFS_ACCESS_KEY: ultramedia
+      RUSTFS_SECRET_KEY: ultramedia
+      RUSTFS_CONSOLE_ENABLE: "true"
     ports:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - minio_data:/data
+      - storage_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # One-shot job: creates the bucket, applies CORS and makes only the HLS
+  # output (assets/*/hls/*) publicly readable, so the dashboard player
+  # (localhost:5173) can fetch it straight from storage. See docs/adr/0010.
+  storage-init:
+    image: amazon/aws-cli:2.39.6
+    depends_on:
+      storage:
+        condition: service_healthy
+    environment:
+      AWS_ACCESS_KEY_ID: ultramedia
+      AWS_SECRET_ACCESS_KEY: ultramedia
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - ./infra/storage:/config:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        S3="aws --endpoint-url http://storage:9000"
+        $$S3 s3api head-bucket --bucket ultramedia 2>/dev/null || $$S3 s3api create-bucket --bucket ultramedia
+        $$S3 s3api put-bucket-cors --bucket ultramedia --cors-configuration file:///config/cors.json
+        $$S3 s3api put-bucket-policy --bucket ultramedia --policy file:///config/public-hls-policy.json
+        echo "bucket ultramedia ready"
+    restart: "no"
 
 volumes:
   postgres_data:
   redis_data:
-  minio_data:
+  storage_data:

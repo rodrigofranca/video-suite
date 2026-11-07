@@ -1,4 +1,9 @@
-## ADDED Requirements
+# media-asset-model Specification
+
+## Purpose
+Define o modelo de dados de mídia: tabelas do PostgreSQL criadas por migrações versionadas e as structs Go que representam essas entidades.
+
+## Requirements
 
 ### Requirement: Schema de banco de dados para entidades core
 O banco de dados SHALL conter as tabelas `media_assets`, `media_sources`, `processing_jobs`, `job_logs`, `artifacts` e `technical_metadata` criadas via migrações versionadas com golang-migrate.
@@ -30,8 +35,27 @@ Todas as tabelas SHALL usar UUID como chave primária. UUIDs SHALL ser gerados p
 - **THEN** nenhuma tabela SHALL ter coluna `SERIAL`, `BIGSERIAL` ou `GENERATED ALWAYS AS IDENTITY` como PK
 
 ### Requirement: Structs Go mapeando entidades do banco
-O módulo `apps/api` SHALL conter structs Go para cada entidade do banco em pacote `internal/domain`, com campos correspondentes às colunas.
+O módulo compartilhado `packages/media-core` SHALL conter structs Go para cada entidade do banco no pacote `domain`, com campos correspondentes às colunas, importáveis pela API e pelo worker.
 
 #### Scenario: Struct Asset compilável
-- **WHEN** `go build ./...` é executado em `apps/api`
+- **WHEN** `go build ./...` é executado em `packages/media-core`
 - **THEN** a struct `Asset` SHALL compilar sem erros com campos: `ID`, `Status`, `Filename`, `CreatedAt`, `UpdatedAt`
+
+#### Scenario: Domínio importável fora da API
+- **WHEN** a API ou o worker importam `ultramedia/media-core/domain`
+- **THEN** o import SHALL resolver via `go.work`, sem `replace` no `go.mod` e sem violar a regra de pacotes `internal` do Go
+
+#### Scenario: Status disponíveis como constantes
+- **WHEN** o código precisa de um status de asset ou de job
+- **THEN** SHALL usar as constantes de `domain` (`AssetUploading`, `AssetProcessing`, `AssetReady`, `AssetFailed`, `JobPending`, `JobRunning`, `JobDone`, `JobFailed`), que correspondem às CHECK constraints do banco
+
+### Requirement: Índices para consultas frequentes
+O schema SHALL ter índices nas chaves estrangeiras usadas em consultas (`asset_id`, `job_id`) e nas colunas de status de assets e jobs, criados por uma migração própria.
+
+#### Scenario: Índices criados pela migração
+- **WHEN** `make migrate` é executado em banco vazio
+- **THEN** SHALL existir índices para `media_assets(status)`, `media_sources(asset_id)`, `processing_jobs(asset_id)`, `processing_jobs(status)`, `job_logs(job_id)`, `artifacts(asset_id)`, `artifacts(job_id)` e `technical_metadata(asset_id)`
+
+#### Scenario: Migração de índices é reversível
+- **WHEN** `make migrate-down` é executado
+- **THEN** os índices SHALL ser removidos junto com as tabelas, sem erro

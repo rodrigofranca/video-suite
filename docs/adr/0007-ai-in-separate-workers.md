@@ -1,0 +1,3 @@
+# Processamento de IA roda em workers separados
+
+Originalmente registrada como "ADR 004" dentro do PRD v0.1. Funcionalidades de IA (transcrição, legendas, resumo, detecção de cenas, clipping) rodam em workers próprios, provavelmente em Python, consumindo o mesmo modelo de Job e o mesmo storage. A alternativa seria chamar modelos a partir do worker Go, mas o ecossistema de IA é muito mais maduro em Python e essas cargas têm perfil de recursos diferente (GPU, memória). Separar mantém a API e o worker de vídeo simples, permite escalar a IA de forma independente e trocar entre modelos locais e APIs externas sem tocar no core. Fora do escopo do MVP1.

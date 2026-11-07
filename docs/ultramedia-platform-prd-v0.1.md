@@ -7,6 +7,8 @@
 **Owner:** Rodrigo França  
 **Last updated:** 2026-05-08  
 
+> **Note (2026-11-07):** this PRD still defines the vision and scope, but some technical details are out of date (statuses, tables, job order, storage server). Where it disagrees with `CONTEXT.md`, `docs/adr/` or `openspec/specs/`, those win. The differences are listed in [`docs/README.md`](README.md).
+
 ---
 
 # 1. Overview
@@ -1115,6 +1117,8 @@ live monitoring
 ---
 
 # 20. Architectural Decisions
+
+> These four decisions now live in `docs/adr/` as 0004–0007, next to the newer ones. The numbers below are kept for reference only.
 
 ## ADR 001 — Start With Modular Monolith
 

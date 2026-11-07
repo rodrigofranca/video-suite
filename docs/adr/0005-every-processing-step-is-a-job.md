@@ -1,0 +1,3 @@
+# Toda etapa pesada de processamento é um Job
+
+Originalmente registrada como "ADR 002" dentro do PRD v0.1. Qualquer operação de vídeo que leve mais que alguns segundos (ffprobe, thumbnail, transcode, e no futuro transcrição e clipping) é modelada como um `Job` persistido em `processing_jobs`, executado fora do ciclo da requisição HTTP. A alternativa seria rodar etapas curtas direto na API, o que parece mais simples no início mas cria dois caminhos de execução com logs, erros e retentativas diferentes. Com um único modelo, fila, status, logs, progresso e retentativas funcionam igual para todas as etapas, e novos tipos de job (incluindo os de IA) entram sem mudar a arquitetura.
