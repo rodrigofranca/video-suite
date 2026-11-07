@@ -53,3 +53,4 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 ## Decisions taken in the AI clipping phase
 
 - [0020](adr/0020-ai-clips.md): the model suggests clips in the pipeline; exports run on request in three formats, with optional burned-in captions, and stay private behind signed download links.
+- [0021](adr/0021-word-by-word-captions.md): transcripts keep each word's timing; clip captions default to short phrases with the spoken word highlighted.

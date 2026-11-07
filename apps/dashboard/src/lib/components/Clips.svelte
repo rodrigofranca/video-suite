@@ -1,24 +1,31 @@
 <script lang="ts">
-	import { clipFileUrl, clipFormats, type Clip, type ClipFormat } from '$lib/api';
+	import { clipFileUrl, clipFormats, type CaptionStyle, type Clip, type ClipFormat } from '$lib/api';
 	import { clipFormatLabel, formatBytes, formatClock } from '$lib/format';
 
 	let {
 		clips,
 		busy = false,
 		hasSubtitles = false,
+		wordTimings = false,
 		onpreview,
 		onexport
 	}: {
 		clips: Clip[];
 		/** Another job of the video is pending or running: exports must wait. */
 		busy?: boolean;
+		/** Line captions need the subtitles. */
 		hasSubtitles?: boolean;
+		/** Word-by-word captions need the transcript's word timings. */
+		wordTimings?: boolean;
 		onpreview?: (start: number, end: number) => void;
-		onexport?: (clipId: string, format: ClipFormat, captions: boolean) => Promise<void>;
+		onexport?: (clipId: string, format: ClipFormat, captions: boolean, style: CaptionStyle) => Promise<void>;
 	} = $props();
 
-	// Burn captions in, per clip; on by default when the video has subtitles.
-	let captions = $state<Record<string, boolean>>({});
+	type Choice = CaptionStyle | 'off';
+	// Captions per clip: word by word when possible, else lines, else none.
+	let choice = $state<Record<string, Choice>>({});
+	let fallback = $derived<Choice>(wordTimings ? 'words' : hasSubtitles ? 'lines' : 'off');
+	const captionsOf = (clip: Clip): Choice => choice[clip.id] ?? fallback;
 	let starting = $state(''); // "clipId:format" being queued
 	let error = $state('');
 
@@ -27,7 +34,8 @@
 		starting = `${clip.id}:${format}`;
 		error = '';
 		try {
-			await onexport(clip.id, format, hasSubtitles && (captions[clip.id] ?? true));
+			const c = captionsOf(clip);
+			await onexport(clip.id, format, c !== 'off', c === 'off' ? 'words' : c);
 		} catch (e) {
 			error = (e as Error).message;
 		} finally {
@@ -39,6 +47,11 @@
 	const running = (clip: Clip) => clip.exports.some((e) => e.status === 'pending' || e.status === 'running');
 </script>
 
+{#if hasSubtitles && !wordTimings}
+	<p class="muted hint">
+		Word-by-word captions need a new transcription: run <strong>Transcription</strong> again below.
+	</p>
+{/if}
 <ol class="clips" data-testid="clips">
 	{#each clips as clip (clip.id)}
 		<li class="card clip">
@@ -54,10 +67,18 @@
 
 			<div class="actions">
 				<button class="secondary" onclick={() => onpreview?.(clip.start, clip.end)}>▶ Preview</button>
-				{#if hasSubtitles}
+				{#if hasSubtitles || wordTimings}
 					<label class="captions">
-						<input type="checkbox" checked={captions[clip.id] ?? true} onchange={(e) => (captions[clip.id] = e.currentTarget.checked)} />
 						Captions
+						<select
+							value={captionsOf(clip)}
+							onchange={(e) => (choice[clip.id] = e.currentTarget.value as Choice)}
+							data-testid="caption-style"
+						>
+							<option value="words" disabled={!wordTimings}>Word by word</option>
+							<option value="lines" disabled={!hasSubtitles}>Lines</option>
+							<option value="off">Off</option>
+						</select>
 					</label>
 				{/if}
 			</div>
@@ -91,7 +112,13 @@
 								preload="metadata"
 							></video>
 							<a href={clipFileUrl(clip.id, format)} data-testid="download">Download</a>
-							<span class="status">{ex.sizeBytes ? formatBytes(ex.sizeBytes) : ''}{ex.captions ? ' · CC' : ''}</span>
+							<span class="status">
+								{ex.sizeBytes ? formatBytes(ex.sizeBytes) : ''}{ex.captions
+									? ex.captionStyle === 'lines'
+										? ' · CC lines'
+										: ' · CC words'
+									: ''}
+							</span>
 						{/if}
 					</div>
 				{/each}
@@ -150,8 +177,20 @@
 	.captions {
 		display: flex;
 		align-items: center;
-		gap: 0.3rem;
+		gap: 0.4rem;
 		font-size: 0.9rem;
+	}
+	.captions select {
+		font: inherit;
+		padding: 0.2rem 0.3rem;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: inherit;
+	}
+	.hint {
+		margin: 0 0 0.5rem;
+		font-size: 0.85rem;
 	}
 	.formats {
 		display: grid;

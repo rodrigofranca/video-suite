@@ -157,6 +157,20 @@ func StyleFor(width, height int) Style {
 
 // WriteASS writes cues as an ASS subtitle file in the given style.
 func WriteASS(w io.Writer, cues []Cue, st Style) error {
+	if err := writeHeader(w, st); err != nil {
+		return err
+	}
+	for _, c := range cues {
+		if _, err := fmt.Fprintf(w, "Dialogue: 0,%s,%s,Default,,0,0,0,,%s\n", assTime(c.Start), assTime(c.End), escape(c.Text)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeHeader writes the ASS script info and the Default style: bold white
+// DejaVu Sans with a dark outline, bottom center.
+func writeHeader(w io.Writer, st Style) error {
 	outline := max(st.FontSize/12, 2)
 	margin := st.Width * 6 / 100
 	_, err := fmt.Fprintf(w, `[Script Info]
@@ -173,15 +187,7 @@ Style: Default,DejaVu Sans,%d,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `, st.Width, st.Height, st.FontSize, outline, outline/2, margin, margin, st.MarginV)
-	if err != nil {
-		return err
-	}
-	for _, c := range cues {
-		if _, err := fmt.Fprintf(w, "Dialogue: 0,%s,%s,Default,,0,0,0,,%s\n", assTime(c.Start), assTime(c.End), escape(c.Text)); err != nil {
-			return err
-		}
-	}
-	return nil
+	return err
 }
 
 // assTime formats seconds as H:MM:SS.cc.

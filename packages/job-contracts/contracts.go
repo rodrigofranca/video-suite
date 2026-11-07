@@ -28,6 +28,19 @@ const (
 // ClipFormats lists the export formats, in the order the dashboard shows them.
 var ClipFormats = []string{ClipFormatOriginal, ClipFormatVertical, ClipFormatVerticalBlur}
 
+// Burned-in caption styles (ExportClipInput.CaptionStyle).
+const (
+	// CaptionStyleWords shows short phrases with the word being said
+	// highlighted. It needs the transcript's word timings; without them the
+	// export falls back to CaptionStyleLines.
+	CaptionStyleWords = "words"
+	// CaptionStyleLines shows the subtitle lines, as in the player.
+	CaptionStyleLines = "lines"
+)
+
+// CaptionStyles lists the caption styles; the first is the default.
+var CaptionStyles = []string{CaptionStyleWords, CaptionStyleLines}
+
 type ExtractMetadataInput struct {
 	AssetID    string `json:"asset_id"`
 	StorageKey string `json:"storage_key"`
@@ -76,14 +89,16 @@ type SuggestClipsInput struct {
 
 // ExportClipInput asks the media worker to cut a clip out of the source as an
 // MP4 at OutputKey. The clip's start and end are read from the database when
-// the job runs. Captions burns the asset's subtitles into the picture.
+// the job runs. Captions burns the asset's speech into the picture, in
+// CaptionStyle (empty means CaptionStyleWords).
 type ExportClipInput struct {
-	AssetID    string `json:"asset_id"`
-	ClipID     string `json:"clip_id"`
-	StorageKey string `json:"storage_key"`
-	Format     string `json:"format"`
-	Captions   bool   `json:"captions"`
-	OutputKey  string `json:"output_key"`
+	AssetID      string `json:"asset_id"`
+	ClipID       string `json:"clip_id"`
+	StorageKey   string `json:"storage_key"`
+	Format       string `json:"format"`
+	Captions     bool   `json:"captions"`
+	CaptionStyle string `json:"caption_style,omitempty"`
+	OutputKey    string `json:"output_key"`
 }
 
 // Pipeline is the order in which an upload's jobs run. The API creates one

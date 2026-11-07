@@ -60,7 +60,7 @@ The API creates all the Job rows as `pending` and enqueues only the first. When 
 
 ## Transcript
 
-What was said in an Asset, written by the `transcribe-audio` Job: language (detected unless given), full text, segments with start and end times, and the Whisper model used. One per Asset in `transcripts`; a re-run replaces it. Subtitles are built from it.
+What was said in an Asset, written by the `transcribe-audio` Job: language (detected unless given), full text, segments with start and end times, every word with its start and end (for word-by-word captions; empty for transcripts made before they were saved), and the Whisper model used. One per Asset in `transcripts`; a re-run replaces it. Subtitles are built from it.
 
 ## Analysis
 
@@ -70,7 +70,7 @@ What a language model wrote about an Asset from its Transcript, by the `analyze-
 
 ## Clip
 
-A moment of an Asset that works as a short standalone video, suggested by the `suggest-clips` Job: start and end on transcript segment boundaries (10 to 90 seconds), title, reason and a score from 1 to 10. Up to 5 per Asset in `clips`; a new suggestion run replaces them. An export (`export-clip`) cuts a Clip into an MP4 in one format, `original`, `vertical` (centre crop, 9:16) or `vertical-blur` (whole frame over a blurred copy, 9:16), optionally with burned-in captions. Exported files are private and downloaded through signed links (ADR 0020).
+A moment of an Asset that works as a short standalone video, suggested by the `suggest-clips` Job: start and end on transcript segment boundaries (10 to 90 seconds), title, reason and a score from 1 to 10. Up to 5 per Asset in `clips`; a new suggestion run replaces them. An export (`export-clip`) cuts a Clip into an MP4 in one format, `original`, `vertical` (centre crop, 9:16) or `vertical-blur` (whole frame over a blurred copy, 9:16), optionally with burned-in captions: word by word, with the word being said highlighted (needs the Transcript's word timings, ADR 0021), or in subtitle lines. Exported files are private and downloaded through signed links (ADR 0020).
 
 **Not**: a Rendition (which is the whole video for playback) or a chapter (which marks a part of the video without cutting it).
 

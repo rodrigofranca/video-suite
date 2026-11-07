@@ -87,3 +87,10 @@ A migração `0011` SHALL criar a tabela `clips` (`asset_id`, `job_id`, `start_s
 #### Scenario: Corte invertido
 - **WHEN** uma inserção tem `end_seconds` menor que `start_seconds`
 - **THEN** o banco SHALL rejeitar com erro de constraint
+
+### Requirement: Palavras da transcrição
+A migração `0012` SHALL adicionar a `transcripts` a coluna `words` (JSONB, `[]` por padrão), com as palavras e seus tempos.
+
+#### Scenario: Transcrição antiga
+- **WHEN** a migração roda num banco com transcrições
+- **THEN** elas SHALL ficar com `words` igual a `[]`
