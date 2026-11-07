@@ -2,7 +2,7 @@
 
 An open source, modular video operations platform. It turns raw video files into structured, playable and observable media assets: upload, metadata extraction, thumbnails, HLS encoding, job logs and playback preview, with AI workflows planned on top.
 
-> **Status:** early development. The Milestone 1 pipeline works end to end in the dashboard: upload, technical metadata (ffprobe), thumbnail, HLS encoding with progress, job logs and playback. See the [Milestone 1 roadmap](docs/ultramedia-platform-roadmap-milestone-1.md).
+> **Status:** Milestone 1 (video processing core) is complete: upload, technical metadata (ffprobe), thumbnail, HLS encoding with progress, job logs, re-runs and playback, runnable with one command. Next is Milestone 2 (AI metadata). See the [roadmap](docs/ultramedia-platform-roadmap-milestone-1.md) and the [known limitations](#known-limitations).
 
 ## Architecture
 
@@ -29,14 +29,25 @@ An upload creates an asset and three jobs: `extract-metadata` → `generate-thum
 | `docs/` | PRD, roadmap and architecture decisions ([map](docs/README.md)) |
 | `openspec/` | Specs and change proposals |
 
-## Requirements
+## Quick start (Docker only)
+
+```sh
+make demo     # builds and starts everything; first build takes a few minutes
+make sample   # optional: creates samples/sample.mp4 to upload
+```
+
+Open http://localhost:5173 and upload an MP4. `make demo-logs` follows the API and worker logs; `make down` stops everything. A walkthrough for presenting it is in [docs/demo.md](docs/demo.md).
+
+## Development
+
+### Requirements
 
 - Go 1.25+
 - Node.js 22+ and npm
 - Docker with Compose v2
 - FFmpeg with libx264, including `ffprobe` (the worker refuses to start without them)
 
-## Getting started
+### Running from source
 
 ```sh
 cp .env.example .env
@@ -65,6 +76,7 @@ Open http://localhost:5173, click **Upload**, pick an MP4 and watch the jobs run
 | `GET` | `/assets/{id}/jobs` | Jobs in pipeline order, with `progress` (0–100) |
 | `GET` | `/assets/{id}/artifacts` | Files produced by jobs |
 | `GET` | `/assets/{id}/playback` | `{"type": "hls", "manifestUrl"}`, or `409` while not ready |
+| `POST` | `/assets/{id}/jobs` | Run one job again: `{"type": "generate-thumbnail"}` → `202` with the new job; `409` while any job of the asset is pending or running |
 | `GET` | `/jobs/{id}` | One job |
 | `GET` | `/jobs/{id}/logs` | Job logs |
 | `GET` | `/healthz` | Database check |
@@ -77,7 +89,9 @@ Open http://localhost:5173, click **Upload**, pick an MP4 and watch the jobs run
 | `make test` | `go vet` and tests. Tests that need PostgreSQL, Redis, storage or FFmpeg are skipped when those are missing |
 | `make build` | Build all Go modules |
 | `make migrate-down` | Revert all migrations |
-| `make down` | Stop infrastructure (data volumes are kept) |
+| `make demo` / `make demo-logs` | Run everything in Docker / follow its API and worker logs |
+| `make sample` | Create `samples/sample.mp4` with the worker image's FFmpeg |
+| `make down` | Stop all containers, including the demo stack (data volumes are kept) |
 
 ## Configuration
 
@@ -95,3 +109,18 @@ All settings come from environment variables; see [`.env.example`](.env.example)
 | `PUBLIC_API_URL` | dashboard | `http://localhost:8080` |
 | `WORKER_NAME` | worker | hostname. Keep it stable so a restarted worker resumes unfinished jobs |
 | `WORKER_TEMP_DIR` | worker (FFmpeg work files) | system temp dir |
+
+## Known limitations
+
+Milestone 1 is a working core, not a production service:
+
+- **No authentication.** Anyone who can reach the API can upload. HLS output and thumbnails are public to anyone with the URL; the demo uses fixed development credentials.
+- **One rendition.** HLS is a single H.264/AAC rendition in MPEG-TS segments, no adaptive bitrate ladder.
+- **MP4 only, up to 2 GB.** Files must start with an MP4 `ftyp` box; MP4s that begin with another box are rejected.
+- **One job at a time.** A single worker runs jobs in order, so a long encode delays the next upload. Jobs have a 30-minute limit.
+- **No automatic retries.** A failed job stays failed until someone runs it again from the dashboard or the API. A re-run runs only that job.
+- **Crash recovery needs a stable worker name.** A restarted worker resumes its own unfinished job only if `WORKER_NAME` is unchanged.
+- **Progress starts after the download.** The encoding percentage stays at 0 while the worker downloads the source.
+- **Leftover segments.** Re-running HLS overwrites the playlist and segments, but if the new run produces fewer segments the extra old files stay in storage (the playlist does not reference them).
+- **No deletion.** Assets cannot be deleted from the API or dashboard yet.
+- **The dashboard image is built for one API address.** `PUBLIC_API_URL` is fixed when the image is built (`http://localhost:8080` in the demo).

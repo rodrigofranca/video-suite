@@ -29,7 +29,7 @@ func TestRoutesWithoutServices(t *testing.T) {
 		{"malformed asset id", fakeDB{}, "GET", "/assets/not-a-uuid", 404, `{"error":"not found"}`},
 		{"malformed job id", fakeDB{}, "GET", "/jobs/123/logs", 404, `{"error":"not found"}`},
 		{"bad status filter", fakeDB{}, "GET", "/assets?status=weird", 400, `unknown status`},
-		{"trigger job stub", fakeDB{}, "POST", "/assets/00000000-0000-0000-0000-000000000000/jobs", 501, `not implemented`},
+		{"re-run with malformed id", fakeDB{}, "POST", "/assets/nope/jobs", 404, `not found`},
 		{"upload without multipart", fakeDB{}, "POST", "/assets/upload", 400, `multipart/form-data`},
 		{"wrong method", fakeDB{}, "DELETE", "/assets", 405, ``},
 	}

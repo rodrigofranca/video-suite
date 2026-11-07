@@ -44,11 +44,11 @@ O repositório SHALL incluir `docker-compose.yml` na raiz que sobe PostgreSQL, R
 - **THEN** todos os containers SHALL ser parados e removidos
 
 ### Requirement: Makefile como orquestrador
-O repositório SHALL incluir `Makefile` na raiz com targets documentados para as operações essenciais de desenvolvimento, carregando `.env` quando o arquivo existir.
+O repositório SHALL incluir `Makefile` na raiz com targets documentados para as operações essenciais de desenvolvimento, carregando `.env` quando o arquivo existir. `make down` SHALL parar também a pilha de demo.
 
 #### Scenario: Targets obrigatórios presentes
 - **WHEN** o desenvolvedor executa `make help` ou `make`
-- **THEN** os targets `up`, `down`, `migrate`, `migrate-down`, `dev-api`, `dev-worker`, `dev-dashboard`, `build` e `test` SHALL estar listados
+- **THEN** os targets `up`, `down`, `demo`, `demo-logs`, `sample`, `migrate`, `migrate-down`, `dev-api`, `dev-worker`, `dev-dashboard`, `build` e `test` SHALL estar listados
 
 #### Scenario: Migrate executa migrações
 - **WHEN** o desenvolvedor executa `make migrate` com infraestrutura rodando

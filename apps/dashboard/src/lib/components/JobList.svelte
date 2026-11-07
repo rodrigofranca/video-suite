@@ -3,11 +3,46 @@
 	import { formatDuration, formatTime, jobLabel } from '$lib/format';
 	import StatusBadge from './StatusBadge.svelte';
 
-	let { jobs }: { jobs: Job[] } = $props();
+	let { jobs, onRerun }: { jobs: Job[]; onRerun?: (type: string) => Promise<void> } = $props();
 
 	let openJob = $state<string | null>(null);
 	let logs = $state<JobLog[]>([]);
 	let logsError = $state('');
+	let rerunning = $state<string | null>(null);
+	let rerunError = $state('');
+
+	// Jobs come in creation order; a re-run adds a new attempt of a type.
+	let busy = $derived(jobs.some((j) => j.status === 'pending' || j.status === 'running'));
+	let latest = $derived(new Map(jobs.map((j) => [j.type, j.id])));
+	let attempts = $derived.by(() => {
+		const count = new Map<string, number>();
+		const byJob = new Map<string, { n: number; total: number }>();
+		for (const j of jobs) count.set(j.type, (count.get(j.type) ?? 0) + 1);
+		const seen = new Map<string, number>();
+		for (const j of jobs) {
+			const n = (seen.get(j.type) ?? 0) + 1;
+			seen.set(j.type, n);
+			byJob.set(j.id, { n, total: count.get(j.type)! });
+		}
+		return byJob;
+	});
+
+	const canRerun = (job: Job) =>
+		!!onRerun && !busy && latest.get(job.type) === job.id && (job.status === 'done' || job.status === 'failed');
+
+	async function rerun(job: Job) {
+		if (!onRerun) return;
+		rerunning = job.type;
+		rerunError = '';
+		try {
+			await onRerun(job.type);
+			openJob = null;
+		} catch (e) {
+			rerunError = (e as Error).message;
+		} finally {
+			rerunning = null;
+		}
+	}
 
 	async function toggle(job: Job) {
 		if (openJob === job.id) {
@@ -27,9 +62,13 @@
 
 <ol class="jobs">
 	{#each jobs as job (job.id)}
-		<li class="job" data-testid="job-{job.type}">
+		{@const attempt = attempts.get(job.id)}
+		<li class="job" class:old={latest.get(job.type) !== job.id} data-testid="job-{job.type}">
 			<button class="row" onclick={() => toggle(job)} aria-expanded={openJob === job.id}>
-				<span class="name">{jobLabel(job.type)}</span>
+				<span class="name">
+					{jobLabel(job.type)}
+					{#if attempt && attempt.total > 1}<span class="attempt">attempt {attempt.n}</span>{/if}
+				</span>
 				<StatusBadge status={job.status} />
 				<span class="muted">
 					{job.status === 'running' && job.progress > 0
@@ -45,6 +84,14 @@
 			{/if}
 			{#if job.error}
 				<p class="job-error">{job.error}</p>
+			{/if}
+			{#if canRerun(job) && (job.status === 'failed' || openJob === job.id)}
+				<div class="actions">
+					<button class="secondary" onclick={() => rerun(job)} disabled={rerunning !== null} data-testid="rerun">
+						{rerunning === job.type ? 'Starting…' : 'Run again'}
+					</button>
+					{#if rerunError && rerunning === null}<span class="job-error inline">{rerunError}</span>{/if}
+				</div>
 			{/if}
 			{#if openJob === job.id}
 				<div class="logs" data-testid="logs">
@@ -96,6 +143,40 @@
 	}
 	.name {
 		font-weight: 600;
+	}
+	.attempt {
+		font-weight: 400;
+		font-size: 0.8rem;
+		color: var(--muted);
+		margin-left: 0.35rem;
+	}
+	.old {
+		opacity: 0.6;
+	}
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+		margin: 0 0.85rem 0.65rem;
+	}
+	.secondary {
+		font: inherit;
+		font-size: 0.85rem;
+		font-weight: 600;
+		padding: 0.3rem 0.8rem;
+		border-radius: 6px;
+		border: 1px solid var(--accent);
+		background: transparent;
+		color: var(--accent);
+		cursor: pointer;
+	}
+	.secondary:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+	.inline {
+		margin: 0;
 	}
 	.progress {
 		height: 4px;

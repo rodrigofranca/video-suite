@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { getAsset, metadataUrl, type AssetDetail } from '$lib/api';
+	import { getAsset, metadataUrl, rerunJob, type AssetDetail } from '$lib/api';
 	import { formatBitrate, formatBytes, formatClock, formatDate, formatResolution } from '$lib/format';
 	import { poll } from '$lib/poll.svelte';
 	import HlsPlayer from '$lib/components/HlsPlayer.svelte';
@@ -10,9 +10,11 @@
 	let asset = $state<AssetDetail | null>(null);
 	let error = $state('');
 
-	const finished = () => asset?.status === 'ready' || asset?.status === 'failed';
+	const finished = () =>
+		(asset?.status === 'ready' || asset?.status === 'failed') &&
+		!asset.jobs.some((j) => j.status === 'pending' || j.status === 'running');
 
-	poll(
+	const updates = poll(
 		async () => {
 			const id = page.params.id!;
 			try {
@@ -25,7 +27,12 @@
 		() => !finished() && !error
 	);
 
-	let hlsJob = $derived(asset?.jobs.find((j) => j.type === 'transcode-hls'));
+	let hlsJob = $derived(asset?.jobs.findLast((j) => j.type === 'transcode-hls'));
+
+	async function rerun(type: string) {
+		await rerunJob(page.params.id!, type);
+		await updates.refresh();
+	}
 	let meta = $derived(asset?.metadata ?? null);
 	let encodingText = $derived(
 		hlsJob?.status === 'running'
@@ -76,7 +83,7 @@
 	<div class="columns">
 		<section>
 			<h2>Processing jobs</h2>
-			<JobList jobs={asset.jobs} />
+			<JobList jobs={asset.jobs} onRerun={rerun} />
 		</section>
 
 		<section>

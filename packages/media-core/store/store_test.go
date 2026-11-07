@@ -226,3 +226,40 @@ func TestMetadataThumbnailAndProgress(t *testing.T) {
 		t.Fatalf("progress = %d, want clamped to 100", got.Progress)
 	}
 }
+
+func TestCreateJobIfIdle(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+	rerun := func(typ, status string) error {
+		return s.CreateJobIfIdle(ctx, domain.Job{ID: domain.NewID(), AssetID: asset.ID, Type: typ, InputJSON: []byte("{}"), CreatedAt: time.Now()}, status)
+	}
+
+	// The upload's jobs are still pending.
+	if err := rerun("generate-thumbnail", ""); !errors.Is(err, ErrBusy) {
+		t.Fatalf("while pending: err = %v, want ErrBusy", err)
+	}
+	for _, j := range jobs {
+		s.StartJob(ctx, j.ID)
+		s.FinishJob(ctx, j.ID, nil)
+	}
+	s.SetAssetStatus(ctx, asset.ID, domain.AssetReady)
+
+	if err := rerun("transcode-hls", domain.AssetProcessing); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := s.ListJobs(ctx, asset.ID)
+	if len(list) != 4 || list[3].Type != "transcode-hls" || list[3].Status != domain.JobPending {
+		t.Fatalf("jobs after re-run = %d, last %+v", len(list), list[len(list)-1])
+	}
+	if a, _ := s.GetAsset(ctx, asset.ID); a.Status != domain.AssetProcessing {
+		t.Fatalf("asset = %s, want processing", a.Status)
+	}
+	// A second re-run waits for the first one.
+	if err := rerun("transcode-hls", domain.AssetProcessing); !errors.Is(err, ErrBusy) {
+		t.Fatalf("second re-run: err = %v, want ErrBusy", err)
+	}
+	if err := s.CreateJobIfIdle(ctx, domain.Job{ID: domain.NewID(), AssetID: domain.NewID(), Type: "x", InputJSON: []byte("{}"), CreatedAt: time.Now()}, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown asset: err = %v, want ErrNotFound", err)
+	}
+}

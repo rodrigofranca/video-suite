@@ -72,6 +72,85 @@ services:
         echo "bucket ultramedia ready"
     restart: "no"
 
+  # ---- Application (profile "app", started by `make demo`) ----
+  # For development, run these with `make dev-api`, `make dev-worker` and
+  # `make dev-dashboard` instead; they use the same ports.
+
+  migrate:
+    image: migrate/migrate:v4.19.1
+    profiles: [app]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./apps/api/migrations:/migrations:ro
+    command: ["-path", "/migrations", "-database", "postgres://ultramedia:ultramedia@postgres:5432/ultramedia?sslmode=disable", "up"]
+    restart: "no"
+
+  api:
+    image: ultramedia/api:dev
+    build:
+      context: .
+      dockerfile: infra/docker/go.Dockerfile
+      target: api
+    profiles: [app]
+    environment: &app-env
+      DATABASE_URL: postgres://ultramedia:ultramedia@postgres:5432/ultramedia?sslmode=disable
+      REDIS_URL: redis://redis:6379
+      S3_ENDPOINT: http://storage:9000
+      S3_REGION: us-east-1
+      S3_ACCESS_KEY: ultramedia
+      S3_SECRET_KEY: ultramedia
+      S3_BUCKET: ultramedia
+      # The browser reads public files from the host port, not the
+      # container network name.
+      S3_PUBLIC_URL: http://localhost:9000
+      DASHBOARD_ORIGIN: http://localhost:5173
+    ports:
+      - "8080:8080"
+    depends_on: &app-deps
+      redis:
+        condition: service_healthy
+      storage-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  worker:
+    image: ultramedia/worker:dev
+    build:
+      context: .
+      dockerfile: infra/docker/go.Dockerfile
+      target: worker
+    profiles: [app]
+    environment:
+      <<: *app-env
+      # Stable name: a restarted worker resumes the job it was running.
+      WORKER_NAME: worker-1
+    depends_on: *app-deps
+    restart: unless-stopped
+
+  dashboard:
+    image: ultramedia/dashboard:dev
+    build:
+      context: .
+      dockerfile: infra/docker/dashboard.Dockerfile
+      args:
+        PUBLIC_API_URL: http://localhost:8080
+    profiles: [app]
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:

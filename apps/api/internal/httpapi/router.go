@@ -58,7 +58,7 @@ func NewRouter(deps Deps) http.Handler {
 	mux.HandleFunc("GET /assets/{id}/artifacts", a.listArtifacts)
 	mux.HandleFunc("GET /assets/{id}/playback", a.playback)
 	mux.HandleFunc("GET /assets/{id}/metadata", a.getMetadata)
-	mux.HandleFunc("POST /assets/{id}/jobs", notImplemented)
+	mux.HandleFunc("POST /assets/{id}/jobs", a.createJob)
 
 	mux.HandleFunc("GET /jobs/{id}", a.getJob)
 	mux.HandleFunc("GET /jobs/{id}/logs", a.listJobLogs)
@@ -92,10 +92,6 @@ func cors(allowedOrigin string, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-func notImplemented(w http.ResponseWriter, _ *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not implemented")
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

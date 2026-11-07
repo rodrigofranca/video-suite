@@ -7,6 +7,8 @@
 **Version:** 0.1  
 **Owner:** Rodrigo França  
 
+> **Done (2026-11-07):** every item of the Definition of Done (section 18) is met; run it with `make demo` and follow [docs/demo.md](demo.md). Known gaps are listed in the README.
+>
 > **Note (2026-11-07):** the epics and order below are still the plan, but some details are out of date (statuses, tables, job order, MinIO). Where this roadmap disagrees with `CONTEXT.md`, `docs/adr/` or `openspec/specs/`, those win. See [`docs/README.md`](README.md).
 
 ---

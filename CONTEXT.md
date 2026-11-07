@@ -40,6 +40,8 @@ A unit of processing work tied to an Asset. Has a type, input, status, logs, and
 
 Input is a typed Go struct defined in the `job-contracts` package, shared between API and Worker. API serializes to JSON for storage; Worker deserializes by job type. No dynamic schema validation in MVP.
 
+A Job can be run again (`POST /assets/{id}/jobs`) once every Job of its Asset has finished. Each re-run is a new Job row — an attempt — so earlier attempts and their logs stay visible. A re-run runs only that Job; re-running `transcode-hls` puts the Asset back in `processing` (ADR 0015).
+
 ## Pipeline
 
 Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbnail` → `transcode-hls` (order in `jobcontracts.Pipeline`). No manual trigger required. Worker processes one job at a time (no parallelism in MVP).

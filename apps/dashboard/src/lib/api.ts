@@ -98,6 +98,23 @@ export const metadataUrl = (id: string) => `${API_URL}/assets/${encodeURICompone
 export const getJobLogs = (id: string) =>
 	getJSON<{ logs: JobLog[] }>(`/jobs/${encodeURIComponent(id)}/logs`).then((r) => r.logs);
 
+/** Runs one pipeline job of an asset again. */
+export async function rerunJob(assetId: string, type: string): Promise<Job> {
+	let res: Response;
+	try {
+		res = await fetch(`${API_URL}/assets/${encodeURIComponent(assetId)}/jobs`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ type })
+		});
+	} catch {
+		throw new ApiError(`Could not reach the API at ${API_URL}. Is it running (make dev-api)?`, 0);
+	}
+	const body = await res.json().catch(() => ({}));
+	if (!res.ok) throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status);
+	return body as Job;
+}
+
 /** Uploads a file, reporting progress from 0 to 1. Uses XHR because fetch has no upload progress. */
 export function uploadAsset(
 	file: File,

@@ -201,6 +201,44 @@ func (s *Store) FinishJob(ctx context.Context, id string, jobErr error) error {
 	return err
 }
 
+// ErrBusy is returned when an asset still has jobs pending or running.
+var ErrBusy = errors.New("the asset still has jobs pending or running")
+
+// CreateJobIfIdle adds a pending job for an asset whose jobs have all
+// finished. When assetStatus is not empty the asset moves to that status in
+// the same transaction. It returns ErrNotFound for an unknown asset and
+// ErrBusy while any job of the asset is pending or running. The asset row is
+// locked, so concurrent calls cannot both succeed.
+func (s *Store) CreateJobIfIdle(ctx context.Context, job domain.Job, assetStatus string) error {
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		var current string
+		err := tx.QueryRow(ctx, `SELECT status FROM media_assets WHERE id = $1 FOR UPDATE`, job.AssetID).Scan(&current)
+		if err != nil {
+			return notFound(err)
+		}
+		var busy bool
+		err = tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM processing_jobs WHERE asset_id = $1 AND status IN ($2, $3))`,
+			job.AssetID, domain.JobPending, domain.JobRunning).Scan(&busy)
+		if err != nil {
+			return err
+		}
+		if busy || current == domain.AssetUploading {
+			return ErrBusy
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO processing_jobs (id, asset_id, type, input_json, status, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			job.ID, job.AssetID, job.Type, job.InputJSON, domain.JobPending, job.CreatedAt)
+		if err != nil || assetStatus == "" {
+			return err
+		}
+		_, err = tx.Exec(ctx,
+			`UPDATE media_assets SET status = $2, updated_at = NOW() WHERE id = $1`, job.AssetID, assetStatus)
+		return err
+	})
+}
+
 // SetJobProgress records how far a running job is, from 0 to 100.
 func (s *Store) SetJobProgress(ctx context.Context, id string, progress int) error {
 	progress = max(0, min(progress, 100))
