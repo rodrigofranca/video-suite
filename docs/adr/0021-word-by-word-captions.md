@@ -1,0 +1,7 @@
+# Estilos de legenda nos cortes, com os tempos de cada palavra guardados na transcrição
+
+O Whisper já calculava o tempo de cada palavra (`word_timestamps`), mas a transcrição guardava só os trechos. Agora guarda também as palavras, numa coluna própria (`transcripts.words`), para não pesar a resposta da transcrição, que não precisa delas.
+
+Com os tempos por palavra, a exportação de um corte oferece cinco estilos de legenda queimada, escolhidos a cada exportação. O padrão é `highlight`: frases de poucas palavras (até 4 no vertical e 7 no original), quebradas em fim de frase e em pausas, com a palavra que está sendo dita em amarelo. `box` põe uma caixa violeta atrás dessa palavra: o arquivo ASS tem uma segunda camada, com o mesmo texto, em que só ela é visível e tem fundo opaco. Em `karaoke`, a frase aparece inteira e cada palavra vai sendo preenchida de amarelo enquanto é dita, com a tag `\kf` do ASS. `one-word` mostra só a palavra dita, grande, em maiúsculas, com um pequeno salto ao aparecer. `lines` é o estilo anterior, em linhas, a partir do WebVTT. Cada estilo vem com posição, cores e caixa definidas; deixar a pessoa ajustar posição, cor do destaque e maiúsculas foi pedido e está no [backlog](../backlog.md).
+
+Transcrições feitas antes desta mudança não têm as palavras. Nesse caso, qualquer estilo de palavras vira `lines`, o log diz por quê, o artefato registra o estilo de fato usado e o painel avisa que basta rodar a transcrição de novo. Recalcular sozinho, para todos os vídeos antigos, ficou de fora: custaria CPU sem que ninguém tivesse pedido.

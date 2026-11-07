@@ -44,6 +44,16 @@ const clipFormatLabels: Record<string, string> = {
 
 export const clipFormatLabel = (format: string) => clipFormatLabels[format] ?? format;
 
+const captionStyleLabels: Record<string, string> = {
+	highlight: 'Highlighted word',
+	box: 'Word box',
+	karaoke: 'Karaoke',
+	'one-word': 'One word at a time',
+	lines: 'Lines'
+};
+
+export const captionStyleLabel = (style: string) => captionStyleLabels[style] ?? style;
+
 const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
 
 /** "en" → "English"; falls back to the code. */

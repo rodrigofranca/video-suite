@@ -76,6 +76,7 @@ class Transcriber:
             inp.asset_id, ctx.job.id, language, text,
             [{"start": round(s.start, 3), "end": round(s.end, 3), "text": s.text} for s in segments],
             self.cfg.whisper_model,
+            words=transcript_words(segments),
         )
         if not segments:
             ctx.log.info("no speech found")
@@ -91,3 +92,16 @@ class Transcriber:
             "transcribed %d segments, %d words; subtitles key=%s cues=%d",
             len(segments), len(text.split()), key, len(cues),
         )
+
+
+def transcript_words(segments: list[subtitles.Segment]) -> list[dict]:
+    """Each word with when it was said, in order, for word-by-word captions."""
+    words = []
+    for s in segments:
+        for w in s.words:
+            text = w.text.strip()
+            if not text:
+                continue
+            start = max(float(w.start), words[-1]["end"] if words else 0.0)
+            words.append({"start": round(start, 3), "end": round(max(float(w.end), start), 3), "word": text})
+    return words

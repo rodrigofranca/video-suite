@@ -106,26 +106,31 @@ class Store:
             (str(uuid.uuid4()), asset_id, job_id, artifact_type, storage_key, Jsonb(metadata)),
         )
 
-    def save_transcript(self, asset_id: str, job_id: str, language: str, text: str, segments: list[dict], model: str) -> None:
-        """Store an asset's transcript, replacing any earlier one."""
+    def save_transcript(
+        self, asset_id: str, job_id: str, language: str, text: str, segments: list[dict], model: str,
+        words: list[dict] | None = None,
+    ) -> None:
+        """Store an asset's transcript, replacing any earlier one. words holds
+        each word's start and end, for word-by-word captions."""
         self.conn.execute(
-            """INSERT INTO transcripts (id, asset_id, job_id, language, text, segments, model)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """INSERT INTO transcripts (id, asset_id, job_id, language, text, segments, words, model)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (asset_id) DO UPDATE
                SET id = EXCLUDED.id, job_id = EXCLUDED.job_id, language = EXCLUDED.language,
-                   text = EXCLUDED.text, segments = EXCLUDED.segments, model = EXCLUDED.model,
-                   created_at = NOW()""",
-            (str(uuid.uuid4()), asset_id, job_id, language, text, Jsonb(segments), model),
+                   text = EXCLUDED.text, segments = EXCLUDED.segments, words = EXCLUDED.words,
+                   model = EXCLUDED.model, created_at = NOW()""",
+            (str(uuid.uuid4()), asset_id, job_id, language, text, Jsonb(segments), Jsonb(words or []), model),
         )
 
     def get_transcript(self, asset_id: str) -> dict | None:
         row = self.conn.execute(
-            "SELECT language, text, segments, model FROM transcripts WHERE asset_id = %s", (asset_id,)
+            "SELECT language, text, segments, model, words FROM transcripts WHERE asset_id = %s", (asset_id,)
         ).fetchone()
         if not row:
             return None
         segments = row[2] if not isinstance(row[2], str) else json.loads(row[2])
-        return {"language": row[0], "text": row[1], "segments": segments, "model": row[3]}
+        words = row[4] if not isinstance(row[4], str) else json.loads(row[4])
+        return {"language": row[0], "text": row[1], "segments": segments, "model": row[3], "words": words}
 
     def save_analysis(
         self, asset_id: str, job_id: str, language: str, summary: str, tags: list[str], chapters: list[dict], model: str

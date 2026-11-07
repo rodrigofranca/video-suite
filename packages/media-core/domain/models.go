@@ -81,6 +81,7 @@ type Transcript struct {
 	Language  string // ISO 639-1 code, detected or requested
 	Text      string
 	Segments  []byte // JSON: [{"start": 0.0, "end": 2.5, "text": "..."}]
+	Words     []byte // JSON: [{"start": 0.1, "end": 0.4, "word": "Hello"}]; [] for older transcripts
 	Model     string // Whisper model used, e.g. "base"
 	CreatedAt time.Time
 }

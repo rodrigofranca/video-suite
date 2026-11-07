@@ -307,18 +307,21 @@ func (s *Store) GetTechnicalMetadata(ctx context.Context, assetID string) (domai
 
 // SaveTranscript stores an asset's transcript, replacing any earlier one.
 func (s *Store) SaveTranscript(ctx context.Context, t domain.Transcript) error {
-	segments := t.Segments
+	segments, words := t.Segments, t.Words
 	if segments == nil {
 		segments = []byte("[]")
 	}
+	if words == nil {
+		words = []byte("[]")
+	}
 	_, err := s.db.Exec(ctx,
-		`INSERT INTO transcripts (id, asset_id, job_id, language, text, segments, model)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO transcripts (id, asset_id, job_id, language, text, segments, words, model)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT (asset_id) DO UPDATE
 		 SET id = EXCLUDED.id, job_id = EXCLUDED.job_id, language = EXCLUDED.language,
-		     text = EXCLUDED.text, segments = EXCLUDED.segments, model = EXCLUDED.model,
-		     created_at = NOW()`,
-		t.ID, t.AssetID, t.JobID, t.Language, t.Text, segments, t.Model)
+		     text = EXCLUDED.text, segments = EXCLUDED.segments, words = EXCLUDED.words,
+		     model = EXCLUDED.model, created_at = NOW()`,
+		t.ID, t.AssetID, t.JobID, t.Language, t.Text, segments, words, t.Model)
 	return err
 }
 
@@ -326,9 +329,9 @@ func (s *Store) SaveTranscript(ctx context.Context, t domain.Transcript) error {
 func (s *Store) GetTranscript(ctx context.Context, assetID string) (domain.Transcript, error) {
 	var t domain.Transcript
 	err := s.db.QueryRow(ctx,
-		`SELECT id, asset_id, job_id, language, text, segments, model, created_at
+		`SELECT id, asset_id, job_id, language, text, segments, words, model, created_at
 		 FROM transcripts WHERE asset_id = $1`, assetID).
-		Scan(&t.ID, &t.AssetID, &t.JobID, &t.Language, &t.Text, &t.Segments, &t.Model, &t.CreatedAt)
+		Scan(&t.ID, &t.AssetID, &t.JobID, &t.Language, &t.Text, &t.Segments, &t.Words, &t.Model, &t.CreatedAt)
 	return t, notFound(err)
 }
 

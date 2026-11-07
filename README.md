@@ -2,7 +2,7 @@
 
 An open source, modular video operations platform. It turns raw video files into structured, playable and observable media assets: upload, metadata extraction, thumbnails, HLS encoding, transcription and subtitles, AI summaries, tags and chapters, AI-suggested clips exported for social media, job logs and playback preview.
 
-> **Status:** Milestone 1 (video processing core) is complete. Milestone 2 (AI metadata) is under way: speech transcription and subtitles (local Whisper), and summaries, tags and chapters written by a language model through a LiteLLM gateway, are done. Phase 3 (AI clipping) has started: the model suggests clips and the worker exports them as MP4, horizontal or vertical, with burned-in captions. See the [roadmap](docs/ultramedia-platform-roadmap-milestone-1.md) and the [known limitations](#known-limitations).
+> **Status:** Milestone 1 (video processing core) is complete. Milestone 2 (AI metadata) is under way: speech transcription and subtitles (local Whisper), and summaries, tags and chapters written by a language model through a LiteLLM gateway, are done. Phase 3 (AI clipping) has started: the model suggests clips and the worker exports them as MP4, horizontal or vertical, with burned-in captions in five styles: highlighted word, word box, karaoke, one word at a time, or lines. See the [roadmap](docs/ultramedia-platform-roadmap-milestone-1.md) and the [known limitations](#known-limitations).
 
 ## Architecture
 
@@ -85,8 +85,8 @@ Open http://localhost:5173, click **Upload**, pick an MP4 and watch the jobs run
 | `GET` | `/assets/{id}/playback` | `{"type": "hls", "manifestUrl"}`, or `409` while not ready |
 | `GET` | `/assets/{id}/transcript` | Language, model, full text and timed segments; `404` until transcribed |
 | `GET` | `/assets/{id}/analysis` | Summary, tags, chapters (`start` in seconds, `title`), language and model; `404` until analyzed |
-| `GET` | `/assets/{id}/clips` | Suggested clips, best first, each with the state of its exports per format |
-| `POST` | `/assets/{id}/clips/{clipId}/exports` | Export a clip: `{"format": "original" \| "vertical" \| "vertical-blur", "captions": true}` → `202` with the job; `409` while any job of the asset is pending or running |
+| `GET` | `/assets/{id}/clips` | Suggested clips, best first, each with the state of its exports per format, and `wordTimings` (caption styles that follow each word are possible) |
+| `POST` | `/assets/{id}/clips/{clipId}/exports` | Export a clip: `{"format": "original" \| "vertical" \| "vertical-blur", "captions": true, "captionStyle": "highlight" \| "box" \| "karaoke" \| "one-word" \| "lines"}` → `202` with the job; `409` while any job of the asset is pending or running |
 | `GET` | `/clips/{id}/download?format=` | `302` to a 15-minute signed link that saves the exported file (`&inline=1` plays it instead) |
 | `POST` | `/assets/{id}/jobs` | Run one job again: `{"type": "generate-thumbnail"}` → `202` with the new job; `409` while any job of the asset is pending or running |
 | `GET` | `/jobs/{id}` | One job |
@@ -147,7 +147,7 @@ Milestone 1 is a working core, not a production service:
 - **One transcript language per video**, detected automatically; no translation and no transcript editing yet.
 - **The first AI worker start needs internet** to download the Whisper model from Hugging Face; after that it is cached.
 - **Summaries are sent to a provider.** The transcript goes to the gateway and from there to OpenCode; do not use it for content that must stay on your machine. Each video with speech costs one model call (two if the first answer is unusable).
-- **Clips are cut from the centre or shown whole over a blur.** Following the speaker's face is not done yet, and captions in vertical clips split each subtitle by length, so their timing is approximate. Suggesting clips again replaces the list; files already exported stay in storage.
+- **Clips are cut from the centre or shown whole over a blur.** Following the speaker's face is not done yet. Caption styles that follow each word need word timings, which transcripts made before them do not have: run the transcription again (until then, clips get line captions). Caption position, highlight color and capitals are fixed per style for now ([backlog](docs/backlog.md)). Suggesting clips again replaces the list; files already exported stay in storage.
 - **Very long transcripts are not summarized.** Above `LLM_MAX_INPUT_CHARS` (about 4 hours of speech) the Summary job fails instead of cutting the transcript.
 - **The gateway has one key locally.** It runs with its master key only; per-project keys need its database and come with the shared server setup. Re-running a transcription does not re-run its summary.
 - **No automatic retries.** A failed job stays failed until someone runs it again from the dashboard or the API. A re-run runs only that job.

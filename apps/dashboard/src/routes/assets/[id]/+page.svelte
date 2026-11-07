@@ -10,6 +10,7 @@
 		rerunJob,
 		type Analysis,
 		type AssetDetail,
+		type CaptionStyle,
 		type Clip,
 		type ClipFormat,
 		type Transcript
@@ -91,6 +92,7 @@
 
 	// Clips: fetched when the suggestions finish and whenever an export moves.
 	let clips = $state<Clip[] | null>(null);
+	let wordTimings = $state(false);
 	let clipsFor = '';
 	let suggestJob = $derived(asset?.jobs.findLast((j) => j.type === 'suggest-clips'));
 	let exportJobs = $derived(asset?.jobs.filter((j) => j.type === 'export-clip') ?? []);
@@ -100,16 +102,23 @@
 	$effect(() => {
 		const job = suggestJob;
 		if (!job || job.status !== 'done' || !job.completedAt) return;
-		const key = job.completedAt + exportJobs.map((j) => `${j.id}:${j.status}:${j.progress}`).join(',');
+		// A new transcription may bring word timings.
+		const key =
+			job.completedAt +
+			(transcribeJob?.completedAt ?? '') +
+			exportJobs.map((j) => `${j.id}:${j.status}:${j.progress}`).join(',');
 		if (key === clipsFor) return;
 		clipsFor = key;
 		getClips(page.params.id!)
-			.then((c) => (clips = c))
+			.then((r) => {
+				clips = r.clips;
+				wordTimings = r.wordTimings;
+			})
 			.catch(() => (clips = null));
 	});
 
-	async function startExport(clipId: string, format: ClipFormat, captions: boolean) {
-		await exportClip(page.params.id!, clipId, format, captions);
+	async function startExport(clipId: string, format: ClipFormat, captions: boolean, style: CaptionStyle) {
+		await exportClip(page.params.id!, clipId, format, captions, style);
 		await updates.refresh();
 	}
 
@@ -195,6 +204,7 @@
 					{clips}
 					busy={jobsBusy}
 					hasSubtitles={asset.subtitles.length > 0}
+					{wordTimings}
 					onpreview={(start, end) => player?.playRange(start, end)}
 					onexport={startExport}
 				/>

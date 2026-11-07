@@ -105,7 +105,7 @@ func TestExportClipFormats(t *testing.T) {
 	if len(formats) != 3 {
 		t.Fatalf("clip artifacts for formats %v, want 3", formats)
 	}
-	if !strings.Contains(f.logs.String(), "burning in 1 captions (en)") {
+	if !strings.Contains(f.logs.String(), "burning in 1 line captions (en)") {
 		t.Errorf("logs do not mention the captions:\n%s", f.logs.String())
 	}
 	if p := f.progress; len(p) == 0 || p[len(p)-1] > 99 {
@@ -179,4 +179,140 @@ func grayFrame(t *testing.T, path string, at float64) []byte {
 		t.Fatalf("frame has %d bytes", out.Len())
 	}
 	return out.Bytes()
+}
+
+// grayVideo makes a plain gray video with sound, so colors in a frame can
+// only come from the captions.
+func grayVideo(t *testing.T, path string) {
+	t.Helper()
+	cmd := exec.Command("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x404040:s=640x360:r=30:d=6",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=6", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("ffmpeg not available: %v %s", err, out)
+	}
+}
+
+// colors counts the strongly yellow, violet and white pixels of the frame at
+// second at, scaled to 216x384, in the rows where vertical captions sit.
+func colors(t *testing.T, path string, at float64) (yellow, violet, white int) {
+	t.Helper()
+	var out bytes.Buffer
+	cmd := exec.Command("ffmpeg", "-v", "error", "-ss", strconv.FormatFloat(at, 'f', 2, 64), "-i", path, "-frames:v", "1",
+		"-vf", "scale=216:384", "-f", "rawvideo", "-pix_fmt", "rgb24", "-")
+	cmd.Stdout, cmd.Stderr = &out, os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	px := out.Bytes()
+	for i := 150 * 216 * 3; i < 330*216*3 && i+2 < len(px); i += 3 {
+		r, g, b := px[i], px[i+1], px[i+2]
+		switch {
+		case r > 180 && g > 150 && b < 100:
+			yellow++
+		case r > 100 && r < 200 && g < 140 && b > 200:
+			violet++
+		case r > 220 && g > 220 && b > 220:
+			white++
+		}
+	}
+	return yellow, violet, white
+}
+
+func (f *fixture) saveWords(words string) {
+	f.t.Helper()
+	err := f.st.SaveTranscript(f.ctx, domain.Transcript{ID: domain.NewID(), AssetID: f.asset, JobID: f.jobs[jobcontracts.JobTypeTranscribeAudio].ID,
+		Language: "en", Text: "These words are burned into the picture.", Words: []byte(words), Model: "test"})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *fixture) clipArtifactStyle(clipID, format string) string {
+	f.t.Helper()
+	arts, _ := f.st.ListArtifacts(f.ctx, f.asset)
+	style := "missing"
+	for _, a := range arts {
+		var meta struct{ ClipID, Format, CaptionStyle string }
+		json.Unmarshal(a.MetadataJSON, &meta)
+		if a.Type == domain.ArtifactClip && meta.ClipID == clipID && meta.Format == format {
+			style = meta.CaptionStyle
+		}
+	}
+	return style
+}
+
+// Each style burns its own look: at 2.6 s "burned" is being said.
+func TestExportClipCaptionStyles(t *testing.T) {
+	f := newFixtureWith(t, func(path string) { grayVideo(t, path) })
+	f.jobs[jobcontracts.JobTypeExportClip] = f.jobs[jobcontracts.JobTypeSuggestClips]
+	clip := f.addClip(0, 5, clipVTT)
+	f.saveWords(`[{"start":1.0,"end":1.4,"word":"These"},{"start":1.5,"end":1.9,"word":"words"},{"start":2.0,"end":2.4,"word":"are"},` +
+		`{"start":2.5,"end":2.9,"word":"burned"},{"start":3.0,"end":3.3,"word":"into"},{"start":3.4,"end":3.6,"word":"the"},{"start":3.7,"end":4.4,"word":"picture."}]`)
+
+	key := storage.ClipKey(f.asset, clip.ID, jobcontracts.ClipFormatVertical)
+	f.t.Cleanup(func() { f.files.Delete(f.ctx, key) })
+	for _, tc := range []struct {
+		style                          string
+		minYellow, minViolet, minWhite int
+		log                            string
+	}{
+		{"", 40, 0, 0, "burning in highlight captions: 7 words in 2 phrases (en)"}, // the default
+		{jobcontracts.CaptionStyleBox, 0, 200, 30, "burning in box captions"},
+		{jobcontracts.CaptionStyleKaraoke, 100, 0, 30, "burning in karaoke captions"},
+		{jobcontracts.CaptionStyleOneWord, 0, 0, 50, "burning in one-word captions"},
+		{jobcontracts.CaptionStyleLines, 0, 0, 30, "burning in 2 line captions"},
+	} {
+		f.logs.Reset()
+		err := f.media.ExportClip(f.ctx, f.job(jobcontracts.JobTypeExportClip), jobcontracts.ExportClipInput{
+			AssetID: f.asset, ClipID: clip.ID, StorageKey: f.src, Format: jobcontracts.ClipFormatVertical, Captions: true,
+			CaptionStyle: tc.style, OutputKey: key,
+		})
+		if err != nil {
+			t.Fatalf("%q: %v\nlogs:\n%s", tc.style, err, f.logs.String())
+		}
+		if !strings.Contains(f.logs.String(), tc.log) {
+			t.Errorf("%q: logs miss %q:\n%s", tc.style, tc.log, f.logs.String())
+		}
+		want := tc.style
+		if want == "" {
+			want = jobcontracts.CaptionStyleHighlight
+		}
+		if got := f.clipArtifactStyle(clip.ID, jobcontracts.ClipFormatVertical); got != want {
+			t.Errorf("%q: caption style = %q, want %q", tc.style, got, want)
+		}
+		local := filepath.Join(t.TempDir(), "clip.mp4")
+		if err := f.files.DownloadFile(f.ctx, key, local); err != nil {
+			t.Fatal(err)
+		}
+		yellow, violet, white := colors(t, local, 2.6)
+		ok := yellow >= tc.minYellow && violet >= tc.minViolet && white >= tc.minWhite &&
+			(tc.minYellow > 0 || yellow <= 2) && (tc.minViolet > 0 || violet <= 2)
+		if !ok {
+			t.Errorf("%q: yellow %d, violet %d, white %d; want at least %d, %d, %d (and none of the colors not used)",
+				tc.style, yellow, violet, white, tc.minYellow, tc.minViolet, tc.minWhite)
+		}
+	}
+}
+
+// Transcripts made before word timings were saved get line captions.
+func TestExportClipWordCaptionsFallBackToLines(t *testing.T) {
+	f := newFixture(t, 6, "320x240")
+	f.jobs[jobcontracts.JobTypeExportClip] = f.jobs[jobcontracts.JobTypeSuggestClips]
+	clip := f.addClip(0, 5, clipVTT)
+	f.saveWords(`[]`)
+	if _, err := f.exportClip(clip, jobcontracts.ClipFormatOriginal, true); err != nil {
+		t.Fatal(err)
+	}
+	logs := f.logs.String()
+	if !strings.Contains(logs, "has no word timings") || !strings.Contains(logs, "line captions (en)") {
+		t.Errorf("logs:\n%s", logs)
+	}
+	if got := f.clipArtifactStyle(clip.ID, jobcontracts.ClipFormatOriginal); got != jobcontracts.CaptionStyleLines {
+		t.Errorf("caption style = %q, want lines", got)
+	}
+	bad := jobcontracts.ExportClipInput{AssetID: f.asset, ClipID: clip.ID, StorageKey: f.src, Format: "vertical",
+		CaptionStyle: "comic-sans", OutputKey: storage.ClipKey(f.asset, clip.ID, "vertical")}
+	if err := f.media.ExportClip(f.ctx, f.job(jobcontracts.JobTypeExportClip), bad); err == nil {
+		t.Error("accepted an unknown caption style")
+	}
 }

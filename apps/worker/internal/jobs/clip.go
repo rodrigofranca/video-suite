@@ -33,8 +33,9 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 		return err
 	}
 	if !domain.IsID(in.ClipID) || !slices.Contains(jobcontracts.ClipFormats, in.Format) ||
-		in.OutputKey != storage.ClipKey(in.AssetID, in.ClipID, in.Format) {
-		return fmt.Errorf("invalid input: clip_id %q, format %q, output_key %q", in.ClipID, in.Format, in.OutputKey)
+		in.OutputKey != storage.ClipKey(in.AssetID, in.ClipID, in.Format) ||
+		(in.CaptionStyle != "" && !slices.Contains(jobcontracts.CaptionStyles, in.CaptionStyle)) {
+		return fmt.Errorf("invalid input: clip_id %q, format %q, caption_style %q, output_key %q", in.ClipID, in.Format, in.CaptionStyle, in.OutputKey)
 	}
 	clip, err := m.Store.GetClip(ctx, in.ClipID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && clip.AssetID != in.AssetID) {
@@ -65,9 +66,9 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 		Input: url, Start: clip.Start, Duration: duration, Format: in.Format,
 		SourceWidth: src.Width, SourceHeight: src.Height, Output: filepath.Join(dir, "clip.mp4"),
 	}
-	language := ""
+	language, style := "", ""
 	if in.Captions {
-		spec.SubtitlesFile, language, err = m.clipCaptions(ctx, job, in.AssetID, clip, width, height, dir)
+		spec.SubtitlesFile, language, style, err = m.clipCaptions(ctx, job, in, clip, width, height, dir)
 		if err != nil {
 			return err
 		}
@@ -98,7 +99,7 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	}
 	job.Log.Info("uploaded clip", "key", in.OutputKey)
 	meta, _ := json.Marshal(map[string]any{
-		"clipId": clip.ID, "format": in.Format, "captions": spec.SubtitlesFile != "", "language": language,
+		"clipId": clip.ID, "format": in.Format, "captions": spec.SubtitlesFile != "", "captionStyle": style, "language": language,
 		"start": clip.Start, "end": clip.End, "durationSeconds": duration,
 		"width": width, "height": height, "sizeBytes": info.Size(),
 	})
@@ -108,10 +109,86 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	})
 }
 
-// clipCaptions writes the clip's part of the asset's subtitles as an ASS file
-// sized for the clip. It returns an empty path, not an error, when there is
-// nothing to burn in: no subtitles, or no speech in the clip.
-func (m Media) clipCaptions(ctx context.Context, job Job, assetID string, clip domain.Clip, width, height int, dir string) (string, string, error) {
+// Word-by-word captions: phrases per screen.
+const (
+	phraseWordsVertical, phraseCharsVertical = 4, 22
+	phraseWordsOriginal, phraseCharsOriginal = 7, 40
+)
+
+// clipCaptions writes the clip's captions as an ASS file sized for the clip,
+// in the requested style: word by word from the transcript's word timings,
+// or the subtitle lines. Word by word falls back to lines for transcripts
+// made before word timings were saved. It returns the file, the language and
+// the style used, or an empty path, not an error, when there is nothing to
+// burn in.
+func (m Media) clipCaptions(ctx context.Context, job Job, in jobcontracts.ExportClipInput, clip domain.Clip, width, height int, dir string) (string, string, string, error) {
+	style := in.CaptionStyle
+	if style == "" {
+		style = jobcontracts.CaptionStyles[0]
+	}
+	if style != jobcontracts.CaptionStyleLines {
+		path, language, err := m.wordCaptions(ctx, job, in.AssetID, style, clip, width, height, dir)
+		if err != nil || path != "" {
+			return path, language, style, err
+		}
+	}
+	path, language, err := m.lineCaptions(ctx, job, in.AssetID, clip, width, height, dir)
+	if path == "" {
+		return "", "", "", err
+	}
+	return path, language, jobcontracts.CaptionStyleLines, err
+}
+
+// wordCaptions writes captions that follow the transcript's word timings,
+// in one of the word styles. It returns an empty path when the transcript has
+// no word timings for the clip, so the caller can fall back to line captions.
+func (m Media) wordCaptions(ctx context.Context, job Job, assetID, style string, clip domain.Clip, width, height int, dir string) (string, string, error) {
+	tr, err := m.Store.GetTranscript(ctx, assetID)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	all, err := captions.ParseWords(tr.Words)
+	if err != nil {
+		return "", "", err
+	}
+	if len(all) == 0 {
+		job.Log.Warn("this transcript has no word timings (it was made before they were saved); using line captions. Run the transcription again for the " + style + " style")
+		return "", "", nil
+	}
+	maxWords, maxChars := phraseWordsOriginal, phraseCharsOriginal
+	if height > width {
+		maxWords, maxChars = phraseWordsVertical, phraseCharsVertical
+	}
+	words := captions.CutWords(all, clip.Start, clip.End)
+	phrases := captions.Phrases(words, maxWords, maxChars)
+	if len(phrases) == 0 {
+		return "", "", nil
+	}
+	path := filepath.Join(dir, "captions.ass")
+	err = writeFile(path, func(f *os.File) error {
+		phraseStyle := captions.WordStyleFor(width, height)
+		switch style {
+		case jobcontracts.CaptionStyleBox:
+			return captions.WriteBox(f, phrases, phraseStyle)
+		case jobcontracts.CaptionStyleKaraoke:
+			return captions.WriteKaraoke(f, phrases, phraseStyle)
+		case jobcontracts.CaptionStyleOneWord:
+			return captions.WriteOneWord(f, words, captions.OneWordStyleFor(width, height))
+		default:
+			return captions.WriteHighlight(f, phrases, phraseStyle)
+		}
+	})
+	if err != nil {
+		return "", "", err
+	}
+	job.Log.Info(fmt.Sprintf("burning in %s captions: %d words in %d phrases (%s)", style, len(words), len(phrases), tr.Language))
+	return path, tr.Language, nil
+}
+
+func (m Media) lineCaptions(ctx context.Context, job Job, assetID string, clip domain.Clip, width, height int, dir string) (string, string, error) {
 	art, err := m.Store.LatestArtifact(ctx, assetID, domain.ArtifactSubtitles)
 	if errors.Is(err, store.ErrNotFound) {
 		job.Log.Warn("no subtitles for this video; exporting without captions")
@@ -149,17 +226,23 @@ func (m Media) clipCaptions(ctx context.Context, job Job, assetID string, clip d
 	}
 
 	assPath := filepath.Join(dir, "captions.ass")
-	out, err := os.Create(assPath)
-	if err != nil {
+	if err := writeFile(assPath, func(f *os.File) error {
+		return captions.WriteASS(f, cues, captions.StyleFor(width, height))
+	}); err != nil {
 		return "", "", err
 	}
-	if err := captions.WriteASS(out, cues, captions.StyleFor(width, height)); err != nil {
-		out.Close()
-		return "", "", err
-	}
-	if err := out.Close(); err != nil {
-		return "", "", err
-	}
-	job.Log.Info(fmt.Sprintf("burning in %d captions (%s)", len(cues), meta.Language))
+	job.Log.Info(fmt.Sprintf("burning in %d line captions (%s)", len(cues), meta.Language))
 	return assPath, meta.Language, nil
+}
+
+func writeFile(path string, write func(*os.File) error) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if err := write(f); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }

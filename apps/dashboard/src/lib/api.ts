@@ -92,6 +92,9 @@ export interface Analysis {
 }
 
 export type ClipFormat = 'original' | 'vertical' | 'vertical-blur';
+/** Burned-in captions. All but 'lines' follow the transcript's word timings. */
+export type CaptionStyle = 'highlight' | 'box' | 'karaoke' | 'one-word' | 'lines';
+export const captionStyles: CaptionStyle[] = ['highlight', 'box', 'karaoke', 'one-word', 'lines'];
 export const clipFormats: ClipFormat[] = ['original', 'vertical', 'vertical-blur'];
 
 /** The newest export of a clip in one format. */
@@ -102,6 +105,7 @@ export interface ClipExport {
 	progress: number;
 	error: string | null;
 	captions: boolean;
+	captionStyle?: CaptionStyle;
 	width?: number;
 	height?: number;
 	sizeBytes?: number;
@@ -164,8 +168,9 @@ export const listAssets = () => getJSON<{ assets: Asset[] }>('/assets').then((r)
 export const getAsset = (id: string) => getJSON<AssetDetail>(`/assets/${encodeURIComponent(id)}`);
 export const getTranscript = (id: string) => getJSON<Transcript>(`/assets/${encodeURIComponent(id)}/transcript`);
 export const getAnalysis = (id: string) => getJSON<Analysis>(`/assets/${encodeURIComponent(id)}/analysis`);
+/** The clips, and whether the transcript has word timings (for word-by-word captions). */
 export const getClips = (id: string) =>
-	getJSON<{ clips: Clip[] }>(`/assets/${encodeURIComponent(id)}/clips`).then((r) => r.clips);
+	getJSON<{ clips: Clip[]; wordTimings: boolean }>(`/assets/${encodeURIComponent(id)}/clips`);
 /** Link to an exported clip file; inline plays it instead of downloading it. */
 export const clipFileUrl = (clipId: string, format: ClipFormat, inline = false) =>
 	`${API_URL}/clips/${encodeURIComponent(clipId)}/download?format=${format}${inline ? '&inline=1' : ''}`;
@@ -195,10 +200,17 @@ export const rerunJob = (assetId: string, type: string) =>
 	postJSON<Job>(`/assets/${encodeURIComponent(assetId)}/jobs`, { type });
 
 /** Queues the export of a clip in one format. */
-export const exportClip = (assetId: string, clipId: string, format: ClipFormat, captions: boolean) =>
+export const exportClip = (
+	assetId: string,
+	clipId: string,
+	format: ClipFormat,
+	captions: boolean,
+	captionStyle: CaptionStyle
+) =>
 	postJSON<Job>(`/assets/${encodeURIComponent(assetId)}/clips/${encodeURIComponent(clipId)}/exports`, {
 		format,
-		captions
+		captions,
+		captionStyle
 	});
 
 /** Uploads a file, reporting progress from 0 to 1. Uses XHR because fetch has no upload progress. */

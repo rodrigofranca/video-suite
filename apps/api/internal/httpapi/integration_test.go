@@ -573,19 +573,20 @@ func TestClips(t *testing.T) {
 	ctx := context.Background()
 
 	var list struct {
-		Clips []struct {
+		WordTimings bool
+		Clips       []struct {
 			ID, Title, Reason    string
 			Start, End, Duration float64
 			Score, Rank          int
 			Exports              []struct {
-				Format, Status  string
-				Ready, Captions bool
-				Width, Height   int
-				SizeBytes       int64
+				Format, Status, CaptionStyle string
+				Ready, Captions              bool
+				Width, Height                int
+				SizeBytes                    int64
 			}
 		}
 	}
-	if code := e.get("/assets/"+id+"/clips", &list); code != 200 || list.Clips == nil || len(list.Clips) != 0 {
+	if code := e.get("/assets/"+id+"/clips", &list); code != 200 || list.Clips == nil || len(list.Clips) != 0 || list.WordTimings {
 		t.Fatalf("clips before: %d %+v", code, list)
 	}
 	suggest := e.jobOfType(id, jobcontracts.JobTypeSuggestClips)
@@ -613,6 +614,9 @@ func TestClips(t *testing.T) {
 	if code := e.post(exportPath, `{"format": "square"}`, nil); code != http.StatusBadRequest {
 		t.Fatalf("bad format: %d", code)
 	}
+	if code := e.post(exportPath, `{"format": "vertical", "captionStyle": "comic-sans"}`, nil); code != http.StatusBadRequest {
+		t.Fatalf("bad caption style: %d", code)
+	}
 	if code := e.post("/assets/"+id+"/clips/"+domain.NewID()+"/exports", `{"format": "vertical"}`, nil); code != http.StatusNotFound {
 		t.Fatalf("unknown clip: %d", code)
 	}
@@ -626,7 +630,7 @@ func TestClips(t *testing.T) {
 	}
 	msg := e.enqueued[len(e.enqueued)-1]
 	in, err := jobcontracts.Decode[jobcontracts.ExportClipInput](msg)
-	if err != nil || msg.Stream() != jobcontracts.StreamJobs || in.ClipID != best || in.Format != "vertical" || in.Captions ||
+	if err != nil || msg.Stream() != jobcontracts.StreamJobs || in.ClipID != best || in.Format != "vertical" || in.Captions || in.CaptionStyle != "highlight" ||
 		in.StorageKey != storage.SourceKey(id) || in.OutputKey != storage.ClipKey(id, best, "vertical") {
 		t.Fatalf("queued %+v (%v) on %s", in, err, msg.Stream())
 	}
@@ -642,10 +646,15 @@ func TestClips(t *testing.T) {
 	e.store.FinishJob(ctx, job.ID, nil)
 	e.store.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: id, JobID: job.ID, Type: domain.ArtifactClip,
 		StorageKey:   storage.ClipKey(id, best, "vertical"),
-		MetadataJSON: []byte(`{"clipId":"` + best + `","format":"vertical","captions":false,"width":1080,"height":1920,"sizeBytes":4096}`)})
+		MetadataJSON: []byte(`{"clipId":"` + best + `","format":"vertical","captions":true,"captionStyle":"lines","width":1080,"height":1920,"sizeBytes":4096}`)})
+	e.store.SaveTranscript(ctx, domain.Transcript{ID: domain.NewID(), AssetID: id, JobID: e.jobOfType(id, jobcontracts.JobTypeTranscribeAudio).ID,
+		Language: "en", Text: "hi", Words: []byte(`[{"start":0,"end":0.4,"word":"hi"}]`), Model: "base"})
 	e.get("/assets/"+id+"/clips", &list)
-	if ex := list.Clips[0].Exports; len(ex) != 1 || ex[0].Status != "done" || !ex[0].Ready || ex[0].Width != 1080 || ex[0].SizeBytes != 4096 {
+	if ex := list.Clips[0].Exports; len(ex) != 1 || ex[0].Status != "done" || !ex[0].Ready || ex[0].Width != 1080 || ex[0].SizeBytes != 4096 || ex[0].CaptionStyle != "lines" {
 		t.Fatalf("exports when done = %+v", ex)
+	}
+	if !list.WordTimings {
+		t.Fatal("wordTimings = false with a transcript that has words")
 	}
 
 	rec = httptest.NewRecorder()

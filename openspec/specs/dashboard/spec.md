@@ -90,8 +90,19 @@ A página do vídeo SHALL mostrar uma seção **Clips** com cada corte sugerido:
 - **THEN** o player SHALL tocar a partir de 1:08 e pausar no fim do corte
 
 ### Requirement: Exportar cortes pelo dashboard
-Cada corte SHALL ter um botão por formato (**Original**, **9:16 crop**, **9:16 blur**) e, quando o vídeo tem legendas, a opção **Captions**. Durante a exportação, o formato SHALL mostrar o progresso; ao terminar, o vídeo exportado e o link **Download**. Os botões SHALL ficar desativados enquanto algum job do vídeo estiver pendente ou rodando, e os jobs de exportação SHALL não aparecer na lista de jobs do pipeline.
+Cada corte SHALL ter um botão por formato (**Original**, **9:16 crop**, **9:16 blur**). Durante a exportação, o formato SHALL mostrar o progresso; ao terminar, o vídeo exportado, o link **Download** e o estilo das legendas. Os botões SHALL ficar desativados enquanto algum job do vídeo estiver pendente ou rodando, e os jobs de exportação SHALL não aparecer na lista de jobs do pipeline.
 
 #### Scenario: Exportar em 9:16 com desfoque
 - **WHEN** o usuário clica em **9:16 blur** no primeiro corte
 - **THEN** a página SHALL mostrar o progresso e, ao terminar, o vídeo vertical e o link de download
+
+### Requirement: Escolha das legendas no dashboard
+Cada corte SHALL oferecer **Captions**: **Highlighted word** (padrão, quando a transcrição tem palavras), **Word box**, **Karaoke**, **One word at a time**, **Lines** (quando o vídeo tem legendas) ou **Off**. Os estilos de palavras SHALL ficar desativados sem palavras na transcrição; nesse caso, se o vídeo tem legendas, a seção SHALL dizer uma vez que basta rodar a transcrição de novo.
+
+#### Scenario: Vídeo transcrito antes das palavras
+- **WHEN** o usuário abre um vídeo transcrito sem palavras e roda **Transcription** de novo
+- **THEN** antes os estilos de palavras SHALL estar desativados, com o aviso, e depois **Highlighted word** SHALL ser a escolha padrão, sem o aviso
+
+#### Scenario: Exportar em karaokê
+- **WHEN** o usuário escolhe **Karaoke** e clica em **9:16 blur**
+- **THEN** a exportação SHALL terminar mostrando o estilo **Karaoke**

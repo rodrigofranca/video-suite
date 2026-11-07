@@ -40,29 +40,33 @@ type clipDTO struct {
 // clipExportDTO is the newest export of a clip in one format: its job's
 // state and, once done, the file's details.
 type clipExportDTO struct {
-	Format    string  `json:"format"`
-	JobID     string  `json:"jobId"`
-	Status    string  `json:"status"`
-	Progress  int     `json:"progress"`
-	Error     *string `json:"error"`
-	Captions  bool    `json:"captions"`
-	Width     int     `json:"width,omitempty"`
-	Height    int     `json:"height,omitempty"`
-	SizeBytes int64   `json:"sizeBytes,omitempty"`
-	Ready     bool    `json:"ready"` // a file can be downloaded
+	Format   string  `json:"format"`
+	JobID    string  `json:"jobId"`
+	Status   string  `json:"status"`
+	Progress int     `json:"progress"`
+	Error    *string `json:"error"`
+	Captions bool    `json:"captions"`
+	// CaptionStyle is the style the file's captions ended up in.
+	CaptionStyle string `json:"captionStyle,omitempty"`
+	Width        int    `json:"width,omitempty"`
+	Height       int    `json:"height,omitempty"`
+	SizeBytes    int64  `json:"sizeBytes,omitempty"`
+	Ready        bool   `json:"ready"` // a file can be downloaded
 }
 
 type clipFileMeta struct {
-	ClipID    string `json:"clipId"`
-	Format    string `json:"format"`
-	Captions  bool   `json:"captions"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
-	SizeBytes int64  `json:"sizeBytes"`
+	ClipID       string `json:"clipId"`
+	Format       string `json:"format"`
+	Captions     bool   `json:"captions"`
+	CaptionStyle string `json:"captionStyle"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	SizeBytes    int64  `json:"sizeBytes"`
 }
 
 // listClips returns an asset's suggested clips, best first, each with the
-// state of its exports.
+// state of its exports, and whether the transcript has word timings (needed
+// for word-by-word captions).
 func (a *api) listClips(w http.ResponseWriter, r *http.Request) {
 	asset, ok := a.loadAsset(w, r)
 	if !ok {
@@ -91,7 +95,15 @@ func (a *api) listClips(w http.ResponseWriter, r *http.Request) {
 			Score: c.Score, Rank: c.Rank, Model: c.Model, CreatedAt: c.CreatedAt, Exports: clipExports(c.ID, jobs, arts),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"clips": out})
+	wordTimings := false
+	if tr, err := a.Store.GetTranscript(ctx, asset.ID); err == nil {
+		var words []json.RawMessage
+		wordTimings = json.Unmarshal(tr.Words, &words) == nil && len(words) > 0
+	} else if !errors.Is(err, store.ErrNotFound) {
+		a.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"clips": out, "wordTimings": wordTimings})
 }
 
 // clipExports finds, per format, the newest export job of a clip and the
@@ -115,7 +127,7 @@ func clipExports(clipID string, jobs []domain.Job, arts []domain.Artifact) []cli
 		}
 		e := clipExportDTO{Format: format, JobID: job.ID, Status: job.Status, Progress: job.Progress, Error: job.ErrorMessage}
 		if file, ok := latestClipFile(arts, clipID, format); ok {
-			e.Captions, e.Width, e.Height, e.SizeBytes, e.Ready = file.Captions, file.Width, file.Height, file.SizeBytes, true
+			e.Captions, e.CaptionStyle, e.Width, e.Height, e.SizeBytes, e.Ready = file.Captions, file.CaptionStyle, file.Width, file.Height, file.SizeBytes, true
 		}
 		out = append(out, e)
 	}
@@ -162,11 +174,17 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := struct {
-		Format   string `json:"format"`
-		Captions *bool  `json:"captions"`
+		Format       string `json:"format"`
+		Captions     *bool  `json:"captions"`
+		CaptionStyle string `json:"captionStyle"`
 	}{}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil || !slices.Contains(jobcontracts.ClipFormats, body.Format) {
-		writeError(w, http.StatusBadRequest, `expected a JSON body like {"format": "vertical", "captions": true}; formats: `+strings.Join(jobcontracts.ClipFormats, ", "))
+	err = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+	if body.CaptionStyle == "" {
+		body.CaptionStyle = jobcontracts.CaptionStyles[0]
+	}
+	if err != nil || !slices.Contains(jobcontracts.ClipFormats, body.Format) || !slices.Contains(jobcontracts.CaptionStyles, body.CaptionStyle) {
+		writeError(w, http.StatusBadRequest, `expected a JSON body like {"format": "vertical", "captions": true, "captionStyle": "highlight"}; formats: `+
+			strings.Join(jobcontracts.ClipFormats, ", ")+"; caption styles: "+strings.Join(jobcontracts.CaptionStyles, ", "))
 		return
 	}
 	src, err := a.Store.GetSource(ctx, asset.ID)
@@ -180,7 +198,8 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 	}
 	input, err := json.Marshal(jobcontracts.ExportClipInput{
 		AssetID: asset.ID, ClipID: clip.ID, StorageKey: src.StorageKey, Format: body.Format,
-		Captions: body.Captions == nil || *body.Captions, OutputKey: storage.ClipKey(asset.ID, clip.ID, body.Format),
+		Captions: body.Captions == nil || *body.Captions, CaptionStyle: body.CaptionStyle,
+		OutputKey: storage.ClipKey(asset.ID, clip.ID, body.Format),
 	})
 	if err != nil {
 		a.internalError(w, r, err)

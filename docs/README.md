@@ -10,6 +10,8 @@ When two documents disagree, the one higher on this list is correct:
 4. **[PRD v0.1](ultramedia-platform-prd-v0.1.md)** and **[Milestone 1 roadmap](ultramedia-platform-roadmap-milestone-1.md)**: product vision, scope and plan. Their technical details are older than items 1–3.
 5. **[`docs/discovery/`](discovery/)**: the original brainstorming and a first PRD draft. Kept for history only.
 
+Ideas agreed on but not scheduled are in the [backlog](backlog.md).
+
 ## Known differences in the PRD and roadmap
 
 These parts of the PRD v0.1 and the roadmap are superseded:
@@ -53,3 +55,4 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 ## Decisions taken in the AI clipping phase
 
 - [0020](adr/0020-ai-clips.md): the model suggests clips in the pipeline; exports run on request in three formats, with optional burned-in captions, and stay private behind signed download links.
+- [0021](adr/0021-word-by-word-captions.md): transcripts keep each word's timing; clip captions come in five styles (highlighted word, word box, karaoke, one word at a time, lines).
