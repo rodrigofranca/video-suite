@@ -1,0 +1,9 @@
+.git
+.env
+**/node_modules
+**/.svelte-kit
+apps/dashboard/build
+samples
+*.mp4
+openspec
+docs

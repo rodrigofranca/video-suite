@@ -28,3 +28,6 @@ volumes/
 # Local object storage data
 minio-data/
 storage-data/
+
+# Generated sample videos
+samples/

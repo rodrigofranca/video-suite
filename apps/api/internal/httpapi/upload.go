@@ -144,18 +144,7 @@ func pipelineJobs(assetID, sourceKey string) ([]domain.Job, error) {
 	base := time.Now()
 	jobs := make([]domain.Job, 0, len(jobcontracts.Pipeline))
 	for i, jobType := range jobcontracts.Pipeline {
-		var input any
-		switch jobType {
-		case jobcontracts.JobTypeExtractMetadata:
-			input = jobcontracts.ExtractMetadataInput{AssetID: assetID, StorageKey: sourceKey}
-		case jobcontracts.JobTypeGenerateThumbnail:
-			input = jobcontracts.GenerateThumbnailInput{AssetID: assetID, StorageKey: sourceKey, AtSecond: thumbnailAtSecond}
-		case jobcontracts.JobTypeTranscodeHLS:
-			input = jobcontracts.TranscodeHLSInput{AssetID: assetID, StorageKey: sourceKey}
-		default:
-			return nil, fmt.Errorf("no input defined for job type %q", jobType)
-		}
-		payload, err := json.Marshal(input)
+		payload, err := jobInput(jobType, assetID, sourceKey)
 		if err != nil {
 			return nil, err
 		}
@@ -167,6 +156,25 @@ func pipelineJobs(assetID, sourceKey string) ([]domain.Job, error) {
 		})
 	}
 	return jobs, nil
+}
+
+// errUnknownJobType is returned for a job type outside the pipeline.
+var errUnknownJobType = errors.New("unknown job type")
+
+// jobInput builds the JSON input of a pipeline job for an asset.
+func jobInput(jobType, assetID, sourceKey string) ([]byte, error) {
+	var input any
+	switch jobType {
+	case jobcontracts.JobTypeExtractMetadata:
+		input = jobcontracts.ExtractMetadataInput{AssetID: assetID, StorageKey: sourceKey}
+	case jobcontracts.JobTypeGenerateThumbnail:
+		input = jobcontracts.GenerateThumbnailInput{AssetID: assetID, StorageKey: sourceKey, AtSecond: thumbnailAtSecond}
+	case jobcontracts.JobTypeTranscodeHLS:
+		input = jobcontracts.TranscodeHLSInput{AssetID: assetID, StorageKey: sourceKey}
+	default:
+		return nil, fmt.Errorf("%w %q", errUnknownJobType, jobType)
+	}
+	return json.Marshal(input)
 }
 
 // discardUpload removes what a failed upload left behind. It runs even if

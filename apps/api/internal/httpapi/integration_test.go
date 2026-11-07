@@ -367,3 +367,79 @@ func TestMetadataAndThumbnailInResponses(t *testing.T) {
 		t.Fatalf("GET metadata: %d %+v", code, full)
 	}
 }
+
+func (e *env) post(path, body string, out any) int {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	e.handler.ServeHTTP(rec, req)
+	if out != nil {
+		json.Unmarshal(rec.Body.Bytes(), out)
+	}
+	return rec.Code
+}
+
+func TestRerunJob(t *testing.T) {
+	e := newEnv(t, 0)
+	rec := e.upload("rerun.mp4", fakeMP4(1024))
+	var created struct{ AssetID string }
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	e.cleanupAsset(created.AssetID)
+	id := created.AssetID
+	ctx := context.Background()
+
+	// While the upload's jobs are pending, nothing can be re-run.
+	if code := e.post("/assets/"+id+"/jobs", `{"type":"generate-thumbnail"}`, nil); code != http.StatusConflict {
+		t.Fatalf("re-run while pending: %d, want 409", code)
+	}
+	jobs, _ := e.store.ListJobs(ctx, id)
+	for _, j := range jobs {
+		e.store.StartJob(ctx, j.ID)
+		e.store.FinishJob(ctx, j.ID, nil)
+	}
+	e.store.SetAssetStatus(ctx, id, domain.AssetReady)
+
+	cases := []struct {
+		body string
+		want int
+	}{
+		{`{"type":"make-coffee"}`, http.StatusBadRequest},
+		{`not json`, http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		if code := e.post("/assets/"+id+"/jobs", c.body, nil); code != c.want {
+			t.Errorf("POST %s: %d, want %d", c.body, code, c.want)
+		}
+	}
+
+	e.enqueued = nil
+	var job struct{ ID, Type, Status string }
+	if code := e.post("/assets/"+id+"/jobs", `{"type":"generate-thumbnail"}`, &job); code != http.StatusAccepted {
+		t.Fatalf("re-run thumbnail: %d", code)
+	}
+	if job.Type != "generate-thumbnail" || job.Status != "pending" || len(e.enqueued) != 1 || e.enqueued[0].JobID != job.ID {
+		t.Fatalf("job = %+v, enqueued = %+v", job, e.enqueued)
+	}
+	in, _ := jobcontracts.Decode[jobcontracts.GenerateThumbnailInput](e.enqueued[0])
+	if in.AssetID != id || in.StorageKey != storage.SourceKey(id) || in.AtSecond != 3 {
+		t.Fatalf("payload = %+v", in)
+	}
+	if a, _ := e.store.GetAsset(ctx, id); a.Status != domain.AssetReady {
+		t.Fatalf("a thumbnail re-run must not change the asset status, got %s", a.Status)
+	}
+
+	// The history keeps both attempts.
+	if jobs, _ := e.store.ListJobs(ctx, id); len(jobs) != 4 {
+		t.Fatalf("jobs = %d, want 4", len(jobs))
+	}
+
+	// Re-running HLS makes the asset processing again.
+	e.store.StartJob(ctx, job.ID)
+	e.store.FinishJob(ctx, job.ID, nil)
+	if code := e.post("/assets/"+id+"/jobs", `{"type":"transcode-hls"}`, nil); code != http.StatusAccepted {
+		t.Fatalf("re-run HLS: %d", code)
+	}
+	if a, _ := e.store.GetAsset(ctx, id); a.Status != domain.AssetProcessing {
+		t.Fatalf("asset = %s after HLS re-run, want processing", a.Status)
+	}
+}

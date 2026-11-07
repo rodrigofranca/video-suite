@@ -41,13 +41,6 @@ A API SHALL parar de aceitar conexões ao receber SIGINT ou SIGTERM, concluir as
 - **WHEN** a API recebe SIGINT
 - **THEN** SHALL logar `shutting down` e encerrar com código zero
 
-### Requirement: Disparo manual de job ainda não implementado
-`POST /assets/{id}/jobs` SHALL continuar roteado como stub até existir o disparo manual de jobs.
-
-#### Scenario: Disparo manual responde 501
-- **WHEN** requisição POST para `/assets/{id}/jobs` é feita
-- **THEN** a API SHALL responder HTTP 501 com body `{"error": "not implemented"}`
-
 ### Requirement: API verifica Redis e storage na inicialização
 A API SHALL exigir `REDIS_URL` e as variáveis `S3_*` obrigatórias, e SHALL conferir que o Redis responde e que o bucket existe antes de aceitar requisições.
 
