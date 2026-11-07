@@ -602,6 +602,16 @@ func TestClips(t *testing.T) {
 	if len(list.Clips) != 2 || list.Clips[0].ID != best || list.Clips[0].Duration != 35.5 || list.Clips[0].Reason != "Strong hook." || len(list.Clips[0].Exports) != 0 {
 		t.Fatalf("clips = %+v", list.Clips)
 	}
+	var raw struct{ Clips []map[string]json.RawMessage }
+	e.get("/assets/"+id+"/clips", &raw)
+	if string(raw.Clips[0]["faceCoverage"]) != "null" {
+		t.Fatalf("faceCoverage before tracking = %s, want null", raw.Clips[0]["faceCoverage"])
+	}
+	e.store.SetFaceTrack(ctx, best, []byte(`{"coverage":0.85,"points":[],"width":1280,"height":720}`))
+	e.get("/assets/"+id+"/clips", &raw)
+	if string(raw.Clips[0]["faceCoverage"]) != "0.85" {
+		t.Fatalf("faceCoverage = %s, want 0.85", raw.Clips[0]["faceCoverage"])
+	}
 
 	exportPath := "/assets/" + id + "/clips/" + best + "/exports"
 	if code := e.post(exportPath, `{"format": "vertical"}`, nil); code != http.StatusConflict {

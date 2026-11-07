@@ -51,3 +51,10 @@ class Storage:
 
     def delete(self, key: str) -> None:
         self.s3.delete_object(Bucket=self.bucket, Key=key)
+
+    def presign_get(self, key: str, expires: int = 3600) -> str:
+        """A temporary link to read an object, for tools that stream it (a
+        secret: never log it)."""
+        return self.s3.generate_presigned_url(
+            "get_object", Params={"Bucket": self.bucket, "Key": key}, ExpiresIn=expires
+        )

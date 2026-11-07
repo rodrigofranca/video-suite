@@ -2,6 +2,7 @@ package ffmpeg
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -24,6 +25,15 @@ type ClipSpec struct {
 	SourceHeight  int
 	SubtitlesFile string // ASS file to burn in; empty for none
 	Output        string
+	// Track is where to centre a "vertical-face" crop over time; empty
+	// means the middle of the frame.
+	Track []TrackPoint
+}
+
+// TrackPoint is the centre of the 9:16 window at a time of the clip.
+type TrackPoint struct {
+	T float64 `json:"t"` // seconds from the clip start
+	X float64 `json:"x"` // share of the source width
 }
 
 // ClipSize returns the width and height of the exported clip.
@@ -50,11 +60,15 @@ func ClipArgs(c ClipSpec) ([]string, error) {
 	switch c.Format {
 	case "original":
 		graph = fmt.Sprintf("[0:v:0]scale=%d:%d,setsar=1", w, h)
-	case "vertical":
-		// The middle of the frame, as wide as 9:16 allows.
+	case "vertical", "vertical-face":
+		// As wide as 9:16 allows: the middle of the frame, or following the track.
 		cw := even(min(c.SourceWidth, c.SourceHeight*9/16))
 		ch := even(min(c.SourceHeight, c.SourceWidth*16/9))
-		graph = fmt.Sprintf("[0:v:0]crop=%d:%d,scale=%d:%d,setsar=1", cw, ch, w, h)
+		x := strconv.Itoa((c.SourceWidth - cw) / 2)
+		if c.Format == "vertical-face" && len(c.Track) > 0 {
+			x = "'" + trackExpr(c.Track, c.SourceWidth, cw) + "'"
+		}
+		graph = fmt.Sprintf("[0:v:0]crop=w=%d:h=%d:x=%s:y=%d,scale=%d:%d,setsar=1", cw, ch, x, (c.SourceHeight-ch)/2, w, h)
 	case "vertical-blur":
 		// The whole frame, centered over a blurred, zoomed copy of itself.
 		graph = fmt.Sprintf("[0:v:0]split=2[bg][fg];"+
@@ -90,3 +104,29 @@ func even(n int) int { return max(n-n%2, 2) }
 var filterEscaper = strings.NewReplacer(`\`, `\\\\`, `'`, `\\\'`, `:`, `\\:`, `,`, `\,`, `;`, `\;`, `[`, `\[`, `]`, `\]`)
 
 func escapeFilterValue(s string) string { return filterEscaper.Replace(s) }
+
+// trackExpr returns an FFmpeg expression of t (seconds) for the crop's left
+// edge, in pixels: straight lines between the track's points, held before
+// the first and after the last, always inside the frame. FFmpeg evaluates it
+// for every frame.
+func trackExpr(points []TrackPoint, srcW, cropW int) string {
+	px := func(x float64) float64 {
+		return min(max(math.Round(x*float64(srcW)-float64(cropW)/2), 0), float64(srcW-cropW))
+	}
+	f := func(v float64) string { return strconv.FormatFloat(v, 'f', 3, 64) }
+	first, last := points[0], points[len(points)-1]
+	if len(points) == 1 {
+		return f(px(first.X))
+	}
+	terms := []string{"lt(t," + f(first.T) + ")*" + f(px(first.X))}
+	for i := 0; i+1 < len(points); i++ {
+		a, b := points[i], points[i+1]
+		if b.T <= a.T {
+			continue
+		}
+		slope := (px(b.X) - px(a.X)) / (b.T - a.T)
+		terms = append(terms, fmt.Sprintf("gte(t,%s)*lt(t,%s)*(%s+(t-%s)*%s)", f(a.T), f(b.T), f(px(a.X)), f(a.T), f(slope)))
+	}
+	terms = append(terms, "gte(t,"+f(last.T)+")*"+f(px(last.X)))
+	return strings.Join(terms, "+")
+}

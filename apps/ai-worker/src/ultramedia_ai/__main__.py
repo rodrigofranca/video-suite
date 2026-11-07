@@ -12,6 +12,7 @@ import redis
 from . import contracts
 from .analyze import Analyzer
 from .clips import ClipSuggester
+from .faces import FaceTracker
 from .config import ConfigError, from_env
 from .llm import ChatClient
 from .queue import Consumer
@@ -27,7 +28,7 @@ def main() -> int:
         stream=sys.stdout,
         format="time=%(asctime)s level=%(levelname)s msg=%(message)s",
     )
-    for noisy in ("botocore", "boto3", "urllib3", "faster_whisper", "httpx", "httpx2", "huggingface_hub"):
+    for noisy in ("botocore", "boto3", "urllib3", "faster_whisper", "httpx", "httpx2", "huggingface_hub", "libav"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
     log = logging.getLogger("ai-worker")
 
@@ -64,6 +65,12 @@ def main() -> int:
         log.error("ai worker stopped: could not load the Whisper model: %s", e)
         return 1
 
+    faces = FaceTracker(cfg, storage, store, log)
+    try:
+        faces.load_model()  # not fatal: transcription works without it
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not load the face detector yet (track-faces jobs will retry it): %s", e)
+
     llm = None
     if cfg.llm_base_url:
         llm = ChatClient(cfg.llm_base_url, cfg.llm_api_key, cfg.llm_model, timeout=cfg.llm_timeout_seconds)
@@ -78,6 +85,7 @@ def main() -> int:
         contracts.JOB_TRANSCRIBE_AUDIO: transcriber,
         contracts.JOB_ANALYZE_TRANSCRIPT: Analyzer(cfg, store, llm, log),
         contracts.JOB_SUGGEST_CLIPS: ClipSuggester(cfg, store, llm, log),
+        contracts.JOB_TRACK_FACES: faces,
     }
     runner = Runner(store, handlers, enqueue, log, stop, cfg.job_timeout_seconds)
     consumer = Consumer(client, runner.process, log, cfg.worker_name, stop)

@@ -33,12 +33,14 @@ const jobLabels: Record<string, string> = {
 	'transcribe-audio': 'Transcription',
 	'analyze-transcript': 'Summary',
 	'suggest-clips': 'Clips',
+	'track-faces': 'Face tracking',
 	'export-clip': 'Clip export'
 };
 
 const clipFormatLabels: Record<string, string> = {
 	original: 'Original',
 	vertical: '9:16 crop',
+	'vertical-face': '9:16 face',
 	'vertical-blur': '9:16 blur'
 };
 

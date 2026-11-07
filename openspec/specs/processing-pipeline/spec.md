@@ -36,7 +36,7 @@ Quando um job termina, com sucesso ou falha, o worker que o executou SHALL enfil
 
 #### Scenario: Depois do HLS
 - **WHEN** `transcode-hls` termina
-- **THEN** `extract-audio` SHALL ser enfileirado em `jobs`; depois dele, `transcribe-audio`, `analyze-transcript` e `suggest-clips` SHALL ser enfileirados em `jobs:ai`, um de cada vez
+- **THEN** `extract-audio` SHALL ser enfileirado em `jobs`; depois dele, `transcribe-audio`, `analyze-transcript`, `suggest-clips` e `track-faces` SHALL ser enfileirados em `jobs:ai`, um de cada vez
 
 ### Requirement: Status do asset pelo job HLS
 O worker SHALL marcar o asset `ready` quando `transcode-hls` termina com sucesso e `failed` quando ele falha. Os passos seguintes SHALL não mudar o status do asset.

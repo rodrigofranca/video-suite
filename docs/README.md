@@ -56,3 +56,4 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 
 - [0020](adr/0020-ai-clips.md): the model suggests clips in the pipeline; exports run on request in three formats, with optional burned-in captions, and stay private behind signed download links.
 - [0021](adr/0021-word-by-word-captions.md): transcripts keep each word's timing; clip captions come in five styles (highlighted word, word box, karaoke, one word at a time, lines).
+- [0022](adr/0022-face-following-vertical-clips.md): a pipeline step finds the main face in each clip (YuNet) and stores a camera path; the `vertical-face` export follows it, falling back to the centre. Rotated phone videos are measured as shown.

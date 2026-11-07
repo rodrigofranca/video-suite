@@ -114,4 +114,7 @@ type Clip struct {
 	Rank      int    // 1 is the best
 	Model     string
 	CreatedAt time.Time
+	// FaceTrack is where to centre a vertical crop over time, from the
+	// track-faces job; nil until it has run (see migration 0013).
+	FaceTrack []byte
 }

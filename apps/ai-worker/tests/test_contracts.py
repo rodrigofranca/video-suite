@@ -42,12 +42,20 @@ def test_suggest_clips_input_matches_go(golden):
     assert set(example) == {"asset_id"}
 
 
+def test_track_faces_input_matches_go(golden):
+    example = golden["examples"][contracts.JOB_TRACK_FACES]
+    inp = contracts.TrackFacesInput.from_json(json.dumps(example))
+    assert (inp.asset_id, inp.storage_key) == (example["asset_id"], example["storage_key"])
+    assert inp.storage_key == contracts.source_key(inp.asset_id)
+
+
 def test_next_job_type():
     assert contracts.next_job_type(contracts.JOB_TRANSCODE_HLS) == contracts.JOB_EXTRACT_AUDIO
     assert contracts.next_job_type(contracts.JOB_EXTRACT_AUDIO) == contracts.JOB_TRANSCRIBE_AUDIO
     assert contracts.next_job_type(contracts.JOB_TRANSCRIBE_AUDIO) == contracts.JOB_ANALYZE_TRANSCRIPT
     assert contracts.next_job_type(contracts.JOB_ANALYZE_TRANSCRIPT) == contracts.JOB_SUGGEST_CLIPS
-    assert contracts.next_job_type(contracts.JOB_SUGGEST_CLIPS) is None
+    assert contracts.next_job_type(contracts.JOB_SUGGEST_CLIPS) == contracts.JOB_TRACK_FACES
+    assert contracts.next_job_type(contracts.JOB_TRACK_FACES) is None
     assert contracts.next_job_type("unknown") is None
 
 

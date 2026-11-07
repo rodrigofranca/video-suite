@@ -24,17 +24,20 @@ import (
 const downloadLinkExpiry = 15 * time.Minute
 
 type clipDTO struct {
-	ID        string          `json:"id"`
-	Start     float64         `json:"start"`
-	End       float64         `json:"end"`
-	Duration  float64         `json:"duration"`
-	Title     string          `json:"title"`
-	Reason    string          `json:"reason"`
-	Score     int             `json:"score"`
-	Rank      int             `json:"rank"`
-	Model     string          `json:"model"`
-	CreatedAt time.Time       `json:"createdAt"`
-	Exports   []clipExportDTO `json:"exports"`
+	ID        string    `json:"id"`
+	Start     float64   `json:"start"`
+	End       float64   `json:"end"`
+	Duration  float64   `json:"duration"`
+	Title     string    `json:"title"`
+	Reason    string    `json:"reason"`
+	Score     int       `json:"score"`
+	Rank      int       `json:"rank"`
+	Model     string    `json:"model"`
+	CreatedAt time.Time `json:"createdAt"`
+	// FaceCoverage is the share of the clip in which a face was found, or
+	// null while the clip has no face track.
+	FaceCoverage *float64        `json:"faceCoverage"`
+	Exports      []clipExportDTO `json:"exports"`
 }
 
 // clipExportDTO is the newest export of a clip in one format: its job's
@@ -48,10 +51,12 @@ type clipExportDTO struct {
 	Captions bool    `json:"captions"`
 	// CaptionStyle is the style the file's captions ended up in.
 	CaptionStyle string `json:"captionStyle,omitempty"`
-	Width        int    `json:"width,omitempty"`
-	Height       int    `json:"height,omitempty"`
-	SizeBytes    int64  `json:"sizeBytes,omitempty"`
-	Ready        bool   `json:"ready"` // a file can be downloaded
+	// Framing is how a "vertical-face" file was framed: "face" or "center".
+	Framing   string `json:"framing,omitempty"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+	SizeBytes int64  `json:"sizeBytes,omitempty"`
+	Ready     bool   `json:"ready"` // a file can be downloaded
 }
 
 type clipFileMeta struct {
@@ -59,6 +64,7 @@ type clipFileMeta struct {
 	Format       string `json:"format"`
 	Captions     bool   `json:"captions"`
 	CaptionStyle string `json:"captionStyle"`
+	Framing      string `json:"framing"`
 	Width        int    `json:"width"`
 	Height       int    `json:"height"`
 	SizeBytes    int64  `json:"sizeBytes"`
@@ -93,6 +99,7 @@ func (a *api) listClips(w http.ResponseWriter, r *http.Request) {
 		out = append(out, clipDTO{
 			ID: c.ID, Start: c.Start, End: c.End, Duration: c.End - c.Start, Title: c.Title, Reason: c.Reason,
 			Score: c.Score, Rank: c.Rank, Model: c.Model, CreatedAt: c.CreatedAt, Exports: clipExports(c.ID, jobs, arts),
+			FaceCoverage: faceCoverage(c.FaceTrack),
 		})
 	}
 	wordTimings := false
@@ -104,6 +111,16 @@ func (a *api) listClips(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"clips": out, "wordTimings": wordTimings})
+}
+
+func faceCoverage(track []byte) *float64 {
+	var t struct {
+		Coverage float64 `json:"coverage"`
+	}
+	if len(track) == 0 || json.Unmarshal(track, &t) != nil {
+		return nil
+	}
+	return &t.Coverage
 }
 
 // clipExports finds, per format, the newest export job of a clip and the
@@ -127,7 +144,7 @@ func clipExports(clipID string, jobs []domain.Job, arts []domain.Artifact) []cli
 		}
 		e := clipExportDTO{Format: format, JobID: job.ID, Status: job.Status, Progress: job.Progress, Error: job.ErrorMessage}
 		if file, ok := latestClipFile(arts, clipID, format); ok {
-			e.Captions, e.CaptionStyle, e.Width, e.Height, e.SizeBytes, e.Ready = file.Captions, file.CaptionStyle, file.Width, file.Height, file.SizeBytes, true
+			e.Captions, e.CaptionStyle, e.Framing, e.Width, e.Height, e.SizeBytes, e.Ready = file.Captions, file.CaptionStyle, file.Framing, file.Width, file.Height, file.SizeBytes, true
 		}
 		out = append(out, e)
 	}

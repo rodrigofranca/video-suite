@@ -98,6 +98,15 @@
 						>
 							{starting === `${clip.id}:${format}` ? 'Starting…' : clipFormatLabel(format)}
 						</button>
+						{#if format === 'vertical-face' && !ex}
+							<span class="status">
+								{clip.faceCoverage === null
+									? 'No face tracking yet: centred'
+									: clip.faceCoverage < 0.3
+										? 'Few faces found: centred'
+										: `Face in ${Math.round(clip.faceCoverage * 100)}% of the clip`}
+							</span>
+						{/if}
 						{#if active}
 							<span class="status" data-testid="exporting">Exporting…{ex.progress > 0 ? ` ${ex.progress}%` : ''}</span>
 						{:else if ex?.status === 'failed'}
@@ -115,7 +124,7 @@
 							></video>
 							<a href={clipFileUrl(clip.id, format)} data-testid="download">Download</a>
 							<span class="status">
-								{ex.sizeBytes ? formatBytes(ex.sizeBytes) : ''}{ex.captions
+								{ex.sizeBytes ? formatBytes(ex.sizeBytes) : ''}{ex.framing === 'center' ? ' · centred' : ''}{ex.captions
 									? ` · ${captionStyleLabel(ex.captionStyle ?? 'lines')}`
 									: ''}
 							</span>
@@ -194,9 +203,14 @@
 	}
 	.formats {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 0.5rem;
 		align-items: start;
+	}
+	@media (min-width: 560px) {
+		.formats {
+			grid-template-columns: repeat(4, minmax(0, 1fr));
+		}
 	}
 	.format {
 		display: grid;

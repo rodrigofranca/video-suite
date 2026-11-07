@@ -32,7 +32,7 @@ Any file output produced by a Job and associated with an Asset: the HLS playlist
 
 ## Technical metadata
 
-What ffprobe found in the Source, one row per Asset in `technical_metadata`: `{"summary": {...}, "ffprobe": {...}}`. The summary (duration, resolution, codecs, bitrate, frame rate, container, size) is what the dashboard shows; the full ffprobe output is kept for debugging.
+What ffprobe found in the Source, one row per Asset in `technical_metadata`: `{"summary": {...}, "ffprobe": {...}}`. The summary (duration, resolution, codecs, bitrate, frame rate, container, size) is what the dashboard shows; its resolution is the picture as shown, so a portrait phone video stored sideways reads as portrait (ADR 0022); the full ffprobe output is kept for debugging.
 
 ## Job
 
@@ -44,7 +44,7 @@ A Job can be run again (`POST /assets/{id}/jobs`) once every Job of its Asset ha
 
 ## Pipeline
 
-Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbnail` → `transcode-hls` → `extract-audio` → `transcribe-audio` → `analyze-transcript` → `suggest-clips` (order in `jobcontracts.Pipeline`). No manual trigger required. Each worker processes one job at a time (no parallelism in MVP).
+Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbnail` → `transcode-hls` → `extract-audio` → `transcribe-audio` → `analyze-transcript` → `suggest-clips` → `track-faces` (order in `jobcontracts.Pipeline`). No manual trigger required. Each worker processes one job at a time (no parallelism in MVP).
 
 - `extract-metadata`: ffprobe → technical metadata.
 - `generate-thumbnail`: a JPEG (max 1280 px wide) at `AtSecond`, or at the middle of the video when it is shorter; first frame as a last resort.
@@ -53,6 +53,7 @@ Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbna
 - `transcribe-audio`: Whisper (AI worker) → Transcript and WebVTT subtitles.
 - `analyze-transcript`: a language model, through the LLM gateway (AI worker) → Analysis. Nothing to do when there is no speech.
 - `suggest-clips`: the language model picks Clips from the transcript (AI worker). Nothing to do under 30 seconds of speech.
+- `track-faces`: finds the main face through each Clip and stores its Face track (AI worker, ADR 0022). Nothing to do without Clips.
 
 `export-clip` is not in the pipeline: it runs when someone asks for a Clip in a format, and, like a re-run, only when no other Job of the Asset is pending or running.
 
@@ -70,9 +71,13 @@ What a language model wrote about an Asset from its Transcript, by the `analyze-
 
 ## Clip
 
-A moment of an Asset that works as a short standalone video, suggested by the `suggest-clips` Job: start and end on transcript segment boundaries (10 to 90 seconds), title, reason and a score from 1 to 10. Up to 5 per Asset in `clips`; a new suggestion run replaces them. An export (`export-clip`) cuts a Clip into an MP4 in one format, `original`, `vertical` (centre crop, 9:16) or `vertical-blur` (whole frame over a blurred copy, 9:16), optionally with burned-in captions in one of five styles: `highlight` (the word being said in yellow, the default), `box` (a box behind it), `karaoke` (words fill with color as they are said), `one-word` (only the word being said, big) — these need the Transcript's word timings (ADR 0021) — or `lines` (subtitle lines). Exported files are private and downloaded through signed links (ADR 0020).
+A moment of an Asset that works as a short standalone video, suggested by the `suggest-clips` Job: start and end on transcript segment boundaries (10 to 90 seconds), title, reason and a score from 1 to 10. Up to 5 per Asset in `clips`; a new suggestion run replaces them. An export (`export-clip`) cuts a Clip into an MP4 in one format, `original`, `vertical` (centre crop, 9:16), `vertical-face` (a 9:16 crop that follows the Face track, or the centre without one) or `vertical-blur` (whole frame over a blurred copy, 9:16), optionally with burned-in captions in one of five styles: `highlight` (the word being said in yellow, the default), `box` (a box behind it), `karaoke` (words fill with color as they are said), `one-word` (only the word being said, big) — these need the Transcript's word timings (ADR 0021) — or `lines` (subtitle lines). Exported files are private and downloaded through signed links (ADR 0020).
 
 **Not**: a Rendition (which is the whole video for playback) or a chapter (which marks a part of the video without cutting it).
+
+## Face track
+
+Where the main face is through a Clip, stored with it (`clips.face_track`) by the `track-faces` Job: the share of samples with a face (`coverage`) and a camera path, the centre of the 9:16 window over time as a share of the picture width, in seconds from the Clip start. Empty when a face is in less than 30% of the Clip or the picture is already narrower than 9:16 (ADR 0022). Suggesting Clips again leaves the new ones without it until `track-faces` runs again.
 
 ## LLM gateway
 
@@ -97,7 +102,7 @@ The player reads HLS straight from storage: only `assets/*/hls/*`, `assets/*/thu
 Process that picks pending Jobs and executes them. Separate from the API process. Two kinds, each reading its own stream (ADR 0016):
 
 - **Media worker** (Go, `apps/worker`): stream `jobs`, group `workers`; FFmpeg jobs, including `export-clip`.
-- **AI worker** (Python, `apps/ai-worker`): stream `jobs:ai`, group `ai-workers`; `transcribe-audio`, `analyze-transcript` and `suggest-clips`. It mirrors the media worker's lifecycle, and its contracts are checked against `packages/job-contracts/testdata/contracts.json`.
+- **AI worker** (Python, `apps/ai-worker`): stream `jobs:ai`, group `ai-workers`; `transcribe-audio`, `analyze-transcript`, `suggest-clips` and `track-faces`. It mirrors the media worker's lifecycle, and its contracts are checked against `packages/job-contracts/testdata/contracts.json`.
 
 `jobcontracts.StreamFor` decides which stream a Job goes to.
 

@@ -14,8 +14,10 @@ comes with a fixed position, colors and case.
 
 ## Clips
 
-- **Vertical clips that follow the speaker's face**, instead of the centre crop.
 - **Adjust a clip before exporting it**: change its start, end and title, with buttons to snap to the previous or next sentence.
+
+- **Follow whoever is speaking**: when several faces are on screen, pick the one whose mouth moves with the voice, instead of the biggest.
+- **Track faces again after new suggestions**: re-running *Clips* from the dashboard could also re-run *Face tracking*, so new clips are not left centred.
 
 ## Platform
 

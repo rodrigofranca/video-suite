@@ -151,7 +151,7 @@ func TestPipelineHappyPath(t *testing.T) {
 	for _, m := range h.enqueued {
 		want := jobcontracts.StreamJobs
 		switch m.Type {
-		case jobcontracts.JobTypeTranscribeAudio, jobcontracts.JobTypeAnalyzeTranscript, jobcontracts.JobTypeSuggestClips:
+		case jobcontracts.JobTypeTranscribeAudio, jobcontracts.JobTypeAnalyzeTranscript, jobcontracts.JobTypeSuggestClips, jobcontracts.JobTypeTrackFaces:
 			want = jobcontracts.StreamAIJobs
 		}
 		if m.Stream() != want {

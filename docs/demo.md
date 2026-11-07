@@ -25,10 +25,10 @@ Open http://localhost:5173. Keep `make demo-logs` running in a terminal if you w
 6. **Playback.** Press play. "This is HLS, read straight from storage, played with hls.js."
 7. **Transcript and subtitles.** "After the video is playable, the Go worker extracts the audio and a Python worker transcribes it with Whisper, locally." Turn on the subtitles in the player, then click a line of the transcript to jump there.
 8. **Summary, tags and chapters.** "Then a language model reads the transcript and writes a summary, tags and chapters. The call goes through a LiteLLM gateway, so the model or provider can change without touching the code." Click a chapter to jump there.
-9. **Clips.** "The same model picks the moments that work as standalone clips." Click **Preview** on the first clip, then **9:16 blur**: seconds later the vertical clip plays on the page, with captions that highlight each word as it is said, and can be downloaded. Try another **Captions** style (word box, karaoke, one word at a time) and export again.
+9. **Clips.** "The same model picks the moments that work as standalone clips." Click **Preview** on the first clip, then **9:16 face**: seconds later the vertical clip plays on the page, framed on the speaker's face, with captions that highlight each word as it is said, and can be downloaded. Export **9:16 crop** too to compare it with the plain centre crop. Try another **Captions** style (word box, karaoke, one word at a time) and export again.
 10. **Run a job again.** Open **Thumbnail**, click **Run again**. "A new attempt is added; the earlier one stays in the history."
 11. **The list.** Go back to **Videos**: thumbnail, duration, resolution, status.
-12. **What's next.** "Next: vertical clips that follow the speaker's face, and editing a clip's start and end."
+12. **What's next.** "Next: editing a clip's start, end and title, and choosing caption position and colors."
 
 ## After the demo
 
