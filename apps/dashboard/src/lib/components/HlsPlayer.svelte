@@ -2,7 +2,7 @@
 	// Plays an HLS playlist: hls.js where Media Source Extensions exist,
 	// native HLS otherwise (Safari on iOS). UltraMedia replaces this later
 	// (docs/adr/0012).
-	let { src }: { src: string } = $props();
+	let { src, poster }: { src: string; poster?: string | null } = $props();
 
 	let video: HTMLVideoElement;
 	let error = $state('');
@@ -38,7 +38,14 @@
 </script>
 
 <!-- svelte-ignore a11y_media_has_caption -->
-<video bind:this={video} controls playsinline preload="metadata" data-testid="player"></video>
+<video
+	bind:this={video}
+	controls
+	playsinline
+	preload="metadata"
+	poster={poster ?? undefined}
+	data-testid="player"
+></video>
 {#if error}
 	<p class="error">{error}</p>
 {/if}

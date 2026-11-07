@@ -31,9 +31,18 @@
 			<button class="row" onclick={() => toggle(job)} aria-expanded={openJob === job.id}>
 				<span class="name">{jobLabel(job.type)}</span>
 				<StatusBadge status={job.status} />
-				<span class="muted">{formatDuration(job.startedAt, job.completedAt)}</span>
+				<span class="muted">
+					{job.status === 'running' && job.progress > 0
+						? `${job.progress}%`
+						: formatDuration(job.startedAt, job.completedAt)}
+				</span>
 				<span class="chevron" aria-hidden="true">{openJob === job.id ? '▾' : '▸'}</span>
 			</button>
+			{#if job.status === 'running' && job.progress > 0}
+				<div class="progress" data-testid="job-progress">
+					<div class="bar" style="width: {job.progress}%"></div>
+				</div>
+			{/if}
 			{#if job.error}
 				<p class="job-error">{job.error}</p>
 			{/if}
@@ -87,6 +96,18 @@
 	}
 	.name {
 		font-weight: 600;
+	}
+	.progress {
+		height: 4px;
+		margin: 0 0.85rem 0.65rem;
+		background: var(--badge-neutral-bg);
+		border-radius: 999px;
+		overflow: hidden;
+	}
+	.bar {
+		height: 100%;
+		background: var(--accent);
+		transition: width 0.5s;
 	}
 	.job-error {
 		margin: 0 0.85rem 0.65rem;

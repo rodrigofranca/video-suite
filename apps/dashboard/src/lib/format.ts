@@ -32,3 +32,21 @@ const jobLabels: Record<string, string> = {
 };
 
 export const jobLabel = (type: string) => jobLabels[type] ?? type;
+
+/** Media length as m:ss or h:mm:ss. */
+export function formatClock(seconds: number): string {
+	const total = Math.round(seconds);
+	const h = Math.floor(total / 3600);
+	const m = Math.floor((total % 3600) / 60);
+	const s = String(total % 60).padStart(2, '0');
+	return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+}
+
+export function formatResolution(width?: number, height?: number): string {
+	return width && height ? `${width}×${height}` : '';
+}
+
+export function formatBitrate(bitsPerSecond?: number): string {
+	if (!bitsPerSecond) return '';
+	return bitsPerSecond >= 1e6 ? `${(bitsPerSecond / 1e6).toFixed(1)} Mb/s` : `${Math.round(bitsPerSecond / 1e3)} kb/s`;
+}

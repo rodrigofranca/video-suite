@@ -58,3 +58,14 @@ Uma entrega repetida de um job `done` ou `failed` SHALL ser ignorada. Um job int
 #### Scenario: Encerramento no meio do job
 - **WHEN** o worker recebe SIGTERM durante um job
 - **THEN** o job SHALL continuar `running`, a mensagem SHALL ficar pendente e o job SHALL ser executado de novo no próximo start
+
+### Requirement: Progresso dos jobs
+O worker SHALL gravar o progresso que um handler reporta em `processing_jobs.progress` enquanto o job está `running`, no máximo uma vez por segundo e só quando o valor muda. Um job `done` SHALL ficar com progresso 100.
+
+#### Scenario: Valores próximos
+- **WHEN** o handler reporta 10 e logo depois 20
+- **THEN** o banco SHALL mostrar 10 até passar um segundo
+
+#### Scenario: Job pendente
+- **WHEN** o progresso é gravado para um job que não está `running`
+- **THEN** o valor SHALL ser ignorado

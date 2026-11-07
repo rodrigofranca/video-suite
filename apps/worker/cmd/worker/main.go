@@ -44,8 +44,10 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		return errors.New("ffmpeg not found in PATH; install FFmpeg to run the worker")
+	for _, tool := range []string{"ffmpeg", "ffprobe"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			return fmt.Errorf("%s not found in PATH; install FFmpeg to run the worker", tool)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -76,9 +78,7 @@ func run(log *slog.Logger) error {
 
 	st := store.New(pool)
 	d := jobs.NewDispatcher()
-	jobs.RegisterStubs(d) // extract-metadata and generate-thumbnail are still stubs
-	hls := jobs.HLS{Storage: files, Store: st, TempDir: os.Getenv("WORKER_TEMP_DIR")}
-	jobs.Handle(d, jobcontracts.JobTypeTranscodeHLS, hls.Transcode)
+	jobs.Media{Storage: files, Store: st, TempDir: os.Getenv("WORKER_TEMP_DIR")}.Register(d)
 
 	runner := &pipeline.Runner{
 		Store:      st,

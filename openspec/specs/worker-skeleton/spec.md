@@ -46,13 +46,6 @@ O worker SHALL executar XACK após o handler retornar, independente de sucesso o
 - **WHEN** o processamento retorna `queue.ErrRetry`
 - **THEN** o worker SHALL não executar XACK, seguir para a próxima mensagem e reprocessar essa no próximo start, uma única vez
 
-### Requirement: Handlers do MVP1 são stubs que logam e retornam nil
-Os handlers de `extract-metadata` e `generate-thumbnail` SHALL continuar como stubs que logam `stub: <type> called for asset <id> (not implemented yet)` no log do job e retornam nil. O handler de `transcode-hls` segue a spec `hls-transcoding`.
-
-#### Scenario: Stub executa sem erro
-- **WHEN** handler stub é chamado com payload válido
-- **THEN** o handler SHALL logar a mensagem stub e retornar nil
-
 ### Requirement: Worker retoma mensagens pendentes ao reiniciar
 Ao iniciar, o worker SHALL reprocessar as mensagens já entregues ao seu nome de consumidor e ainda não ackadas, antes de ler mensagens novas. O nome do consumidor SHALL vir de `WORKER_NAME`, com o hostname como padrão.
 
@@ -68,7 +61,7 @@ O worker SHALL encerrar ao receber SIGINT ou SIGTERM, ackando um job já conclu�
 - **THEN** SHALL logar `worker shut down` e encerrar com código zero em poucos segundos
 
 ### Requirement: Worker verifica dependências na inicialização
-O worker SHALL exigir `REDIS_URL`, `DATABASE_URL` e as variáveis `S3_*` obrigatórias, encontrar o `ffmpeg` no `PATH` e conferir Redis, PostgreSQL e o bucket antes de consumir jobs.
+O worker SHALL exigir `REDIS_URL`, `DATABASE_URL` e as variáveis `S3_*` obrigatórias, encontrar `ffmpeg` e `ffprobe` no `PATH` e conferir Redis, PostgreSQL e o bucket antes de consumir jobs.
 
 #### Scenario: FFmpeg ausente
 - **WHEN** o worker inicia numa máquina sem FFmpeg

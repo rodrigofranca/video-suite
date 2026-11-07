@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,11 +173,56 @@ func TestDeleteAssetCascades(t *testing.T) {
 	}
 }
 
-func containsAsset(list []domain.Asset, id string) bool {
+func containsAsset(list []AssetListItem, id string) bool {
 	for _, a := range list {
 		if a.ID == id {
 			return true
 		}
 	}
 	return false
+}
+
+func TestMetadataThumbnailAndProgress(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+
+	if _, err := s.GetTechnicalMetadata(ctx, asset.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetTechnicalMetadata before extraction: %v", err)
+	}
+	// Saving twice keeps a single row with the latest result.
+	s.SaveTechnicalMetadata(ctx, asset.ID, []byte(`{"summary":{"durationSeconds":1},"ffprobe":{}}`))
+	if err := s.SaveTechnicalMetadata(ctx, asset.ID, []byte(`{"summary":{"durationSeconds":12.5},"ffprobe":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.GetTechnicalMetadata(ctx, asset.ID)
+	if err != nil || !strings.Contains(string(m.MetadataJSON), "12.5") {
+		t.Fatalf("GetTechnicalMetadata = %s, %v", m.MetadataJSON, err)
+	}
+
+	s.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: asset.ID, JobID: jobs[1].ID, Type: domain.ArtifactThumbnail, StorageKey: "assets/x/thumbnails/thumbnail.jpg"})
+	list, err := s.ListAssets(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var item *AssetListItem
+	for i := range list {
+		if list[i].ID == asset.ID {
+			item = &list[i]
+		}
+	}
+	if item == nil || item.ThumbnailKey != "assets/x/thumbnails/thumbnail.jpg" || !strings.Contains(string(item.Summary), "12.5") {
+		t.Fatalf("list item = %+v", item)
+	}
+
+	// Progress only changes while the job runs, and is clamped to 0-100.
+	s.SetJobProgress(ctx, jobs[2].ID, 50)
+	if got, _ := s.GetJob(ctx, jobs[2].ID); got.Progress != 0 {
+		t.Fatalf("pending job progress = %d, want 0", got.Progress)
+	}
+	s.StartJob(ctx, jobs[2].ID)
+	s.SetJobProgress(ctx, jobs[2].ID, 140)
+	if got, _ := s.GetJob(ctx, jobs[2].ID); got.Progress != 100 {
+		t.Fatalf("progress = %d, want clamped to 100", got.Progress)
+	}
 }

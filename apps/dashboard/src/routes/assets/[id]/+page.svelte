@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { getAsset, type AssetDetail } from '$lib/api';
-	import { formatBytes, formatDate } from '$lib/format';
+	import { getAsset, metadataUrl, type AssetDetail } from '$lib/api';
+	import { formatBitrate, formatBytes, formatClock, formatDate, formatResolution } from '$lib/format';
 	import { poll } from '$lib/poll.svelte';
 	import HlsPlayer from '$lib/components/HlsPlayer.svelte';
 	import JobList from '$lib/components/JobList.svelte';
@@ -25,7 +25,15 @@
 		() => !finished() && !error
 	);
 
-	let hlsError = $derived(asset?.jobs.find((j) => j.type === 'transcode-hls')?.error ?? null);
+	let hlsJob = $derived(asset?.jobs.find((j) => j.type === 'transcode-hls'));
+	let meta = $derived(asset?.metadata ?? null);
+	let encodingText = $derived(
+		hlsJob?.status === 'running'
+			? hlsJob.progress > 0
+				? `Encoding HLS… ${hlsJob.progress}%`
+				: 'Encoding HLS…'
+			: 'Processing… the video appears here when HLS encoding finishes.'
+	);
 </script>
 
 <svelte:head><title>{asset?.filename ?? 'Video'} · UltraMedia</title></svelte:head>
@@ -44,16 +52,23 @@
 
 	<section class="player">
 		{#if asset.playback}
-			<HlsPlayer src={asset.playback.manifestUrl} />
-		{:else if asset.status === 'failed'}
-			<div class="placeholder card">
-				<p class="error">This video could not be processed.</p>
-				{#if hlsError}<p class="muted small">{hlsError}</p>{/if}
-			</div>
+			<HlsPlayer src={asset.playback.manifestUrl} poster={asset.thumbnailUrl} />
 		{:else}
-			<div class="placeholder card" data-testid="processing">
-				<span class="spinner" aria-hidden="true"></span>
-				<p>Processing… the video appears here when HLS encoding finishes.</p>
+			<div
+				class="placeholder card"
+				class:with-image={!!asset.thumbnailUrl}
+				style={asset.thumbnailUrl ? `background-image: url(${asset.thumbnailUrl})` : ''}
+				data-testid={asset.status === 'failed' ? 'failed' : 'processing'}
+			>
+				<div class="overlay">
+					{#if asset.status === 'failed'}
+						<p class="error">This video could not be processed.</p>
+						{#if hlsJob?.error}<p class="small">{hlsJob.error}</p>{/if}
+					{:else}
+						<span class="spinner" aria-hidden="true"></span>
+						<p data-testid="encoding-status">{encodingText}</p>
+					{/if}
+				</div>
 			</div>
 		{/if}
 	</section>
@@ -66,18 +81,45 @@
 
 		<section>
 			<h2>Details</h2>
-			<dl class="card details">
-				<dt>Uploaded</dt>
-				<dd>{formatDate(asset.createdAt)}</dd>
+			<dl class="card details" data-testid="details">
+				{#if meta}
+					<dt>Duration</dt>
+					<dd>{formatClock(meta.durationSeconds)}</dd>
+					{#if meta.width}
+						<dt>Resolution</dt>
+						<dd>{formatResolution(meta.width, meta.height)}</dd>
+					{/if}
+					<dt>Video</dt>
+					<dd>{meta.videoCodec}{meta.frameRate ? ` · ${meta.frameRate} fps` : ''}</dd>
+					{#if meta.audioCodec}
+						<dt>Audio</dt>
+						<dd>{meta.audioCodec}</dd>
+					{/if}
+					{#if meta.bitRate}
+						<dt>Bitrate</dt>
+						<dd>{formatBitrate(meta.bitRate)}</dd>
+					{/if}
+				{/if}
 				{#if asset.source}
 					<dt>Size</dt>
 					<dd>{formatBytes(asset.source.sizeBytes)}</dd>
+				{/if}
+				<dt>Uploaded</dt>
+				<dd>{formatDate(asset.createdAt)}</dd>
+				{#if asset.source}
 					<dt>SHA-256</dt>
 					<dd class="mono">{asset.source.checksum.slice(0, 16)}…</dd>
 				{/if}
-				{#if asset.playback}
-					<dt>HLS playlist</dt>
-					<dd class="mono"><a href={asset.playback.manifestUrl} target="_blank" rel="noreferrer">index.m3u8</a></dd>
+				{#if asset.playback || meta}
+					<dt>Files</dt>
+					<dd class="links">
+						{#if asset.playback}
+							<a href={asset.playback.manifestUrl} target="_blank" rel="noreferrer">HLS playlist</a>
+						{/if}
+						{#if meta}
+							<a href={metadataUrl(asset.id)} target="_blank" rel="noreferrer">ffprobe JSON</a>
+						{/if}
+					</dd>
 				{/if}
 				<dt>Asset ID</dt>
 				<dd class="mono">{asset.id}</dd>
@@ -108,19 +150,32 @@
 	}
 	.placeholder {
 		aspect-ratio: 16 / 9;
+		padding: 0;
+		overflow: hidden;
+		background-size: cover;
+		background-position: center;
+	}
+	.overlay {
+		height: 100%;
 		display: grid;
 		place-content: center;
 		justify-items: center;
 		gap: 0.75rem;
+		padding: 1rem;
 		text-align: center;
 	}
-	.placeholder p {
+	.with-image .overlay {
+		background: rgb(0 0 0 / 0.55);
+		color: #fff;
+	}
+	.overlay p {
 		margin: 0;
 		max-width: 28rem;
 	}
 	.small {
 		font-size: 0.85rem;
 		overflow-wrap: anywhere;
+		opacity: 0.85;
 	}
 	.spinner {
 		width: 28px;
@@ -157,6 +212,11 @@
 	dd {
 		margin: 0;
 		overflow-wrap: anywhere;
+	}
+	.links {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
 	}
 	.mono {
 		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

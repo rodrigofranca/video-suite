@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -264,5 +265,34 @@ func TestUnknownJobIsReported(t *testing.T) {
 	err := h.runner.Process(context.Background(), jobcontracts.Message{JobID: domain.NewID(), Type: "x", Payload: []byte("{}")})
 	if err == nil || errors.Is(err, queue.ErrRetry) {
 		t.Fatalf("want a plain error (message acked), got %v", err)
+	}
+}
+
+func TestProgressIsSavedAndThrottled(t *testing.T) {
+	h := newHarness(t)
+	var seen []int
+	h.runner.Dispatcher.Register(jobcontracts.JobTypeTranscodeHLS, func(ctx context.Context, job jobs.Job) error {
+		read := func() int {
+			j, _ := h.store.GetJob(ctx, job.ID)
+			return j.Progress
+		}
+		job.Progress(10)
+		seen = append(seen, read())
+		job.Progress(20) // within a second of the last write: skipped
+		seen = append(seen, read())
+		time.Sleep(progressInterval + 50*time.Millisecond)
+		job.Progress(30)
+		seen = append(seen, read())
+		return nil
+	})
+
+	if err := h.process(context.Background(), 2); err != nil {
+		t.Fatal(err)
+	}
+	if want := []int{10, 10, 30}; !slices.Equal(seen, want) {
+		t.Fatalf("progress in database = %v, want %v", seen, want)
+	}
+	if got := h.job(2); got.Progress != 100 {
+		t.Fatalf("finished job progress = %d, want 100", got.Progress)
 	}
 }

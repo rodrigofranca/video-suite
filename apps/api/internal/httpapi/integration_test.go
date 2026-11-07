@@ -301,3 +301,69 @@ func TestUploadEnqueueFailureMarksAssetFailed(t *testing.T) {
 		t.Fatalf("first job = %+v, want failed with a message", jobs[0])
 	}
 }
+
+func TestMetadataAndThumbnailInResponses(t *testing.T) {
+	e := newEnv(t, 0)
+	rec := e.upload("meta.mp4", fakeMP4(1024))
+	var created struct{ AssetID string }
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	e.cleanupAsset(created.AssetID)
+	id := created.AssetID
+
+	if code := e.get("/assets/"+id+"/metadata", nil); code != http.StatusNotFound {
+		t.Fatalf("metadata before extraction: %d, want 404", code)
+	}
+	var before struct {
+		ThumbnailURL *string
+		Metadata     json.RawMessage
+	}
+	e.get("/assets/"+id, &before)
+	if before.ThumbnailURL != nil || string(before.Metadata) != "null" && before.Metadata != nil {
+		t.Fatalf("before = %+v, want nulls", before)
+	}
+
+	ctx := context.Background()
+	jobs, _ := e.store.ListJobs(ctx, id)
+	e.store.SaveTechnicalMetadata(ctx, id, []byte(`{"summary":{"durationSeconds":42.5,"width":1920,"height":1080},"ffprobe":{"format":{"filename":"k"}}}`))
+	e.store.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: id, JobID: jobs[1].ID, Type: domain.ArtifactThumbnail, StorageKey: storage.ThumbnailKey(id)})
+
+	type summary struct {
+		DurationSeconds float64
+		Width, Height   int
+	}
+	var detail struct {
+		ThumbnailURL *string
+		Metadata     summary
+	}
+	e.get("/assets/"+id, &detail)
+	wantThumb := e.storage.PublicURL(storage.ThumbnailKey(id))
+	if detail.ThumbnailURL == nil || *detail.ThumbnailURL != wantThumb || detail.Metadata.DurationSeconds != 42.5 || detail.Metadata.Width != 1920 {
+		t.Fatalf("detail = %+v", detail)
+	}
+
+	var list struct {
+		Assets []struct {
+			ID           string
+			ThumbnailURL *string
+			Metadata     *summary
+		}
+	}
+	e.get("/assets", &list)
+	found := false
+	for _, a := range list.Assets {
+		if a.ID == id {
+			found = a.ThumbnailURL != nil && *a.ThumbnailURL == wantThumb && a.Metadata != nil && a.Metadata.Height == 1080
+		}
+	}
+	if !found {
+		t.Fatal("list item is missing the thumbnail or metadata")
+	}
+
+	var full struct {
+		Summary summary
+		FFprobe map[string]any
+	}
+	if code := e.get("/assets/"+id+"/metadata", &full); code != 200 || full.Summary.DurationSeconds != 42.5 || full.FFprobe["format"] == nil {
+		t.Fatalf("GET metadata: %d %+v", code, full)
+	}
+}

@@ -12,25 +12,18 @@ import (
 
 	"ultramedia/media-core/domain"
 	"ultramedia/media-core/storage"
-	"ultramedia/media-core/store"
 	"ultramedia/worker/internal/ffmpeg"
 
 	jobcontracts "ultramedia/job-contracts"
 )
 
-// HLS transcodes an asset's source into a single-rendition HLS stream and
-// stores it under assets/{id}/hls/.
-type HLS struct {
-	Storage *storage.Client
-	Store   *store.Store
-	TempDir string // where work files go; defaults to the OS temp dir
-}
-
-func (h HLS) Transcode(ctx context.Context, job Job, in jobcontracts.TranscodeHLSInput) error {
-	if !domain.IsID(in.AssetID) || in.StorageKey == "" {
-		return fmt.Errorf("invalid input: asset_id %q, storage_key %q", in.AssetID, in.StorageKey)
+// TranscodeHLS converts an asset's source into a single-rendition HLS stream
+// stored under assets/{id}/hls/, reporting progress while FFmpeg runs.
+func (m Media) TranscodeHLS(ctx context.Context, job Job, in jobcontracts.TranscodeHLSInput) error {
+	if err := validInput(in.AssetID, in.StorageKey); err != nil {
+		return err
 	}
-	dir, err := os.MkdirTemp(h.TempDir, "transcode-"+in.AssetID+"-")
+	dir, err := os.MkdirTemp(m.TempDir, "transcode-"+in.AssetID+"-")
 	if err != nil {
 		return err
 	}
@@ -38,8 +31,17 @@ func (h HLS) Transcode(ctx context.Context, job Job, in jobcontracts.TranscodeHL
 
 	src := filepath.Join(dir, "source.mp4")
 	job.Log.Info("downloading source", "key", in.StorageKey)
-	if err := h.Storage.DownloadFile(ctx, in.StorageKey, src); err != nil {
+	if err := m.Storage.DownloadFile(ctx, in.StorageKey, src); err != nil {
 		return err
+	}
+
+	// The local probe is instant and keeps progress working even if the
+	// metadata job failed.
+	var duration time.Duration
+	if _, s, err := ffmpeg.Probe(ctx, src, in.StorageKey); err == nil {
+		duration = time.Duration(s.DurationSeconds * float64(time.Second))
+	} else {
+		job.Log.Warn("could not read the duration; progress will not be shown: " + err.Error())
 	}
 
 	out := filepath.Join(dir, "hls")
@@ -47,21 +49,28 @@ func (h HLS) Transcode(ctx context.Context, job Job, in jobcontracts.TranscodeHL
 		return err
 	}
 	args := ffmpeg.HLSArgs(src, out)
-	job.Log.Info("running ffmpeg " + strings.Join(args, " "))
+	job.Log.Info("running " + ffmpeg.CommandLine(args))
 	start := time.Now()
-	if err := ffmpeg.Run(ctx, args, job.Log); err != nil {
+	opts := ffmpeg.Options{}
+	if duration > 0 {
+		opts.Progress = func(written time.Duration) {
+			// 99 at most: the job reaches 100 only once the files are uploaded.
+			job.Progress(min(int(written*100/duration), 99))
+		}
+	}
+	if err := ffmpeg.Run(ctx, args, job.Log, opts); err != nil {
 		return err
 	}
 	job.Log.Info("ffmpeg finished", "seconds", time.Since(start).Round(100*time.Millisecond).Seconds())
 
-	segments, err := h.upload(ctx, out, in.AssetID)
+	segments, err := m.uploadHLS(ctx, out, in.AssetID)
 	if err != nil {
 		return err
 	}
 	job.Log.Info("uploaded HLS output", "segments", segments, "prefix", storage.HLSPrefix(in.AssetID))
 
 	meta, _ := json.Marshal(map[string]any{"segments": segments, "segmentSeconds": ffmpeg.SegmentSeconds})
-	return h.Store.CreateArtifact(ctx, domain.Artifact{
+	return m.Store.CreateArtifact(ctx, domain.Artifact{
 		ID: domain.NewID(), AssetID: in.AssetID, JobID: job.ID, Type: domain.ArtifactHLS,
 		StorageKey: storage.HLSManifestKey(in.AssetID), MetadataJSON: meta,
 	})
@@ -69,7 +78,7 @@ func (h HLS) Transcode(ctx context.Context, job Job, in jobcontracts.TranscodeHL
 
 // upload sends the segments first and the playlist last, so a player never
 // sees a playlist that points to missing segments.
-func (h HLS) upload(ctx context.Context, dir, assetID string) (segments int, err error) {
+func (m Media) uploadHLS(ctx context.Context, dir, assetID string) (segments int, err error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, err
@@ -100,7 +109,7 @@ func (h HLS) upload(ctx context.Context, dir, assetID string) (segments int, err
 		} else {
 			segments++
 		}
-		if err := h.Storage.UploadFile(ctx, storage.HLSPrefix(assetID)+name, filepath.Join(dir, name), contentType); err != nil {
+		if err := m.Storage.UploadFile(ctx, storage.HLSPrefix(assetID)+name, filepath.Join(dir, name), contentType); err != nil {
 			return segments, err
 		}
 	}

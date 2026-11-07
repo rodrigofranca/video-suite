@@ -18,6 +18,10 @@ type assetDTO struct {
 	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	// ThumbnailURL is the public URL of the thumbnail, or null.
+	ThumbnailURL *string `json:"thumbnailUrl"`
+	// Metadata is the summary from the metadata job, or null.
+	Metadata json.RawMessage `json:"metadata"`
 }
 
 type assetDetailDTO struct {
@@ -113,8 +117,11 @@ func (a *api) listAssets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]assetDTO, 0, len(assets))
-	for _, as := range assets {
-		out = append(out, toAsset(as))
+	for _, item := range assets {
+		dto := toAsset(item.Asset)
+		dto.ThumbnailURL = a.publicURL(item.ThumbnailKey)
+		dto.Metadata = item.Summary
+		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"assets": out})
 }
@@ -169,8 +176,67 @@ func (a *api) getAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	detail.Artifacts = toArtifacts(arts)
 	detail.Playback = a.playbackFor(asset, arts)
+	detail.ThumbnailURL = a.publicURL(latestKey(arts, domain.ArtifactThumbnail))
+
+	meta, err := a.Store.GetTechnicalMetadata(ctx, asset.ID)
+	switch {
+	case err == nil:
+		detail.Metadata = summaryOf(meta.MetadataJSON)
+	case !errors.Is(err, store.ErrNotFound):
+		a.internalError(w, r, err)
+		return
+	}
 
 	writeJSON(w, http.StatusOK, detail)
+}
+
+// getMetadata returns the full metadata: the summary and ffprobe's output.
+func (a *api) getMetadata(w http.ResponseWriter, r *http.Request) {
+	asset, ok := a.loadAsset(w, r)
+	if !ok {
+		return
+	}
+	meta, err := a.Store.GetTechnicalMetadata(r.Context(), asset.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "metadata not extracted yet")
+		return
+	}
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(meta.MetadataJSON)
+}
+
+// summaryOf picks the "summary" object out of stored metadata.
+func summaryOf(metadataJSON []byte) json.RawMessage {
+	var doc struct {
+		Summary json.RawMessage `json:"summary"`
+	}
+	if json.Unmarshal(metadataJSON, &doc) != nil {
+		return nil
+	}
+	return doc.Summary
+}
+
+// latestKey returns the storage key of the newest artifact of a type.
+func latestKey(arts []domain.Artifact, artifactType string) string {
+	for i := len(arts) - 1; i >= 0; i-- {
+		if arts[i].Type == artifactType {
+			return arts[i].StorageKey
+		}
+	}
+	return ""
+}
+
+// publicURL returns the browser URL of a public object, or nil for no key.
+func (a *api) publicURL(key string) *string {
+	if key == "" {
+		return nil
+	}
+	u := a.Storage.PublicURL(key)
+	return &u
 }
 
 // playbackFor returns the HLS playback info of a ready asset, or nil.
@@ -178,10 +244,8 @@ func (a *api) playbackFor(asset domain.Asset, arts []domain.Artifact) *playbackD
 	if asset.Status != domain.AssetReady {
 		return nil
 	}
-	for i := len(arts) - 1; i >= 0; i-- { // newest HLS output wins
-		if arts[i].Type == domain.ArtifactHLS {
-			return &playbackDTO{Type: "hls", ManifestURL: a.Storage.PublicURL(arts[i].StorageKey)}
-		}
+	if key := latestKey(arts, domain.ArtifactHLS); key != "" {
+		return &playbackDTO{Type: "hls", ManifestURL: a.Storage.PublicURL(key)}
 	}
 	return nil
 }

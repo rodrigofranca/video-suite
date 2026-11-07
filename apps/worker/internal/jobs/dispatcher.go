@@ -20,6 +20,9 @@ type Job struct {
 	Payload json.RawMessage // JSON of the typed input from job-contracts
 	// Log writes to the worker output and to the job's logs in the database.
 	Log *slog.Logger
+	// Progress reports how far the job is, from 0 to 100. Calls may be
+	// throttled; it is safe to call often.
+	Progress func(percent int)
 }
 
 // HandlerFunc runs one job.
@@ -60,6 +63,9 @@ func (d *Dispatcher) Dispatch(ctx context.Context, job Job) error {
 	}
 	if job.Log == nil {
 		job.Log = slog.New(slog.DiscardHandler)
+	}
+	if job.Progress == nil {
+		job.Progress = func(int) {}
 	}
 	return h(ctx, job)
 }
