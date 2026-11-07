@@ -364,6 +364,57 @@ func (s *Store) GetAnalysis(ctx context.Context, assetID string) (domain.Analysi
 	return a, notFound(err)
 }
 
+// ---- Clips ----
+
+const clipColumns = `id, asset_id, job_id, start_seconds, end_seconds, title, reason, score, rank, model, created_at`
+
+func scanClip(row pgx.Row) (domain.Clip, error) {
+	var c domain.Clip
+	err := row.Scan(&c.ID, &c.AssetID, &c.JobID, &c.Start, &c.End, &c.Title, &c.Reason, &c.Score, &c.Rank, &c.Model, &c.CreatedAt)
+	return c, notFound(err)
+}
+
+// ReplaceClips stores an asset's suggested clips, removing the earlier ones.
+func (s *Store) ReplaceClips(ctx context.Context, assetID string, clips []domain.Clip) error {
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM clips WHERE asset_id = $1`, assetID); err != nil {
+			return err
+		}
+		for _, c := range clips {
+			_, err := tx.Exec(ctx,
+				`INSERT INTO clips (`+clipColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+				c.ID, assetID, c.JobID, c.Start, c.End, c.Title, c.Reason, c.Score, c.Rank, c.Model)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// ListClips returns an asset's clips, best first.
+func (s *Store) ListClips(ctx context.Context, assetID string) ([]domain.Clip, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+clipColumns+` FROM clips WHERE asset_id = $1 ORDER BY rank, start_seconds`, assetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	clips := []domain.Clip{}
+	for rows.Next() {
+		c, err := scanClip(rows)
+		if err != nil {
+			return nil, err
+		}
+		clips = append(clips, c)
+	}
+	return clips, rows.Err()
+}
+
+// GetClip returns one clip.
+func (s *Store) GetClip(ctx context.Context, id string) (domain.Clip, error) {
+	return scanClip(s.db.QueryRow(ctx, `SELECT `+clipColumns+` FROM clips WHERE id = $1`, id))
+}
+
 // ---- Artifacts ----
 
 func (s *Store) CreateArtifact(ctx context.Context, a domain.Artifact) error {

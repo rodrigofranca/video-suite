@@ -47,7 +47,9 @@ func TestNextJobType(t *testing.T) {
 		JobTypeTranscodeHLS:      JobTypeExtractAudio,
 		JobTypeExtractAudio:      JobTypeTranscribeAudio,
 		JobTypeTranscribeAudio:   JobTypeAnalyzeTranscript,
-		JobTypeAnalyzeTranscript: "",
+		JobTypeAnalyzeTranscript: JobTypeSuggestClips,
+		JobTypeSuggestClips:      "",
+		JobTypeExportClip:        "", // on request, not in the pipeline
 		"unknown":                "",
 	}
 	for in, want := range cases {

@@ -562,3 +562,107 @@ func TestAnalysis(t *testing.T) {
 		t.Fatalf("empty analysis: tags %s, chapters %s", raw["tags"], raw["chapters"])
 	}
 }
+
+func TestClips(t *testing.T) {
+	e := newEnv(t, 0)
+	rec := e.upload("My Talk (final).mp4", fakeMP4(1024))
+	var created struct{ AssetID string }
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	e.cleanupAsset(created.AssetID)
+	id := created.AssetID
+	ctx := context.Background()
+
+	var list struct {
+		Clips []struct {
+			ID, Title, Reason    string
+			Start, End, Duration float64
+			Score, Rank          int
+			Exports              []struct {
+				Format, Status  string
+				Ready, Captions bool
+				Width, Height   int
+				SizeBytes       int64
+			}
+		}
+	}
+	if code := e.get("/assets/"+id+"/clips", &list); code != 200 || list.Clips == nil || len(list.Clips) != 0 {
+		t.Fatalf("clips before: %d %+v", code, list)
+	}
+	suggest := e.jobOfType(id, jobcontracts.JobTypeSuggestClips)
+	second, best := domain.NewID(), domain.NewID()
+	err := e.store.ReplaceClips(ctx, id, []domain.Clip{
+		{ID: second, JobID: suggest.ID, Start: 60, End: 85.5, Title: "Second", Score: 6, Rank: 2, Model: "m"},
+		{ID: best, JobID: suggest.ID, Start: 12, End: 47.5, Title: "Best", Reason: "Strong hook.", Score: 9, Rank: 1, Model: "m"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.get("/assets/"+id+"/clips", &list)
+	if len(list.Clips) != 2 || list.Clips[0].ID != best || list.Clips[0].Duration != 35.5 || list.Clips[0].Reason != "Strong hook." || len(list.Clips[0].Exports) != 0 {
+		t.Fatalf("clips = %+v", list.Clips)
+	}
+
+	exportPath := "/assets/" + id + "/clips/" + best + "/exports"
+	if code := e.post(exportPath, `{"format": "vertical"}`, nil); code != http.StatusConflict {
+		t.Fatalf("export while the pipeline runs: %d, want 409", code)
+	}
+	jobs, _ := e.store.ListJobs(ctx, id)
+	for _, j := range jobs {
+		e.store.FinishJob(ctx, j.ID, nil)
+	}
+	if code := e.post(exportPath, `{"format": "square"}`, nil); code != http.StatusBadRequest {
+		t.Fatalf("bad format: %d", code)
+	}
+	if code := e.post("/assets/"+id+"/clips/"+domain.NewID()+"/exports", `{"format": "vertical"}`, nil); code != http.StatusNotFound {
+		t.Fatalf("unknown clip: %d", code)
+	}
+	if code := e.post("/assets/"+id+"/clips/not-a-uuid/exports", `{"format": "vertical"}`, nil); code != http.StatusNotFound {
+		t.Fatalf("bad clip id: %d", code)
+	}
+
+	var job struct{ ID, Type, Status string }
+	if code := e.post(exportPath, `{"format": "vertical", "captions": false}`, &job); code != http.StatusAccepted || job.Type != jobcontracts.JobTypeExportClip {
+		t.Fatalf("export: %d %+v", code, job)
+	}
+	msg := e.enqueued[len(e.enqueued)-1]
+	in, err := jobcontracts.Decode[jobcontracts.ExportClipInput](msg)
+	if err != nil || msg.Stream() != jobcontracts.StreamJobs || in.ClipID != best || in.Format != "vertical" || in.Captions ||
+		in.StorageKey != storage.SourceKey(id) || in.OutputKey != storage.ClipKey(id, best, "vertical") {
+		t.Fatalf("queued %+v (%v) on %s", in, err, msg.Stream())
+	}
+	e.get("/assets/"+id+"/clips", &list)
+	if ex := list.Clips[0].Exports; len(ex) != 1 || ex[0].Format != "vertical" || ex[0].Status != "pending" || ex[0].Ready {
+		t.Fatalf("exports while pending = %+v", ex)
+	}
+	if code := e.get("/clips/"+best+"/download?format=vertical", nil); code != http.StatusNotFound {
+		t.Fatalf("download before the export: %d", code)
+	}
+
+	// The worker finishes the export.
+	e.store.FinishJob(ctx, job.ID, nil)
+	e.store.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: id, JobID: job.ID, Type: domain.ArtifactClip,
+		StorageKey:   storage.ClipKey(id, best, "vertical"),
+		MetadataJSON: []byte(`{"clipId":"` + best + `","format":"vertical","captions":false,"width":1080,"height":1920,"sizeBytes":4096}`)})
+	e.get("/assets/"+id+"/clips", &list)
+	if ex := list.Clips[0].Exports; len(ex) != 1 || ex[0].Status != "done" || !ex[0].Ready || ex[0].Width != 1080 || ex[0].SizeBytes != 4096 {
+		t.Fatalf("exports when done = %+v", ex)
+	}
+
+	rec = httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/clips/"+best+"/download?format=vertical", nil))
+	loc := rec.Header().Get("Location")
+	if rec.Code != http.StatusFound || !strings.Contains(loc, "X-Amz-Signature") ||
+		!strings.Contains(loc, "My-Talk-final-clip-1-vertical.mp4") || !strings.Contains(loc, "/clips/"+best+"/vertical.mp4") {
+		t.Fatalf("download: %d %s", rec.Code, loc)
+	}
+	rec = httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/clips/"+best+"/download?format=vertical&inline=1", nil))
+	if loc := rec.Header().Get("Location"); rec.Code != http.StatusFound || strings.Contains(loc, "attachment") {
+		t.Fatalf("inline: %d %s", rec.Code, loc)
+	}
+	for _, path := range []string{"/clips/" + best + "/download?format=original", "/clips/" + best + "/download?format=x", "/clips/nope/download?format=vertical"} {
+		if code := e.get(path, nil); code != http.StatusNotFound {
+			t.Errorf("%s: %d, want 404", path, code)
+		}
+	}
+}

@@ -24,7 +24,7 @@ Tudo que um handler loga SHALL ser gravado em `job_logs` com nível `info`, `war
 - **THEN** seus logs SHALL incluir `job started` e `job finished`
 
 ### Requirement: Encadeamento do pipeline
-Quando um job termina, com sucesso ou falha, o worker que o executou SHALL enfileirar o próximo job `pending` do mesmo asset, na ordem de `jobcontracts.Pipeline`, no stream indicado por `jobcontracts.StreamFor`. O encadeamento SHALL continuar depois do `transcode-hls`.
+Quando um job termina, com sucesso ou falha, o worker que o executou SHALL enfileirar o próximo job `pending` do mesmo asset, na ordem de `jobcontracts.Pipeline`, no stream indicado por `jobcontracts.StreamFor`. O encadeamento SHALL continuar depois do `transcode-hls`. Jobs fora do pipeline, como `export-clip`, SHALL não encadear nada.
 
 #### Scenario: Metadata falha e o pipeline continua
 - **WHEN** `extract-metadata` falha
@@ -36,7 +36,7 @@ Quando um job termina, com sucesso ou falha, o worker que o executou SHALL enfil
 
 #### Scenario: Depois do HLS
 - **WHEN** `transcode-hls` termina
-- **THEN** `extract-audio` SHALL ser enfileirado em `jobs`; quando ele terminar, `transcribe-audio` SHALL ser enfileirado em `jobs:ai`; e quando a transcrição terminar, `analyze-transcript` SHALL ser enfileirado em `jobs:ai`
+- **THEN** `extract-audio` SHALL ser enfileirado em `jobs`; depois dele, `transcribe-audio`, `analyze-transcript` e `suggest-clips` SHALL ser enfileirados em `jobs:ai`, um de cada vez
 
 ### Requirement: Status do asset pelo job HLS
 O worker SHALL marcar o asset `ready` quando `transcode-hls` termina com sucesso e `failed` quando ele falha. Os passos seguintes SHALL não mudar o status do asset.

@@ -25,12 +25,13 @@ type Media struct {
 	TempDir string // where work files go; defaults to the OS temp dir
 }
 
-// Register adds the handler of every pipeline job type to d.
+// Register adds the handler of every media job type to d.
 func (m Media) Register(d *Dispatcher) {
 	Handle(d, jobcontracts.JobTypeExtractMetadata, m.ExtractMetadata)
 	Handle(d, jobcontracts.JobTypeGenerateThumbnail, m.GenerateThumbnail)
 	Handle(d, jobcontracts.JobTypeTranscodeHLS, m.TranscodeHLS)
 	Handle(d, jobcontracts.JobTypeExtractAudio, m.ExtractAudio)
+	Handle(d, jobcontracts.JobTypeExportClip, m.ExportClip)
 }
 
 // validInput rejects inputs that could point outside the asset's folder.

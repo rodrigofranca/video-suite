@@ -92,3 +92,15 @@ func TestCleanFilename(t *testing.T) {
 		}
 	}
 }
+
+func TestClipFilename(t *testing.T) {
+	for name, want := range map[string]string{
+		"My Talk (final).mp4": "My-Talk-final-clip-2-vertical.mp4",
+		"😀.mp4":               "video-clip-2-vertical.mp4",
+		"aula_01-intro.MP4":   "aula_01-intro-clip-2-vertical.mp4",
+	} {
+		if got := clipFilename(name, 2, "vertical"); got != want {
+			t.Errorf("clipFilename(%q) = %q, want %q", name, got, want)
+		}
+	}
+}

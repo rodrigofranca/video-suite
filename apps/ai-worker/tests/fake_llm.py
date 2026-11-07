@@ -98,9 +98,30 @@ def completion(text: str, model: str, finish_reason: str = "stop") -> dict:
 _LINE = re.compile(r"^\[(\d+(?::\d\d){1,2})\] (.+)$", re.MULTILINE)
 
 
+_SEGMENT = re.compile(r"^\[(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)\] (.+)$", re.MULTILINE)
+
+
+def demo_clips(prompt: str) -> dict:
+    """Clips of about 20 to 40 seconds made of consecutive segments."""
+    clips, start, text = [], None, []
+    for s, e, t in _SEGMENT.findall(prompt):
+        s, e = float(s), float(e)
+        start = s if start is None else start
+        text.append(t)
+        if e - start >= 20:
+            clips.append({"start": start, "end": e, "title": " ".join(" ".join(text).split()[:5]).rstrip(".,"),
+                          "reason": "(Simulated model) A self-contained moment.", "score": 9 - len(clips)})
+            start, text = None, []
+        if len(clips) == 3:
+            break
+    return {"clips": clips}
+
+
 def demo_answer(body: dict) -> tuple[int, dict, None]:
-    """A plausible analysis built from the prompt's transcript lines."""
+    """A plausible answer built from the prompt's transcript lines: clips or an analysis."""
     prompt = next((m["content"] for m in body.get("messages", []) if m.get("role") == "user"), "")
+    if "standalone clips" in prompt:
+        return 200, completion(json.dumps(demo_clips(prompt)), "fake-model"), None
     lines = _LINE.findall(prompt)
     text = " ".join(t for _, t in lines)
     sentences = re.split(r"(?<=[.!?])\s+", text)

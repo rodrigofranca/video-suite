@@ -11,6 +11,7 @@ import redis
 
 from . import contracts
 from .analyze import Analyzer
+from .clips import ClipSuggester
 from .config import ConfigError, from_env
 from .llm import ChatClient
 from .queue import Consumer
@@ -68,7 +69,7 @@ def main() -> int:
         llm = ChatClient(cfg.llm_base_url, cfg.llm_api_key, cfg.llm_model, timeout=cfg.llm_timeout_seconds)
         check_gateway(llm, log)
     else:
-        log.warning("no language model configured (LLM_BASE_URL): analyze-transcript jobs will fail")
+        log.warning("no language model configured (LLM_BASE_URL): analysis and clip jobs will fail")
 
     def enqueue(msg: contracts.Message) -> None:
         client.xadd(msg.stream, msg.values())
@@ -76,6 +77,7 @@ def main() -> int:
     handlers = {
         contracts.JOB_TRANSCRIBE_AUDIO: transcriber,
         contracts.JOB_ANALYZE_TRANSCRIPT: Analyzer(cfg, store, llm, log),
+        contracts.JOB_SUGGEST_CLIPS: ClipSuggester(cfg, store, llm, log),
     }
     runner = Runner(store, handlers, enqueue, log, stop, cfg.job_timeout_seconds)
     consumer = Consumer(client, runner.process, log, cfg.worker_name, stop)

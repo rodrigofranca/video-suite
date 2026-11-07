@@ -21,11 +21,15 @@ Define como subir a plataforma inteira em Docker, sem Go, Node.js ou FFmpeg inst
 - **THEN** a pilha SHALL subir, os vídeos SHALL ficar prontos e transcritos, e só o job de resumo SHALL falhar, dizendo qual chave conferir
 
 ### Requirement: Imagens
-A imagem do worker SHALL incluir `ffmpeg` e `ffprobe` com libx264 e aac. As imagens da API e do worker SHALL rodar com usuário sem privilégios. O dashboard SHALL ser servido como arquivos estáticos, abrindo qualquer rota do app diretamente.
+A imagem do worker SHALL incluir `ffmpeg` e `ffprobe` com libx264, aac e libass, e as fontes DejaVu usadas nas legendas queimadas. As imagens da API e do worker SHALL rodar com usuário sem privilégios. O dashboard SHALL ser servido como arquivos estáticos, abrindo qualquer rota do app diretamente.
 
 #### Scenario: Rota interna aberta direto
 - **WHEN** o navegador abre `localhost:5173/assets/<id>` sem passar pela página inicial
 - **THEN** o servidor SHALL responder com o app, que carrega a página do vídeo
+
+#### Scenario: Corte com legendas no Docker
+- **WHEN** um corte é exportado com legendas pela pilha de `make demo`
+- **THEN** as legendas SHALL aparecer no vídeo
 
 ### Requirement: Vídeo de exemplo
 `make sample` SHALL criar `samples/sample.mp4` (30 segundos, 720p, com som) usando o FFmpeg da imagem do worker. A pasta `samples/` SHALL ficar fora do Git.

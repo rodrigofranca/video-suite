@@ -232,7 +232,7 @@ def test_gateway_errors_fail_the_job(cfg, store, asset, fake):
 
 def test_too_long_and_not_configured(cfg, store, asset, fake):
     save_transcript(store, asset)
-    with pytest.raises(ValueError, match="too long to analyze.*LLM_MAX_INPUT_CHARS"):
+    with pytest.raises(ValueError, match="too long for one request.*LLM_MAX_INPUT_CHARS"):
         run(analyzer(cfg, store, fake, llm_max_input_chars=500), asset)
     with pytest.raises(NotConfigured, match="LLM_BASE_URL"):
         run(analyzer(cfg, store, None), asset)

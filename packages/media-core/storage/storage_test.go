@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,8 +66,8 @@ func TestOnlyDerivedOutputsArePublic(t *testing.T) {
 	c := testClient(t)
 	ctx := context.Background()
 	asset := "test-" + time.Now().Format("150405000000")
-	hls, thumb, src := HLSManifestKey(asset), ThumbnailKey(asset), SourceKey(asset)
-	for _, key := range []string{hls, thumb, src} {
+	hls, thumb, src, clip := HLSManifestKey(asset), ThumbnailKey(asset), SourceKey(asset), ClipKey(asset, "c1", "vertical")
+	for _, key := range []string{hls, thumb, src, clip} {
 		if err := c.Upload(ctx, key, bytes.NewReader([]byte("#EXTM3U\n")), "application/vnd.apple.mpegurl"); err != nil {
 			t.Fatal(err)
 		}
@@ -89,6 +90,9 @@ func TestOnlyDerivedOutputsArePublic(t *testing.T) {
 	}
 	if got := status(src); got != http.StatusForbidden {
 		t.Errorf("anonymous GET of source = %d, want 403", got)
+	}
+	if got := status(clip); got != http.StatusForbidden {
+		t.Errorf("anonymous GET of exported clip = %d, want 403", got)
 	}
 }
 
@@ -116,5 +120,25 @@ func TestPresignGet(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusPartialContent || string(body) != "2345" {
 		t.Fatalf("ranged GET = %d %q, want 206 \"2345\"", resp.StatusCode, body)
+	}
+}
+
+// Links for browsers use the public address; links for the workers use the
+// internal one (in Docker they differ).
+func TestPresignAddresses(t *testing.T) {
+	c := New(Config{Endpoint: "http://storage:9000", PublicURL: "http://localhost:9000/", Region: "us-east-1",
+		AccessKey: "a", SecretKey: "b", Bucket: "media"})
+	ctx := context.Background()
+	internal, err := c.PresignGet(ctx, "assets/x/clips/y/vertical.mp4", time.Minute)
+	if err != nil || !strings.HasPrefix(internal, "http://storage:9000/media/assets/x/clips/y/vertical.mp4?") {
+		t.Fatalf("PresignGet = %s (%v)", internal, err)
+	}
+	inline, err := c.PresignForBrowser(ctx, "assets/x/clips/y/vertical.mp4", "", time.Minute)
+	if err != nil || !strings.HasPrefix(inline, "http://localhost:9000/media/assets/x/clips/y/vertical.mp4?") || strings.Contains(inline, "attachment") {
+		t.Fatalf("PresignForBrowser inline = %s (%v)", inline, err)
+	}
+	download, err := c.PresignForBrowser(ctx, "assets/x/clips/y/vertical.mp4", "talk-clip-1-vertical.mp4", time.Minute)
+	if err != nil || !strings.Contains(download, "response-content-disposition=attachment%3B%20filename%3D%22talk-clip-1-vertical.mp4%22") {
+		t.Fatalf("PresignForBrowser download = %s (%v)", download, err)
 	}
 }

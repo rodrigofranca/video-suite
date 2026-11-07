@@ -31,8 +31,18 @@ const jobLabels: Record<string, string> = {
 	'transcode-hls': 'HLS encoding',
 	'extract-audio': 'Audio',
 	'transcribe-audio': 'Transcription',
-	'analyze-transcript': 'Summary'
+	'analyze-transcript': 'Summary',
+	'suggest-clips': 'Clips',
+	'export-clip': 'Clip export'
 };
+
+const clipFormatLabels: Record<string, string> = {
+	original: 'Original',
+	vertical: '9:16 crop',
+	'vertical-blur': '9:16 blur'
+};
+
+export const clipFormatLabel = (format: string) => clipFormatLabels[format] ?? format;
 
 const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
 

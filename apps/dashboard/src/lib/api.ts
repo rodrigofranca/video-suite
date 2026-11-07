@@ -91,6 +91,39 @@ export interface Analysis {
 	createdAt: string;
 }
 
+export type ClipFormat = 'original' | 'vertical' | 'vertical-blur';
+export const clipFormats: ClipFormat[] = ['original', 'vertical', 'vertical-blur'];
+
+/** The newest export of a clip in one format. */
+export interface ClipExport {
+	format: ClipFormat;
+	jobId: string;
+	status: JobStatus;
+	progress: number;
+	error: string | null;
+	captions: boolean;
+	width?: number;
+	height?: number;
+	sizeBytes?: number;
+	/** A file can be downloaded (possibly from an earlier export). */
+	ready: boolean;
+}
+
+/** A moment that works as a short standalone video, suggested from the transcript. */
+export interface Clip {
+	id: string;
+	start: number;
+	end: number;
+	duration: number;
+	title: string;
+	reason: string;
+	score: number;
+	rank: number;
+	model: string;
+	createdAt: string;
+	exports: ClipExport[];
+}
+
 export interface AssetDetail extends Asset {
 	source: { storageKey: string; mimeType: string; sizeBytes: number; checksum: string } | null;
 	jobs: Job[];
@@ -131,27 +164,42 @@ export const listAssets = () => getJSON<{ assets: Asset[] }>('/assets').then((r)
 export const getAsset = (id: string) => getJSON<AssetDetail>(`/assets/${encodeURIComponent(id)}`);
 export const getTranscript = (id: string) => getJSON<Transcript>(`/assets/${encodeURIComponent(id)}/transcript`);
 export const getAnalysis = (id: string) => getJSON<Analysis>(`/assets/${encodeURIComponent(id)}/analysis`);
+export const getClips = (id: string) =>
+	getJSON<{ clips: Clip[] }>(`/assets/${encodeURIComponent(id)}/clips`).then((r) => r.clips);
+/** Link to an exported clip file; inline plays it instead of downloading it. */
+export const clipFileUrl = (clipId: string, format: ClipFormat, inline = false) =>
+	`${API_URL}/clips/${encodeURIComponent(clipId)}/download?format=${format}${inline ? '&inline=1' : ''}`;
 /** URL of the full metadata (summary and raw ffprobe output) as JSON. */
 export const metadataUrl = (id: string) => `${API_URL}/assets/${encodeURIComponent(id)}/metadata`;
 export const getJobLogs = (id: string) =>
 	getJSON<{ logs: JobLog[] }>(`/jobs/${encodeURIComponent(id)}/logs`).then((r) => r.logs);
 
-/** Runs one pipeline job of an asset again. */
-export async function rerunJob(assetId: string, type: string): Promise<Job> {
+async function postJSON<T>(path: string, data: unknown): Promise<T> {
 	let res: Response;
 	try {
-		res = await fetch(`${API_URL}/assets/${encodeURIComponent(assetId)}/jobs`, {
+		res = await fetch(API_URL + path, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ type })
+			body: JSON.stringify(data)
 		});
 	} catch {
 		throw new ApiError(`Could not reach the API at ${API_URL}. Is it running (make dev-api)?`, 0);
 	}
 	const body = await res.json().catch(() => ({}));
 	if (!res.ok) throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status);
-	return body as Job;
+	return body as T;
 }
+
+/** Runs one pipeline job of an asset again. */
+export const rerunJob = (assetId: string, type: string) =>
+	postJSON<Job>(`/assets/${encodeURIComponent(assetId)}/jobs`, { type });
+
+/** Queues the export of a clip in one format. */
+export const exportClip = (assetId: string, clipId: string, format: ClipFormat, captions: boolean) =>
+	postJSON<Job>(`/assets/${encodeURIComponent(assetId)}/clips/${encodeURIComponent(clipId)}/exports`, {
+		format,
+		captions
+	});
 
 /** Uploads a file, reporting progress from 0 to 1. Uses XHR because fetch has no upload progress. */
 export function uploadAsset(

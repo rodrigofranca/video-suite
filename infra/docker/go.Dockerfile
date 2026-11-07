@@ -27,7 +27,11 @@ ENTRYPOINT ["api"]
 
 FROM alpine:3.23.8 AS worker
 # FFmpeg (with libx264 and ffprobe) does the media processing.
-RUN apk add --no-cache ca-certificates ffmpeg && adduser -D -H app
+# DejaVu fonts: libass needs one to burn captions into exported clips. The
+# font cache is built here; at run time fontconfig writes to /tmp, since the
+# app user has no home directory.
+RUN apk add --no-cache ca-certificates ffmpeg font-dejavu && fc-cache -f && adduser -D -H app
+ENV XDG_CACHE_HOME=/tmp
 COPY --from=build /out/worker /usr/local/bin/worker
 USER app
 ENTRYPOINT ["worker"]

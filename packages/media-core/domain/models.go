@@ -63,6 +63,7 @@ const (
 	ArtifactThumbnail = "thumbnail" // storage_key points to a JPEG image
 	ArtifactAudio     = "audio"     // 16 kHz mono FLAC for transcription
 	ArtifactSubtitles = "subtitles" // WebVTT; metadata has the language
+	ArtifactClip      = "clip"      // exported clip MP4; metadata has clipId and format
 )
 
 // Job log levels (job_logs.level).
@@ -95,5 +96,21 @@ type Analysis struct {
 	Tags      []string
 	Chapters  []byte // JSON: [{"start": 0.0, "title": "..."}], sorted by start
 	Model     string // model that answered, as reported by the gateway
+	CreatedAt time.Time
+}
+
+// Clip is a moment of an asset that works as a short standalone video,
+// suggested by a language model from the transcript (docs/adr/0020).
+type Clip struct {
+	ID        string
+	AssetID   string
+	JobID     string
+	Start     float64 // seconds
+	End       float64
+	Title     string
+	Reason    string // why the moment works on its own
+	Score     int    // 1 to 10, from the model
+	Rank      int    // 1 is the best
+	Model     string
 	CreatedAt time.Time
 }

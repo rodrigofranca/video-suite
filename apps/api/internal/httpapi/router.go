@@ -60,6 +60,9 @@ func NewRouter(deps Deps) http.Handler {
 	mux.HandleFunc("GET /assets/{id}/metadata", a.getMetadata)
 	mux.HandleFunc("GET /assets/{id}/transcript", a.getTranscript)
 	mux.HandleFunc("GET /assets/{id}/analysis", a.getAnalysis)
+	mux.HandleFunc("GET /assets/{id}/clips", a.listClips)
+	mux.HandleFunc("POST /assets/{id}/clips/{clipId}/exports", a.exportClip)
+	mux.HandleFunc("GET /clips/{id}/download", a.downloadClip)
 	mux.HandleFunc("POST /assets/{id}/jobs", a.createJob)
 
 	mux.HandleFunc("GET /jobs/{id}", a.getJob)

@@ -31,6 +31,12 @@ func AudioKey(assetID string) string {
 	return "assets/" + assetID + "/audio/audio.flac"
 }
 
+// ClipKey is where an exported clip is stored, one file per format. Clips
+// stay private: the API hands out short-lived download links (docs/adr/0020).
+func ClipKey(assetID, clipID, format string) string {
+	return "assets/" + assetID + "/clips/" + clipID + "/" + format + ".mp4"
+}
+
 // SubtitlesKey is where an asset's WebVTT subtitles for a language are
 // stored. Subtitles are publicly readable, like the HLS output (docs/adr/0017).
 func SubtitlesKey(assetID, language string) string {

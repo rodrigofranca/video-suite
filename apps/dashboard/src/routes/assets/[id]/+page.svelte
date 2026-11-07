@@ -1,18 +1,23 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import {
+		exportClip,
 		getAnalysis,
 		getAsset,
+		getClips,
 		getTranscript,
 		metadataUrl,
 		rerunJob,
 		type Analysis,
 		type AssetDetail,
+		type Clip,
+		type ClipFormat,
 		type Transcript
 	} from '$lib/api';
 	import { formatBitrate, formatBytes, formatClock, formatDate, formatResolution } from '$lib/format';
 	import { poll } from '$lib/poll.svelte';
 	import AnalysisPanel from '$lib/components/Analysis.svelte';
+	import ClipList from '$lib/components/Clips.svelte';
 	import HlsPlayer from '$lib/components/HlsPlayer.svelte';
 	import JobList from '$lib/components/JobList.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
@@ -83,6 +88,30 @@
 				analysisMissing = true; // no speech, so nothing was analyzed
 			});
 	});
+
+	// Clips: fetched when the suggestions finish and whenever an export moves.
+	let clips = $state<Clip[] | null>(null);
+	let clipsFor = '';
+	let suggestJob = $derived(asset?.jobs.findLast((j) => j.type === 'suggest-clips'));
+	let exportJobs = $derived(asset?.jobs.filter((j) => j.type === 'export-clip') ?? []);
+	let pipelineJobs = $derived(asset?.jobs.filter((j) => j.type !== 'export-clip') ?? []);
+	let jobsBusy = $derived(!!asset?.jobs.some((j) => j.status === 'pending' || j.status === 'running'));
+
+	$effect(() => {
+		const job = suggestJob;
+		if (!job || job.status !== 'done' || !job.completedAt) return;
+		const key = job.completedAt + exportJobs.map((j) => `${j.id}:${j.status}:${j.progress}`).join(',');
+		if (key === clipsFor) return;
+		clipsFor = key;
+		getClips(page.params.id!)
+			.then((c) => (clips = c))
+			.catch(() => (clips = null));
+	});
+
+	async function startExport(clipId: string, format: ClipFormat, captions: boolean) {
+		await exportClip(page.params.id!, clipId, format, captions);
+		await updates.refresh();
+	}
 
 	async function rerun(type: string) {
 		await rerunJob(page.params.id!, type);
@@ -158,6 +187,29 @@
 		</section>
 	{/if}
 
+	{#if suggestJob}
+		<section class="clips-section">
+			<h2>Clips</h2>
+			{#if clips && clips.length > 0}
+				<ClipList
+					{clips}
+					busy={jobsBusy}
+					hasSubtitles={asset.subtitles.length > 0}
+					onpreview={(start, end) => player?.playRange(start, end)}
+					onexport={startExport}
+				/>
+			{:else if suggestJob.status === 'failed'}
+				<p class="muted">Clips could not be suggested; open the Clips job below to see why.</p>
+			{:else if suggestJob.status === 'done' && clips}
+				<p class="muted">No clips: the video is too short, has no speech, or no moment works on its own.</p>
+			{:else if suggestJob.status === 'running'}
+				<p class="muted" data-testid="suggesting">Finding the best moments…</p>
+			{:else}
+				<p class="muted">Suggested clips appear here after the summary.</p>
+			{/if}
+		</section>
+	{/if}
+
 	{#if transcribeJob}
 		<section class="transcript-section">
 			<h2>Transcript</h2>
@@ -180,7 +232,7 @@
 	<div class="columns">
 		<section>
 			<h2>Processing jobs</h2>
-			<JobList jobs={asset.jobs} onRerun={rerun} />
+			<JobList jobs={pipelineJobs} onRerun={rerun} />
 		</section>
 
 		<section>
@@ -253,6 +305,7 @@
 		margin-bottom: 1.5rem;
 	}
 	.analysis-section,
+	.clips-section,
 	.transcript-section {
 		margin-bottom: 1.5rem;
 	}

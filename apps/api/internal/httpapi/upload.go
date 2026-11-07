@@ -178,6 +178,8 @@ func jobInput(jobType, assetID, sourceKey string) ([]byte, error) {
 		input = jobcontracts.TranscribeAudioInput{AssetID: assetID, AudioKey: storage.AudioKey(assetID)}
 	case jobcontracts.JobTypeAnalyzeTranscript:
 		input = jobcontracts.AnalyzeTranscriptInput{AssetID: assetID}
+	case jobcontracts.JobTypeSuggestClips:
+		input = jobcontracts.SuggestClipsInput{AssetID: assetID}
 	default:
 		return nil, fmt.Errorf("%w %q", errUnknownJobType, jobType)
 	}
