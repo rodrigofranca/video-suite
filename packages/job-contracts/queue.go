@@ -35,6 +35,7 @@ type Message struct {
 var aiJobTypes = map[string]bool{
 	JobTypeTranscribeAudio:   true,
 	JobTypeAnalyzeTranscript: true,
+	JobTypeSuggestClips:      true,
 }
 
 // StreamFor returns the stream a job type is queued on.

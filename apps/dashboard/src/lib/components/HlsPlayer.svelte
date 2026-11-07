@@ -21,10 +21,28 @@
 	let video: HTMLVideoElement;
 	let error = $state('');
 
+	// End of the range playRange is playing, if any.
+	let stopAt: number | null = null;
+
 	/** Jump to a time (seconds) and play. */
 	export function seek(seconds: number) {
+		stopAt = null;
 		video.currentTime = seconds;
 		video.play().catch(() => {}); // autoplay may be blocked; the jump still happens
+	}
+
+	/** Play from start to end (seconds), then pause. */
+	export function playRange(start: number, end: number) {
+		seek(start);
+		stopAt = end;
+	}
+
+	function timeUpdate() {
+		if (stopAt !== null && video.currentTime >= stopAt) {
+			stopAt = null;
+			video.pause();
+		}
+		ontime?.(video.currentTime);
 	}
 
 	$effect(() => {
@@ -66,7 +84,7 @@
 	preload="metadata"
 	crossorigin="anonymous"
 	poster={poster ?? undefined}
-	ontimeupdate={() => ontime?.(video.currentTime)}
+	ontimeupdate={timeUpdate}
 	data-testid="player"
 >
 	{#each subtitles as sub, i (sub.url)}

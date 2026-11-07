@@ -1,8 +1,8 @@
 # UltraMedia Platform
 
-An open source, modular video operations platform. It turns raw video files into structured, playable and observable media assets: upload, metadata extraction, thumbnails, HLS encoding, transcription and subtitles, AI summaries, tags and chapters, job logs and playback preview.
+An open source, modular video operations platform. It turns raw video files into structured, playable and observable media assets: upload, metadata extraction, thumbnails, HLS encoding, transcription and subtitles, AI summaries, tags and chapters, AI-suggested clips exported for social media, job logs and playback preview.
 
-> **Status:** Milestone 1 (video processing core) is complete. Milestone 2 (AI metadata) is under way: speech transcription and subtitles (local Whisper), and summaries, tags and chapters written by a language model through a LiteLLM gateway, are done. See the [roadmap](docs/ultramedia-platform-roadmap-milestone-1.md) and the [known limitations](#known-limitations).
+> **Status:** Milestone 1 (video processing core) is complete. Milestone 2 (AI metadata) is under way: speech transcription and subtitles (local Whisper), and summaries, tags and chapters written by a language model through a LiteLLM gateway, are done. Phase 3 (AI clipping) has started: the model suggests clips and the worker exports them as MP4, horizontal or vertical, with burned-in captions. See the [roadmap](docs/ultramedia-platform-roadmap-milestone-1.md) and the [known limitations](#known-limitations).
 
 ## Architecture
 
@@ -17,7 +17,7 @@ SvelteKit dashboard ──► Go API ──► PostgreSQL (assets, jobs, logs, t
        └── HLS, thumbnails, subtitles ◄────┘  only hls/, thumbnails/ and subtitles/ are public
 ```
 
-An upload creates an asset and six jobs: `extract-metadata` → `generate-thumbnail` → `transcode-hls` → `extract-audio` → `transcribe-audio` → `analyze-transcript`. The API queues the first; each worker runs its jobs, records status, progress and logs in PostgreSQL, and queues the next on the right stream. The asset is `ready` (playable) when the HLS job succeeds; the transcript, subtitles and summary arrive a few seconds later. Language model calls go through the LiteLLM gateway, the only place that knows the provider and its key ([ADR 0018](docs/adr/0018-llm-gateway-litellm.md)). Metadata, thumbnail and audio jobs read the source through signed URLs (only the bytes they need).
+An upload creates an asset and seven jobs: `extract-metadata` → `generate-thumbnail` → `transcode-hls` → `extract-audio` → `transcribe-audio` → `analyze-transcript` → `suggest-clips`. The API queues the first; each worker runs its jobs, records status, progress and logs in PostgreSQL, and queues the next on the right stream. The asset is `ready` (playable) when the HLS job succeeds; the transcript, subtitles, summary and suggested clips arrive a few seconds later. Exporting a clip (`export-clip`) is a job too, run on request ([ADR 0020](docs/adr/0020-ai-clips.md)). Language model calls go through the LiteLLM gateway, the only place that knows the provider and its key ([ADR 0018](docs/adr/0018-llm-gateway-litellm.md)). Metadata, thumbnail and audio jobs read the source through signed URLs (only the bytes they need).
 
 | Path | What it is |
 |---|---|
@@ -85,6 +85,9 @@ Open http://localhost:5173, click **Upload**, pick an MP4 and watch the jobs run
 | `GET` | `/assets/{id}/playback` | `{"type": "hls", "manifestUrl"}`, or `409` while not ready |
 | `GET` | `/assets/{id}/transcript` | Language, model, full text and timed segments; `404` until transcribed |
 | `GET` | `/assets/{id}/analysis` | Summary, tags, chapters (`start` in seconds, `title`), language and model; `404` until analyzed |
+| `GET` | `/assets/{id}/clips` | Suggested clips, best first, each with the state of its exports per format |
+| `POST` | `/assets/{id}/clips/{clipId}/exports` | Export a clip: `{"format": "original" \| "vertical" \| "vertical-blur", "captions": true}` → `202` with the job; `409` while any job of the asset is pending or running |
+| `GET` | `/clips/{id}/download?format=` | `302` to a 15-minute signed link that saves the exported file (`&inline=1` plays it instead) |
 | `POST` | `/assets/{id}/jobs` | Run one job again: `{"type": "generate-thumbnail"}` → `202` with the new job; `409` while any job of the asset is pending or running |
 | `GET` | `/jobs/{id}` | One job |
 | `GET` | `/jobs/{id}/logs` | Job logs |
@@ -114,7 +117,7 @@ All settings come from environment variables; see [`.env.example`](.env.example)
 | `REDIS_URL` | API, worker | required |
 | `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET` | API, worker | required |
 | `S3_REGION` | API, worker | `us-east-1` |
-| `S3_PUBLIC_URL` | API (playback URLs) | `S3_ENDPOINT` |
+| `S3_PUBLIC_URL` | API (playback URLs and clip download links: the address browsers reach) | `S3_ENDPOINT` |
 | `API_PORT` | API | `8080` |
 | `DASHBOARD_ORIGIN` | API (CORS) | `http://localhost:5173` |
 | `PUBLIC_API_URL` | dashboard | `http://localhost:8080` |
@@ -144,6 +147,7 @@ Milestone 1 is a working core, not a production service:
 - **One transcript language per video**, detected automatically; no translation and no transcript editing yet.
 - **The first AI worker start needs internet** to download the Whisper model from Hugging Face; after that it is cached.
 - **Summaries are sent to a provider.** The transcript goes to the gateway and from there to OpenCode; do not use it for content that must stay on your machine. Each video with speech costs one model call (two if the first answer is unusable).
+- **Clips are cut from the centre or shown whole over a blur.** Following the speaker's face is not done yet, and captions in vertical clips split each subtitle by length, so their timing is approximate. Suggesting clips again replaces the list; files already exported stay in storage.
 - **Very long transcripts are not summarized.** Above `LLM_MAX_INPUT_CHARS` (about 4 hours of speech) the Summary job fails instead of cutting the transcript.
 - **The gateway has one key locally.** It runs with its master key only; per-project keys need its database and come with the shared server setup. Re-running a transcription does not re-run its summary.
 - **No automatic retries.** A failed job stays failed until someone runs it again from the dashboard or the API. A re-run runs only that job.

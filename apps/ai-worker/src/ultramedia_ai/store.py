@@ -149,3 +149,24 @@ class Store:
             return None
         chapters = row[3] if not isinstance(row[3], str) else json.loads(row[3])
         return {"language": row[0], "summary": row[1], "tags": list(row[2]), "chapters": chapters, "model": row[4]}
+
+    def replace_clips(self, asset_id: str, job_id: str, clips: list[dict], model: str) -> None:
+        """Store an asset's suggested clips, removing earlier ones (see ReplaceClips in Go)."""
+        with self.conn.transaction():
+            self.conn.execute("DELETE FROM clips WHERE asset_id = %s", (asset_id,))
+            for c in clips:
+                self.conn.execute(
+                    """INSERT INTO clips (id, asset_id, job_id, start_seconds, end_seconds, title, reason, score, rank, model)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (str(uuid.uuid4()), asset_id, job_id, c["start"], c["end"], c["title"], c["reason"],
+                     c["score"], c["rank"], model),
+                )
+
+    def get_clips(self, asset_id: str) -> list[dict]:
+        rows = self.conn.execute(
+            """SELECT start_seconds, end_seconds, title, reason, score, rank, model
+               FROM clips WHERE asset_id = %s ORDER BY rank""",
+            (asset_id,),
+        ).fetchall()
+        keys = ("start", "end", "title", "reason", "score", "rank", "model")
+        return [dict(zip(keys, r)) for r in rows]

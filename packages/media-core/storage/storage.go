@@ -61,11 +61,15 @@ func ConfigFromEnv() (Config, error) {
 
 // Client is a bucket-scoped storage client. Safe for concurrent use.
 type Client struct {
-	s3        *s3.Client
-	presign   *s3.PresignClient
-	transfer  *transfermanager.Client
-	bucket    string
-	publicURL string
+	s3      *s3.Client
+	presign *s3.PresignClient
+	// browserPresign signs links for browsers: same credentials, but the
+	// public address (S3_PUBLIC_URL), which differs from the internal one in
+	// Docker (http://storage:9000 inside, http://localhost:9000 outside).
+	browserPresign *s3.PresignClient
+	transfer       *transfermanager.Client
+	bucket         string
+	publicURL      string
 }
 
 // New creates a client. It does not contact the server; call Check for that.
@@ -86,12 +90,19 @@ func New(cfg Config) *Client {
 		o.Concurrency = 4
 		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	})
+	publicURL := strings.TrimRight(cfg.PublicURL, "/")
+	if publicURL == "" {
+		publicURL = strings.TrimRight(cfg.Endpoint, "/")
+	}
 	return &Client{
-		s3:        s3Client,
-		presign:   s3.NewPresignClient(s3Client),
+		s3:      s3Client,
+		presign: s3.NewPresignClient(s3Client),
+		browserPresign: s3.NewPresignClient(s3Client, func(po *s3.PresignOptions) {
+			po.ClientOptions = append(po.ClientOptions, func(o *s3.Options) { o.BaseEndpoint = aws.String(publicURL) })
+		}),
 		transfer:  transfer,
 		bucket:    cfg.Bucket,
-		publicURL: strings.TrimRight(cfg.PublicURL, "/"),
+		publicURL: publicURL,
 	}
 }
 
@@ -176,6 +187,22 @@ func (c *Client) Exists(ctx context.Context, key string) (bool, error) {
 func (c *Client) PresignGet(ctx context.Context, key string, expires time.Duration) (string, error) {
 	req, err := c.presign.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: &c.bucket, Key: &key},
 		s3.WithPresignExpires(expires))
+	if err != nil {
+		return "", fmt.Errorf("presign %s: %w", key, err)
+	}
+	return req.URL, nil
+}
+
+// PresignForBrowser returns a temporary link to a private object for a
+// browser, on the public address. With a filename (plain ASCII), the browser
+// saves the object under that name; without one, it shows or plays it.
+// PresignGet is for the workers, which use the internal address.
+func (c *Client) PresignForBrowser(ctx context.Context, key, filename string, expires time.Duration) (string, error) {
+	in := &s3.GetObjectInput{Bucket: &c.bucket, Key: &key}
+	if filename != "" {
+		in.ResponseContentDisposition = aws.String(`attachment; filename="` + filename + `"`)
+	}
+	req, err := c.browserPresign.PresignGetObject(ctx, in, s3.WithPresignExpires(expires))
 	if err != nil {
 		return "", fmt.Errorf("presign %s: %w", key, err)
 	}

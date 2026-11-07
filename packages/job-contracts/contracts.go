@@ -1,7 +1,8 @@
 package jobcontracts
 
-// Job types. The Go media worker runs the first four; the Python AI worker
-// (apps/ai-worker) runs transcribe-audio and analyze-transcript. See StreamFor.
+// Job types. The Go media worker runs the FFmpeg jobs (metadata, thumbnail,
+// HLS, audio and clip export); the Python AI worker (apps/ai-worker) runs
+// transcribe-audio, analyze-transcript and suggest-clips. See StreamFor.
 const (
 	JobTypeExtractMetadata   = "extract-metadata"
 	JobTypeGenerateThumbnail = "generate-thumbnail"
@@ -9,7 +10,23 @@ const (
 	JobTypeExtractAudio      = "extract-audio"
 	JobTypeTranscribeAudio   = "transcribe-audio"
 	JobTypeAnalyzeTranscript = "analyze-transcript"
+	JobTypeSuggestClips      = "suggest-clips"
+	// JobTypeExportClip runs on request, not in the Pipeline.
+	JobTypeExportClip = "export-clip"
 )
+
+// Clip export formats (ExportClipInput.Format).
+const (
+	// ClipFormatOriginal keeps the video's shape, at most 1920 px on the long side.
+	ClipFormatOriginal = "original"
+	// ClipFormatVertical crops the middle of the frame to 9:16 (1080x1920).
+	ClipFormatVertical = "vertical"
+	// ClipFormatVerticalBlur fits the whole frame into 9:16 over a blurred copy.
+	ClipFormatVerticalBlur = "vertical-blur"
+)
+
+// ClipFormats lists the export formats, in the order the dashboard shows them.
+var ClipFormats = []string{ClipFormatOriginal, ClipFormatVertical, ClipFormatVerticalBlur}
 
 type ExtractMetadataInput struct {
 	AssetID    string `json:"asset_id"`
@@ -50,6 +67,25 @@ type AnalyzeTranscriptInput struct {
 	AssetID string `json:"asset_id"`
 }
 
+// SuggestClipsInput asks the AI worker for the moments of the transcript that
+// work as short standalone clips (docs/adr/0020). The suggestions replace the
+// asset's earlier ones.
+type SuggestClipsInput struct {
+	AssetID string `json:"asset_id"`
+}
+
+// ExportClipInput asks the media worker to cut a clip out of the source as an
+// MP4 at OutputKey. The clip's start and end are read from the database when
+// the job runs. Captions burns the asset's subtitles into the picture.
+type ExportClipInput struct {
+	AssetID    string `json:"asset_id"`
+	ClipID     string `json:"clip_id"`
+	StorageKey string `json:"storage_key"`
+	Format     string `json:"format"`
+	Captions   bool   `json:"captions"`
+	OutputKey  string `json:"output_key"`
+}
+
 // Pipeline is the order in which an upload's jobs run. The API creates one
 // job row per entry and enqueues the first; when a job ends (done or failed),
 // the worker that ran it enqueues the next one. Transcription and analysis
@@ -62,6 +98,7 @@ var Pipeline = []string{
 	JobTypeExtractAudio,
 	JobTypeTranscribeAudio,
 	JobTypeAnalyzeTranscript,
+	JobTypeSuggestClips,
 }
 
 // NextJobType returns the job type that follows jobType in the Pipeline.

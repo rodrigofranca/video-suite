@@ -18,6 +18,7 @@ JOB_TRANSCODE_HLS = "transcode-hls"
 JOB_EXTRACT_AUDIO = "extract-audio"
 JOB_TRANSCRIBE_AUDIO = "transcribe-audio"
 JOB_ANALYZE_TRANSCRIPT = "analyze-transcript"
+JOB_SUGGEST_CLIPS = "suggest-clips"
 
 # Order in which an upload's jobs run (see jobcontracts.Pipeline).
 PIPELINE = [
@@ -27,6 +28,7 @@ PIPELINE = [
     JOB_EXTRACT_AUDIO,
     JOB_TRANSCRIBE_AUDIO,
     JOB_ANALYZE_TRANSCRIPT,
+    JOB_SUGGEST_CLIPS,
 ]
 
 STREAM_MEDIA = "jobs"  # Go media worker
@@ -37,7 +39,7 @@ FIELD_JOB_ID = "job_id"
 FIELD_TYPE = "type"
 FIELD_PAYLOAD = "payload"
 
-AI_JOB_TYPES = {JOB_TRANSCRIBE_AUDIO, JOB_ANALYZE_TRANSCRIPT}
+AI_JOB_TYPES = {JOB_TRANSCRIBE_AUDIO, JOB_ANALYZE_TRANSCRIPT, JOB_SUGGEST_CLIPS}
 
 _UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
@@ -115,6 +117,18 @@ class AnalyzeTranscriptInput:
 
     @classmethod
     def from_json(cls, payload: str | bytes) -> "AnalyzeTranscriptInput":
+        data = json.loads(payload)
+        return cls(asset_id=str(data.get("asset_id", "")))
+
+
+@dataclass(frozen=True)
+class SuggestClipsInput:
+    """See jobcontracts.SuggestClipsInput."""
+
+    asset_id: str
+
+    @classmethod
+    def from_json(cls, payload: str | bytes) -> "SuggestClipsInput":
         data = json.loads(payload)
         return cls(asset_id=str(data.get("asset_id", "")))
 

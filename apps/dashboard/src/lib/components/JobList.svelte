@@ -160,21 +160,6 @@
 		flex-wrap: wrap;
 		margin: 0 0.85rem 0.65rem;
 	}
-	.secondary {
-		font: inherit;
-		font-size: 0.85rem;
-		font-weight: 600;
-		padding: 0.3rem 0.8rem;
-		border-radius: 6px;
-		border: 1px solid var(--accent);
-		background: transparent;
-		color: var(--accent);
-		cursor: pointer;
-	}
-	.secondary:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
 	.inline {
 		margin: 0;
 	}

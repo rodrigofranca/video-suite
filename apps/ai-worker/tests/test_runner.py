@@ -68,8 +68,8 @@ def test_transcription_chains_analysis_on_the_ai_stream(h):
 
 
 def test_last_job_does_not_chain(h):
-    h.process(contracts.JOB_ANALYZE_TRANSCRIPT)
-    assert h.job(contracts.JOB_ANALYZE_TRANSCRIPT).status == "done"
+    h.process(contracts.JOB_SUGGEST_CLIPS)
+    assert h.job(contracts.JOB_SUGGEST_CLIPS).status == "done"
     assert h.enqueued == []
 
 

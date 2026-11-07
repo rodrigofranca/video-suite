@@ -28,7 +28,7 @@ In MVP: single HLS rendition only (no ABR). Multi-rendition is post-MVP.
 
 ## Artifact
 
-Any file output produced by a Job and associated with an Asset: the HLS playlist (`hls`) and the thumbnail image (`thumbnail`). Linked to both Asset and Job. HLS output and thumbnails are publicly readable (ADR 0010, 0013).
+Any file output produced by a Job and associated with an Asset: the HLS playlist (`hls`), the thumbnail image (`thumbnail`), the extracted audio (`audio`), subtitles (`subtitles`) and exported clips (`clip`). Linked to both Asset and Job. HLS output, thumbnails and subtitles are publicly readable (ADR 0010, 0013, 0017); clips are not (ADR 0020).
 
 ## Technical metadata
 
@@ -44,7 +44,7 @@ A Job can be run again (`POST /assets/{id}/jobs`) once every Job of its Asset ha
 
 ## Pipeline
 
-Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbnail` → `transcode-hls` → `extract-audio` → `transcribe-audio` → `analyze-transcript` (order in `jobcontracts.Pipeline`). No manual trigger required. Each worker processes one job at a time (no parallelism in MVP).
+Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbnail` → `transcode-hls` → `extract-audio` → `transcribe-audio` → `analyze-transcript` → `suggest-clips` (order in `jobcontracts.Pipeline`). No manual trigger required. Each worker processes one job at a time (no parallelism in MVP).
 
 - `extract-metadata`: ffprobe → technical metadata.
 - `generate-thumbnail`: a JPEG (max 1280 px wide) at `AtSecond`, or at the middle of the video when it is shorter; first frame as a last resort.
@@ -52,6 +52,9 @@ Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbna
 - `extract-audio`: the first audio track as 16 kHz mono FLAC, private. A video without audio is not an error.
 - `transcribe-audio`: Whisper (AI worker) → Transcript and WebVTT subtitles.
 - `analyze-transcript`: a language model, through the LLM gateway (AI worker) → Analysis. Nothing to do when there is no speech.
+- `suggest-clips`: the language model picks Clips from the transcript (AI worker). Nothing to do under 30 seconds of speech.
+
+`export-clip` is not in the pipeline: it runs when someone asks for a Clip in a format, and, like a re-run, only when no other Job of the Asset is pending or running.
 
 The API creates all the Job rows as `pending` and enqueues only the first. When a Job ends, done or failed, the worker enqueues the next pending Job of the same Asset (ADR 0009). Job statuses: `pending → running → done | failed`.
 
@@ -64,6 +67,12 @@ What was said in an Asset, written by the `transcribe-audio` Job: language (dete
 What a language model wrote about an Asset from its Transcript, by the `analyze-transcript` Job: a summary, topic tags and chapters (start in seconds and a title), in the Transcript's language, plus the model that answered. One per Asset in `analyses`; a re-run replaces it (ADR 0019). Chapters always start where a transcript passage starts.
 
 **Not**: technical metadata (ffprobe) or the metadata `summary` object, which describe the file, not its content.
+
+## Clip
+
+A moment of an Asset that works as a short standalone video, suggested by the `suggest-clips` Job: start and end on transcript segment boundaries (10 to 90 seconds), title, reason and a score from 1 to 10. Up to 5 per Asset in `clips`; a new suggestion run replaces them. An export (`export-clip`) cuts a Clip into an MP4 in one format, `original`, `vertical` (centre crop, 9:16) or `vertical-blur` (whole frame over a blurred copy, 9:16), optionally with burned-in captions. Exported files are private and downloaded through signed links (ADR 0020).
+
+**Not**: a Rendition (which is the whole video for playback) or a chapter (which marks a part of the video without cutting it).
 
 ## LLM gateway
 
@@ -87,8 +96,8 @@ The player reads HLS straight from storage: only `assets/*/hls/*`, `assets/*/thu
 
 Process that picks pending Jobs and executes them. Separate from the API process. Two kinds, each reading its own stream (ADR 0016):
 
-- **Media worker** (Go, `apps/worker`): stream `jobs`, group `workers`; FFmpeg jobs.
-- **AI worker** (Python, `apps/ai-worker`): stream `jobs:ai`, group `ai-workers`; `transcribe-audio` and `analyze-transcript`. It mirrors the media worker's lifecycle, and its contracts are checked against `packages/job-contracts/testdata/contracts.json`.
+- **Media worker** (Go, `apps/worker`): stream `jobs`, group `workers`; FFmpeg jobs, including `export-clip`.
+- **AI worker** (Python, `apps/ai-worker`): stream `jobs:ai`, group `ai-workers`; `transcribe-audio`, `analyze-transcript` and `suggest-clips`. It mirrors the media worker's lifecycle, and its contracts are checked against `packages/job-contracts/testdata/contracts.json`.
 
 `jobcontracts.StreamFor` decides which stream a Job goes to.
 

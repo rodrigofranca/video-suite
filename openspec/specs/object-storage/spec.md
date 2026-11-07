@@ -40,3 +40,10 @@ O storage SHALL gerar URLs assinadas de leitura com validade definida, que aceit
 #### Scenario: Leitura de um trecho
 - **WHEN** uma URL assinada é pedida com `Range: bytes=2-5`
 - **THEN** a resposta SHALL ser 206 com apenas esses bytes
+
+### Requirement: Cortes privados
+Os cortes exportados SHALL ficar em `assets/{id}/clips/{clipId}/{formato}.mp4`, sem leitura anônima, e SHALL ser entregues só por links assinados gerados pela API.
+
+#### Scenario: Leitura anônima de um corte
+- **WHEN** um navegador sem credenciais pede o arquivo de um corte direto no storage
+- **THEN** o storage SHALL recusar
