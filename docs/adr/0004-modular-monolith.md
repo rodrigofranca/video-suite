@@ -1,0 +1,3 @@
+# Monólito modular: API e worker separados, sem microsserviços
+
+Originalmente registrada como "ADR 001" dentro do PRD v0.1. A API e o worker são processos separados, mas vivem no mesmo monorepo, compartilham pacotes Go (`packages/`) e sobem juntos no ambiente local. Não há microsserviços independentes no MVP. A alternativa — um serviço por etapa (ingest, encoder, metadata) — traria deploy, rede e observabilidade distribuída antes de existir um pipeline funcionando. Com o monólito modular o desenvolvimento e o debug ficam simples, e os contratos internos (jobs, storage, domínio) já desenham as fronteiras por onde um serviço poderá ser extraído no futuro.

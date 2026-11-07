@@ -4,4 +4,5 @@ use (
 	./apps/api
 	./apps/worker
 	./packages/job-contracts
+	./packages/media-core
 )

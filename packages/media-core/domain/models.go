@@ -48,3 +48,11 @@ type TechnicalMetadata struct {
 	MetadataJSON []byte
 	ExtractedAt  time.Time
 }
+
+// Job statuses, matching the CHECK constraint on processing_jobs.status.
+const (
+	JobPending = "pending"
+	JobRunning = "running"
+	JobDone    = "done"
+	JobFailed  = "failed"
+)

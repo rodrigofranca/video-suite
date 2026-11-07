@@ -57,3 +57,5 @@ UltraMedia is the primary player in the dashboard. `hls.js` is the fallback for 
 Process that picks pending Jobs and executes them. Separate from the API process. In MVP: single worker binary, same machine.
 
 Queue: Redis Streams (XADD/XREADGROUP) for at-least-once delivery and job re-claim on worker crash. NATS is a future upgrade path.
+
+Queue message: fields `job_id`, `type` and `payload` (JSON of the typed input), defined in `packages/job-contracts`. The PostgreSQL job row is the source of truth; the message only says which job to run. The worker acks every message, even when the job fails. On restart it first re-runs messages it received but never acked, so `WORKER_NAME` must stay stable.

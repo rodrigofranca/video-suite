@@ -1,0 +1,3 @@
+# Storage sempre via API compatível com S3
+
+Originalmente registrada como "ADR 003" dentro do PRD v0.1. Arquivos de origem e artefatos ficam num object storage acessado apenas pela API S3, com um servidor local no Docker Compose (ver ADR 0008). O código não usa SDK nem recursos específicos de um fornecedor. A alternativa — disco local no MVP — evitaria uma dependência, mas obrigaria a reescrever upload, download e geração de URLs na primeira hospedagem. Com S3 desde o início, o mesmo código roda contra AWS S3, Cloudflare R2, Backblaze B2 ou Hetzner trocando apenas `S3_ENDPOINT` e as credenciais.

@@ -1,80 +1,69 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
+	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"ultramedia/api/internal/db"
+	"ultramedia/api/internal/httpapi"
+	"ultramedia/media-core/db"
 )
 
 func main() {
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		log.Fatal("DATABASE_URL environment variable is required")
-	}
-
-	conn, err := db.Connect(databaseURL)
-	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
-	}
-	defer conn.Close(nil)
-
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if err := conn.Ping(r.Context()); err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			writeJSON(w, map[string]string{"status": "error", "error": err.Error()})
-			return
-		}
-		writeJSON(w, map[string]string{"status": "ok"})
-	})
-
-	mux.HandleFunc("POST /assets/upload", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		writeJSON(w, map[string]string{"error": "not implemented"})
-	})
-
-	mux.HandleFunc("GET /assets", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"assets": []any{}})
-	})
-
-	mux.HandleFunc("GET /assets/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		writeJSON(w, map[string]string{"error": "not found"})
-	})
-
-	mux.HandleFunc("GET /assets/{id}/jobs", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		writeJSON(w, map[string]string{"error": "not implemented"})
-	})
-
-	mux.HandleFunc("POST /assets/{id}/jobs", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		writeJSON(w, map[string]string{"error": "not implemented"})
-	})
-
-	mux.HandleFunc("GET /jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		writeJSON(w, map[string]string{"error": "not implemented"})
-	})
-
-	mux.HandleFunc("GET /assets/{id}/artifacts", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotImplemented)
-		writeJSON(w, map[string]string{"error": "not implemented"})
-	})
-
-	addr := ":8080"
-	fmt.Printf("API listening on %s\n", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		log.Fatal(err)
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	if err := run(log); err != nil {
+		log.Error("api stopped", "error", err)
+		os.Exit(1)
 	}
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+func run(log *slog.Logger) error {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		return errors.New("DATABASE_URL environment variable is required")
+	}
+	port := os.Getenv("API_PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	pool, err := db.Connect(ctx, databaseURL)
+	if err != nil {
+		return fmt.Errorf("connect to database: %w", err)
+	}
+	defer pool.Close()
+
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: httpapi.NewRouter(pool),
+		// Only the header read is time-limited here: uploads of up to 2GB need
+		// long request bodies, so body limits belong to the upload handler.
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		log.Info("API listening", "addr", srv.Addr)
+		errc <- srv.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+
+	log.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return srv.Shutdown(shutdownCtx)
 }
