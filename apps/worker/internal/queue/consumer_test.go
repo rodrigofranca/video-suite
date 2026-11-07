@@ -40,18 +40,28 @@ func testRedis(t *testing.T) *redis.Client {
 	return rdb
 }
 
-// recorder captures which job IDs reached a handler.
+// recorder is a ProcessFunc that behaves according to the message type and
+// remembers which job IDs it handled.
 type recorder struct {
 	mu   sync.Mutex
 	jobs []string
 }
 
-func (r *recorder) handler(err error) jobs.HandlerFunc {
-	return func(_ context.Context, m jobcontracts.Message) error {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		r.jobs = append(r.jobs, m.JobID)
-		return err
+func (r *recorder) process(_ context.Context, m jobcontracts.Message) error {
+	r.mu.Lock()
+	r.jobs = append(r.jobs, m.JobID)
+	r.mu.Unlock()
+	switch m.Type {
+	case "ok":
+		return nil
+	case "fails":
+		return errors.New("boom")
+	case "panics":
+		panic("bad job")
+	case "retry":
+		return fmt.Errorf("%w: database down", ErrRetry)
+	default:
+		return fmt.Errorf("%w: %s", jobs.ErrUnsupported, m.Type)
 	}
 }
 
@@ -67,13 +77,8 @@ func setup(t *testing.T) (*redis.Client, *recorder, *Consumer) {
 	t.Cleanup(func() { rdb.Del(context.Background(), stream) })
 
 	rec := &recorder{}
-	d := jobs.NewDispatcher()
-	d.Register("ok", rec.handler(nil))
-	d.Register("fails", rec.handler(errors.New("boom")))
-	d.Register("panics", func(context.Context, jobcontracts.Message) error { panic("bad job") })
-
 	cfg := Config{Stream: stream, Group: jobcontracts.ConsumerGroup, Name: "test-worker", Block: 50 * time.Millisecond}
-	return rdb, rec, New(rdb, d, slog.New(slog.DiscardHandler), cfg)
+	return rdb, rec, New(rdb, rec.process, slog.New(slog.DiscardHandler), cfg)
 }
 
 func add(t *testing.T, rdb *redis.Client, stream string, values map[string]any) {
@@ -121,6 +126,22 @@ func groupState(t *testing.T, rdb *redis.Client, stream string) (read, pending i
 	return groups[0].EntriesRead, groups[0].Pending
 }
 
+// deliverWithoutAck simulates a crash: the message reaches this consumer
+// but is never acknowledged.
+func deliverWithoutAck(t *testing.T, rdb *redis.Client, c *Consumer) {
+	t.Helper()
+	ctx := context.Background()
+	if err := c.EnsureGroup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	err := rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group: c.cfg.Group, Consumer: c.cfg.Name, Streams: []string{c.cfg.Stream, ">"}, Count: 1, Block: -1,
+	}).Err()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestConsumerAcksEveryMessage(t *testing.T) {
 	rdb, rec, c := setup(t)
 	stream := c.cfg.Stream
@@ -136,27 +157,16 @@ func TestConsumerAcksEveryMessage(t *testing.T) {
 		return read == 6 && pending == 0
 	})
 
-	if got, want := rec.seen(), []string{"j1", "j2", "j5"}; !slices.Equal(got, want) {
-		t.Fatalf("handled jobs = %v, want %v", got, want)
+	if got, want := rec.seen(), []string{"j1", "j2", "j3", "j4", "j5"}; !slices.Equal(got, want) {
+		t.Fatalf("processed jobs = %v, want %v", got, want)
 	}
 }
 
 func TestConsumerRecoversUnackedMessages(t *testing.T) {
 	rdb, rec, c := setup(t)
 	stream := c.cfg.Stream
-	ctx := context.Background()
-
-	// Simulate a crash: the message is delivered to this consumer but never acked.
 	add(t, rdb, stream, job("j1", "ok"))
-	if err := c.EnsureGroup(ctx); err != nil {
-		t.Fatal(err)
-	}
-	err := rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
-		Group: c.cfg.Group, Consumer: c.cfg.Name, Streams: []string{stream, ">"}, Count: 1, Block: -1,
-	}).Err()
-	if err != nil {
-		t.Fatal(err)
-	}
+	deliverWithoutAck(t, rdb, c)
 	if _, pending := groupState(t, rdb, stream); pending != 1 {
 		t.Fatalf("setup: want 1 pending message, got %d", pending)
 	}
@@ -166,6 +176,27 @@ func TestConsumerRecoversUnackedMessages(t *testing.T) {
 		return pending == 0 && len(rec.seen()) == 1
 	})
 	if got := rec.seen(); got[0] != "j1" {
-		t.Fatalf("handled jobs = %v, want [j1]", got)
+		t.Fatalf("processed jobs = %v, want [j1]", got)
+	}
+}
+
+func TestConsumerLeavesRetryMessagesPending(t *testing.T) {
+	rdb, rec, c := setup(t)
+	stream := c.cfg.Stream
+	add(t, rdb, stream, job("j1", "retry"))
+	add(t, rdb, stream, job("j2", "ok"))
+
+	runUntil(t, c, func() bool {
+		read, _ := groupState(t, rdb, stream)
+		return read == 2 && len(rec.seen()) == 2
+	})
+	if _, pending := groupState(t, rdb, stream); pending != 1 {
+		t.Fatalf("want the retry message left pending, got %d pending", pending)
+	}
+
+	// On the next start the pending message runs again, exactly once.
+	runUntil(t, c, func() bool { return len(rec.seen()) == 3 })
+	if got := rec.seen(); got[2] != "j1" {
+		t.Fatalf("processed jobs = %v, want j1 again", got)
 	}
 }

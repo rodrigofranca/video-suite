@@ -26,12 +26,14 @@ These parts of the PRD v0.1 and the roadmap are superseded:
 | Local storage | MinIO | RustFS (S3 API) | ADR 0008 |
 | Storage variables | `S3_*` (roadmap) / `MINIO_*` (old `.env`) | `S3_*` | `.env.example` |
 | ADR numbering | ADR 001–004 inside the PRD | `docs/adr/0004`–`0007` | `docs/adr/` |
+| HLS playlist name | `master.m3u8` | `index.m3u8` (single rendition) | `storage.HLSManifestKey` |
+| Playback API | `GET /assets/:id/playback` only | also included in `GET /assets/:id` as `playback` | `asset-api` spec |
 
-## Open decisions
+## Decisions taken in step 2
 
-Proposed but not yet confirmed. Each should become an ADR once decided.
+Confirmed on 2026-11-07 and recorded as ADRs:
 
-- **Who enqueues the next job.** Proposal: the API creates all three job rows at upload (so the dashboard shows them as pending) but enqueues only the first; the worker enqueues the next one when a job ends, even if metadata or thumbnail failed.
-- **How the browser reads HLS files.** Proposal: in development, make only `assets/*/hls/*` publicly readable in the bucket (CORS is already set up). Signed URLs are awkward for HLS because every segment listed in the playlist would need its own signature.
-- **How the dashboard learns about status changes.** Proposal: poll every 2–3 seconds; consider server-sent events later.
-- **Where the UltraMedia player comes from.** Start with `hls.js`, then plug in UltraMedia once it is packaged (npm package or web component).
+- [0009](adr/0009-pipeline-chaining.md): the API creates all job rows and enqueues the first; the worker enqueues the next when a job ends.
+- [0010](adr/0010-public-hls-playback.md): the player reads HLS straight from storage; only `assets/*/hls/*` is public.
+- [0011](adr/0011-status-polling.md): the dashboard polls every 3 seconds.
+- [0012](adr/0012-hls-js-before-ultramedia.md): `hls.js` until the UltraMedia player is packaged.

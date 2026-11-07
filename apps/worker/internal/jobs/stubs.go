@@ -3,39 +3,37 @@ package jobs
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	jobcontracts "ultramedia/job-contracts"
 )
 
-// Stubs are placeholder handlers for the MVP1 pipeline. They only log and
-// succeed; real FFmpeg/ffprobe handlers replace them one by one.
-type Stubs struct {
-	Log *slog.Logger
-}
+// Stubs are placeholder handlers for pipeline steps that are not built yet.
+// They log and succeed, so the pipeline moves on to the next job.
+type Stubs struct{}
 
-func (s Stubs) ExtractMetadata(_ context.Context, jobID string, in jobcontracts.ExtractMetadataInput) error {
-	s.called(jobcontracts.JobTypeExtractMetadata, jobID, in.AssetID)
+func (Stubs) ExtractMetadata(_ context.Context, job Job, in jobcontracts.ExtractMetadataInput) error {
+	called(job, in.AssetID)
 	return nil
 }
 
-func (s Stubs) GenerateThumbnail(_ context.Context, jobID string, in jobcontracts.GenerateThumbnailInput) error {
-	s.called(jobcontracts.JobTypeGenerateThumbnail, jobID, in.AssetID)
+func (Stubs) GenerateThumbnail(_ context.Context, job Job, in jobcontracts.GenerateThumbnailInput) error {
+	called(job, in.AssetID)
 	return nil
 }
 
-func (s Stubs) TranscodeHLS(_ context.Context, jobID string, in jobcontracts.TranscodeHLSInput) error {
-	s.called(jobcontracts.JobTypeTranscodeHLS, jobID, in.AssetID)
+func (Stubs) TranscodeHLS(_ context.Context, job Job, in jobcontracts.TranscodeHLSInput) error {
+	called(job, in.AssetID)
 	return nil
 }
 
-func (s Stubs) called(jobType, jobID, assetID string) {
-	s.Log.Info(fmt.Sprintf("stub: %s called for asset %s", jobType, assetID), "job_id", jobID)
+func called(job Job, assetID string) {
+	job.Log.Info(fmt.Sprintf("stub: %s called for asset %s (not implemented yet)", job.Type, assetID))
 }
 
-// RegisterStubs registers the stub handlers for every MVP1 job type.
-func RegisterStubs(d *Dispatcher, log *slog.Logger) {
-	s := Stubs{Log: log}
+// RegisterStubs registers stub handlers for every MVP1 job type. Real
+// handlers registered afterwards replace them.
+func RegisterStubs(d *Dispatcher) {
+	s := Stubs{}
 	Handle(d, jobcontracts.JobTypeExtractMetadata, s.ExtractMetadata)
 	Handle(d, jobcontracts.JobTypeGenerateThumbnail, s.GenerateThumbnail)
 	Handle(d, jobcontracts.JobTypeTranscodeHLS, s.TranscodeHLS)

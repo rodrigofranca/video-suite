@@ -1,0 +1,182 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"os"
+	"testing"
+	"time"
+
+	"ultramedia/media-core/db"
+	"ultramedia/media-core/domain"
+)
+
+// testStore connects to the migrated database from `make up && make migrate`,
+// or skips the test.
+func testStore(t *testing.T) *Store {
+	t.Helper()
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		url = "postgres://ultramedia:ultramedia@localhost:5432/ultramedia?sslmode=disable"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	pool, err := db.Connect(ctx, url)
+	if err != nil {
+		t.Skipf("database not available: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "SELECT 1 FROM media_assets LIMIT 1"); err != nil {
+		pool.Close()
+		t.Skipf("database not migrated: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return New(pool)
+}
+
+// newUpload creates an asset with its source and the three pipeline jobs.
+func newUpload(t *testing.T, s *Store) (domain.Asset, []domain.Job) {
+	t.Helper()
+	ctx := context.Background()
+	asset := domain.Asset{ID: domain.NewID(), Filename: "clip.mp4", Status: domain.AssetUploading}
+	if err := s.CreateAsset(ctx, asset); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.DeleteAsset(context.Background(), asset.ID) })
+
+	base := time.Now()
+	var jobs []domain.Job
+	for i, typ := range []string{"extract-metadata", "generate-thumbnail", "transcode-hls"} {
+		jobs = append(jobs, domain.Job{
+			ID: domain.NewID(), AssetID: asset.ID, Type: typ, InputJSON: []byte(`{"asset_id":"x"}`),
+			Status: domain.JobPending, CreatedAt: base.Add(time.Duration(i) * time.Millisecond),
+		})
+	}
+	src := domain.Source{ID: domain.NewID(), AssetID: asset.ID, StorageKey: "k", MimeType: "video/mp4", SizeBytes: 10, Checksum: "abc"}
+	if err := s.CompleteUpload(ctx, src, jobs); err != nil {
+		t.Fatal(err)
+	}
+	return asset, jobs
+}
+
+func TestUploadCreatesProcessingAssetWithJobs(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+
+	got, err := s.GetAsset(ctx, asset.ID)
+	if err != nil || got.Status != domain.AssetProcessing {
+		t.Fatalf("GetAsset = %+v, %v; want status processing", got, err)
+	}
+	if src, err := s.GetSource(ctx, asset.ID); err != nil || src.SizeBytes != 10 {
+		t.Fatalf("GetSource = %+v, %v", src, err)
+	}
+	list, err := s.ListJobs(ctx, asset.ID)
+	if err != nil || len(list) != 3 {
+		t.Fatalf("ListJobs = %d jobs, %v", len(list), err)
+	}
+	for i := range list {
+		if list[i].ID != jobs[i].ID || list[i].Status != domain.JobPending {
+			t.Fatalf("job %d = %s/%s, want %s pending", i, list[i].Type, list[i].Status, jobs[i].Type)
+		}
+	}
+
+	processing, err := s.ListAssets(ctx, domain.AssetProcessing)
+	if err != nil || !containsAsset(processing, asset.ID) {
+		t.Fatalf("ListAssets(processing) missing asset: %v", err)
+	}
+	ready, _ := s.ListAssets(ctx, domain.AssetReady)
+	if containsAsset(ready, asset.ID) {
+		t.Fatal("ListAssets(ready) should not include a processing asset")
+	}
+}
+
+func TestJobLifecycle(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	_, jobs := newUpload(t, s)
+	job := jobs[0]
+
+	if ok, err := s.StartJob(ctx, job.ID); !ok || err != nil {
+		t.Fatalf("StartJob = %v, %v", ok, err)
+	}
+	// A job left running (worker crash) can be started again.
+	if ok, _ := s.StartJob(ctx, job.ID); !ok {
+		t.Fatal("restarting a running job should succeed")
+	}
+	if err := s.FinishJob(ctx, job.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetJob(ctx, job.ID)
+	if got.Status != domain.JobDone || got.Progress != 100 || got.StartedAt == nil || got.CompletedAt == nil {
+		t.Fatalf("finished job = %+v", got)
+	}
+	// A duplicate delivery of a finished job is skipped.
+	if ok, _ := s.StartJob(ctx, job.ID); ok {
+		t.Fatal("starting a done job should be refused")
+	}
+
+	failed := jobs[2]
+	s.StartJob(ctx, failed.ID)
+	s.FinishJob(ctx, failed.ID, errors.New("ffmpeg exited with status 1"))
+	got, _ = s.GetJob(ctx, failed.ID)
+	if got.Status != domain.JobFailed || got.ErrorMessage == nil || *got.ErrorMessage != "ffmpeg exited with status 1" {
+		t.Fatalf("failed job = %+v", got)
+	}
+
+	next, err := s.NextPendingJob(ctx, job.AssetID, "generate-thumbnail")
+	if err != nil || next.ID != jobs[1].ID {
+		t.Fatalf("NextPendingJob = %+v, %v", next, err)
+	}
+	if _, err := s.NextPendingJob(ctx, job.AssetID, "transcode-hls"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("NextPendingJob for a failed job: err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestLogsAndArtifacts(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+
+	s.AddJobLog(ctx, jobs[2].ID, domain.LogInfo, "first")
+	s.AddJobLog(ctx, jobs[2].ID, domain.LogError, "second")
+	logs, err := s.ListJobLogs(ctx, jobs[2].ID)
+	if err != nil || len(logs) != 2 || logs[0].Message != "first" || logs[1].Level != domain.LogError {
+		t.Fatalf("ListJobLogs = %+v, %v", logs, err)
+	}
+
+	if _, err := s.LatestArtifact(ctx, asset.ID, domain.ArtifactHLS); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LatestArtifact before creation: %v", err)
+	}
+	art := domain.Artifact{ID: domain.NewID(), AssetID: asset.ID, JobID: jobs[2].ID, Type: domain.ArtifactHLS, StorageKey: "assets/x/hls/index.m3u8"}
+	if err := s.CreateArtifact(ctx, art); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LatestArtifact(ctx, asset.ID, domain.ArtifactHLS)
+	if err != nil || got.StorageKey != art.StorageKey || string(got.MetadataJSON) != "{}" {
+		t.Fatalf("LatestArtifact = %+v, %v", got, err)
+	}
+}
+
+func TestDeleteAssetCascades(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+	if err := s.DeleteAsset(ctx, asset.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetAsset(ctx, asset.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetAsset after delete: %v", err)
+	}
+	if _, err := s.GetJob(ctx, jobs[0].ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetJob after delete: %v", err)
+	}
+}
+
+func containsAsset(list []domain.Asset, id string) bool {
+	for _, a := range list {
+		if a.ID == id {
+			return true
+		}
+	}
+	return false
+}

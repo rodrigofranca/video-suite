@@ -16,6 +16,14 @@ import (
 	jobcontracts "ultramedia/job-contracts"
 )
 
+// ErrRetry tells the consumer not to ack a message, so it runs again when
+// the worker restarts (for example when the job was interrupted by shutdown
+// or the database was unreachable).
+var ErrRetry = errors.New("will retry after restart")
+
+// ProcessFunc handles one message.
+type ProcessFunc func(ctx context.Context, msg jobcontracts.Message) error
+
 // Config controls which stream and consumer group the worker reads from.
 type Config struct {
 	Stream string        // defaults to jobcontracts.StreamJobs
@@ -24,15 +32,15 @@ type Config struct {
 	Block  time.Duration // how long one read waits for new messages; defaults to 2s
 }
 
-// Consumer reads one message at a time and dispatches it by job type.
+// Consumer reads one message at a time and hands it to a ProcessFunc.
 type Consumer struct {
-	rdb        *redis.Client
-	dispatcher *jobs.Dispatcher
-	log        *slog.Logger
-	cfg        Config
+	rdb     *redis.Client
+	process ProcessFunc
+	log     *slog.Logger
+	cfg     Config
 }
 
-func New(rdb *redis.Client, d *jobs.Dispatcher, log *slog.Logger, cfg Config) *Consumer {
+func New(rdb *redis.Client, process ProcessFunc, log *slog.Logger, cfg Config) *Consumer {
 	if cfg.Stream == "" {
 		cfg.Stream = jobcontracts.StreamJobs
 	}
@@ -42,7 +50,7 @@ func New(rdb *redis.Client, d *jobs.Dispatcher, log *slog.Logger, cfg Config) *C
 	if cfg.Block <= 0 {
 		cfg.Block = 2 * time.Second
 	}
-	return &Consumer{rdb: rdb, dispatcher: d, log: log, cfg: cfg}
+	return &Consumer{rdb: rdb, process: process, log: log, cfg: cfg}
 }
 
 // EnsureGroup creates the stream and consumer group if they do not exist.
@@ -74,35 +82,37 @@ func (c *Consumer) Run(ctx context.Context) error {
 }
 
 func (c *Consumer) recoverPending(ctx context.Context) error {
+	// Read the history page by page: a message left unacked on purpose
+	// (ErrRetry) must not be read again in a loop.
+	after := "0"
 	for ctx.Err() == nil {
-		n, err := c.readOnce(ctx, "0")
-		if err != nil {
+		streams, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+			Group: c.cfg.Group, Consumer: c.cfg.Name, Streams: []string{c.cfg.Stream, after}, Count: 1, Block: -1,
+		}).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
 			if ctx.Err() != nil {
 				return nil
 			}
 			return fmt.Errorf("recover pending jobs: %w", err)
 		}
-		if n == 0 {
+		if len(streams) == 0 || len(streams[0].Messages) == 0 {
 			return nil
+		}
+		msg := streams[0].Messages[0]
+		after = msg.ID
+		c.log.Info("resuming unfinished job", "message_id", msg.ID)
+		if err := c.handle(ctx, msg); err != nil {
+			return fmt.Errorf("recover pending jobs: %w", err)
 		}
 	}
 	return nil
 }
 
-// readOnce reads and processes at most one message. id is ">" for new
-// messages or "0" for messages already delivered to this consumer.
+// readOnce waits for one new message and processes it.
 func (c *Consumer) readOnce(ctx context.Context, id string) (int, error) {
-	args := &redis.XReadGroupArgs{
-		Group:    c.cfg.Group,
-		Consumer: c.cfg.Name,
-		Streams:  []string{c.cfg.Stream, id},
-		Count:    1,
-		Block:    -1, // history reads return immediately
-	}
-	if id == ">" {
-		args.Block = c.cfg.Block
-	}
-	streams, err := c.rdb.XReadGroup(ctx, args).Result()
+	streams, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group: c.cfg.Group, Consumer: c.cfg.Name, Streams: []string{c.cfg.Stream, id}, Count: 1, Block: c.cfg.Block,
+	}).Result()
 	if errors.Is(err, redis.Nil) {
 		return 0, nil // no new messages before the block timeout
 	}
@@ -113,7 +123,7 @@ func (c *Consumer) readOnce(ctx context.Context, id string) (int, error) {
 	for _, s := range streams {
 		for _, msg := range s.Messages {
 			n++
-			if err := c.process(ctx, msg); err != nil {
+			if err := c.handle(ctx, msg); err != nil {
 				return n, err
 			}
 		}
@@ -121,22 +131,24 @@ func (c *Consumer) readOnce(ctx context.Context, id string) (int, error) {
 	return n, nil
 }
 
-// process dispatches one message and always acknowledges it, so a failing or
-// unknown job never blocks the stream. Job status lives in PostgreSQL.
-func (c *Consumer) process(ctx context.Context, xmsg redis.XMessage) error {
+// handle processes one message and acknowledges it, so a failing or unknown
+// job never blocks the stream (job status lives in PostgreSQL). The only
+// exception is ErrRetry, which leaves the message for the next start.
+func (c *Consumer) handle(ctx context.Context, xmsg redis.XMessage) error {
 	log := c.log.With("message_id", xmsg.ID)
 	msg, err := jobcontracts.ParseMessage(xmsg.Values)
 	if err != nil {
 		log.Error("invalid job message", "error", err)
 	} else {
 		log = log.With("job_id", msg.JobID, "type", msg.Type)
-		switch err := c.dispatch(ctx, msg); {
+		switch err := c.run(ctx, msg); {
+		case errors.Is(err, ErrRetry):
+			log.Warn("job not acknowledged; it will run again after restart", "reason", err)
+			return nil
 		case errors.Is(err, jobs.ErrUnsupported):
 			log.Warn("unsupported job type: " + msg.Type)
 		case err != nil:
 			log.Error("job failed", "error", err)
-		default:
-			log.Info("job finished")
 		}
 	}
 
@@ -149,15 +161,15 @@ func (c *Consumer) process(ctx context.Context, xmsg redis.XMessage) error {
 	return nil
 }
 
-// dispatch runs the handler and turns a panic into an error, so one bad job
+// run calls the ProcessFunc and turns a panic into an error, so one bad job
 // cannot crash the worker in a loop.
-func (c *Consumer) dispatch(ctx context.Context, msg jobcontracts.Message) (err error) {
+func (c *Consumer) run(ctx context.Context, msg jobcontracts.Message) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("handler panic: %v", r)
 		}
 	}()
-	return c.dispatcher.Dispatch(ctx, msg)
+	return c.process(ctx, msg)
 }
 
 func sleep(ctx context.Context, d time.Duration) {

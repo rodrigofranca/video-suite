@@ -56,3 +56,15 @@ const (
 	JobDone    = "done"
 	JobFailed  = "failed"
 )
+
+// Artifact types (artifacts.type).
+const (
+	ArtifactHLS = "hls" // storage_key points to the HLS playlist (index.m3u8)
+)
+
+// Job log levels (job_logs.level).
+const (
+	LogInfo    = "info"
+	LogWarning = "warning"
+	LogError   = "error"
+)

@@ -20,21 +20,6 @@ O binário `apps/api` SHALL abrir um pool de conexões (`pgxpool`, seguro para r
 - **WHEN** várias requisições a `GET /healthz` chegam ao mesmo tempo
 - **THEN** todas SHALL ser respondidas com HTTP 200
 
-### Requirement: Endpoints stub do MVP1 presentes e roteados
-A API SHALL ter os endpoints definidos no PRD roteados e respondendo, mesmo que com corpo stub.
-
-#### Scenario: POST /assets/upload retorna 501
-- **WHEN** requisição POST para `/assets/upload` é feita
-- **THEN** a API SHALL responder HTTP 501 com body `{"error": "not implemented"}`
-
-#### Scenario: GET /assets retorna lista vazia
-- **WHEN** requisição GET para `/assets` é feita com banco vazio
-- **THEN** a API SHALL responder HTTP 200 com body `{"assets": []}`
-
-#### Scenario: GET /assets/:id retorna 404 para ID inexistente
-- **WHEN** requisição GET para `/assets/00000000-0000-0000-0000-000000000000` é feita
-- **THEN** a API SHALL responder HTTP 404 com body `{"error": "not found"}`
-
 ### Requirement: Health check endpoint
 A API SHALL expor `GET /healthz` que retorna 200 quando banco está acessível.
 
@@ -55,3 +40,17 @@ A API SHALL parar de aceitar conexões ao receber SIGINT ou SIGTERM, concluir as
 #### Scenario: Ctrl+C encerra a API
 - **WHEN** a API recebe SIGINT
 - **THEN** SHALL logar `shutting down` e encerrar com código zero
+
+### Requirement: Disparo manual de job ainda não implementado
+`POST /assets/{id}/jobs` SHALL continuar roteado como stub até existir o disparo manual de jobs.
+
+#### Scenario: Disparo manual responde 501
+- **WHEN** requisição POST para `/assets/{id}/jobs` é feita
+- **THEN** a API SHALL responder HTTP 501 com body `{"error": "not implemented"}`
+
+### Requirement: API verifica Redis e storage na inicialização
+A API SHALL exigir `REDIS_URL` e as variáveis `S3_*` obrigatórias, e SHALL conferir que o Redis responde e que o bucket existe antes de aceitar requisições.
+
+#### Scenario: Storage fora do ar
+- **WHEN** a API inicia sem o storage disponível
+- **THEN** SHALL logar o erro com o endereço do storage e encerrar com código não-zero

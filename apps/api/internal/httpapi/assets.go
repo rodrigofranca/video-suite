@@ -1,0 +1,279 @@
+package httpapi
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"time"
+
+	"ultramedia/media-core/domain"
+	"ultramedia/media-core/store"
+)
+
+// Response shapes. Field names are camelCase for the dashboard.
+
+type assetDTO struct {
+	ID        string    `json:"id"`
+	Filename  string    `json:"filename"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type assetDetailDTO struct {
+	assetDTO
+	Source    *sourceDTO    `json:"source"`
+	Jobs      []jobDTO      `json:"jobs"`
+	Artifacts []artifactDTO `json:"artifacts"`
+	Playback  *playbackDTO  `json:"playback"`
+}
+
+type sourceDTO struct {
+	StorageKey string `json:"storageKey"`
+	MimeType   string `json:"mimeType"`
+	SizeBytes  int64  `json:"sizeBytes"`
+	Checksum   string `json:"checksum"`
+}
+
+type jobDTO struct {
+	ID          string          `json:"id"`
+	AssetID     string          `json:"assetId"`
+	Type        string          `json:"type"`
+	Status      string          `json:"status"`
+	Progress    int             `json:"progress"`
+	Error       *string         `json:"error"`
+	Input       json.RawMessage `json:"input"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	StartedAt   *time.Time      `json:"startedAt"`
+	CompletedAt *time.Time      `json:"completedAt"`
+}
+
+type logDTO struct {
+	ID        string    `json:"id"`
+	Level     string    `json:"level"`
+	Message   string    `json:"message"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+type artifactDTO struct {
+	ID         string          `json:"id"`
+	JobID      string          `json:"jobId"`
+	Type       string          `json:"type"`
+	StorageKey string          `json:"storageKey"`
+	Metadata   json.RawMessage `json:"metadata"`
+	CreatedAt  time.Time       `json:"createdAt"`
+}
+
+type playbackDTO struct {
+	Type        string `json:"type"`
+	ManifestURL string `json:"manifestUrl"`
+}
+
+func toAsset(a domain.Asset) assetDTO {
+	return assetDTO{ID: a.ID, Filename: a.Filename, Status: a.Status, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}
+}
+
+func toJob(j domain.Job) jobDTO {
+	return jobDTO{
+		ID: j.ID, AssetID: j.AssetID, Type: j.Type, Status: j.Status, Progress: j.Progress,
+		Error: j.ErrorMessage, Input: json.RawMessage(j.InputJSON),
+		CreatedAt: j.CreatedAt, StartedAt: j.StartedAt, CompletedAt: j.CompletedAt,
+	}
+}
+
+func toJobs(jobs []domain.Job) []jobDTO {
+	out := make([]jobDTO, 0, len(jobs))
+	for _, j := range jobs {
+		out = append(out, toJob(j))
+	}
+	return out
+}
+
+func toArtifacts(arts []domain.Artifact) []artifactDTO {
+	out := make([]artifactDTO, 0, len(arts))
+	for _, a := range arts {
+		out = append(out, artifactDTO{ID: a.ID, JobID: a.JobID, Type: a.Type, StorageKey: a.StorageKey, Metadata: json.RawMessage(a.MetadataJSON), CreatedAt: a.CreatedAt})
+	}
+	return out
+}
+
+var assetStatuses = map[string]bool{
+	"": true, domain.AssetUploading: true, domain.AssetProcessing: true, domain.AssetReady: true, domain.AssetFailed: true,
+}
+
+func (a *api) listAssets(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	if !assetStatuses[status] {
+		writeError(w, http.StatusBadRequest, "unknown status "+status)
+		return
+	}
+	assets, err := a.Store.ListAssets(r.Context(), status)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	out := make([]assetDTO, 0, len(assets))
+	for _, as := range assets {
+		out = append(out, toAsset(as))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"assets": out})
+}
+
+// loadAsset reads the {id} asset or writes a 404.
+func (a *api) loadAsset(w http.ResponseWriter, r *http.Request) (domain.Asset, bool) {
+	id := r.PathValue("id")
+	if !domain.IsID(id) {
+		writeError(w, http.StatusNotFound, "not found")
+		return domain.Asset{}, false
+	}
+	asset, err := a.Store.GetAsset(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return asset, false
+	}
+	if err != nil {
+		a.internalError(w, r, err)
+		return asset, false
+	}
+	return asset, true
+}
+
+func (a *api) getAsset(w http.ResponseWriter, r *http.Request) {
+	asset, ok := a.loadAsset(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	detail := assetDetailDTO{assetDTO: toAsset(asset)}
+
+	src, err := a.Store.GetSource(ctx, asset.ID)
+	switch {
+	case err == nil:
+		detail.Source = &sourceDTO{StorageKey: src.StorageKey, MimeType: src.MimeType, SizeBytes: src.SizeBytes, Checksum: src.Checksum}
+	case !errors.Is(err, store.ErrNotFound):
+		a.internalError(w, r, err)
+		return
+	}
+
+	jobs, err := a.Store.ListJobs(ctx, asset.ID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	detail.Jobs = toJobs(jobs)
+
+	arts, err := a.Store.ListArtifacts(ctx, asset.ID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	detail.Artifacts = toArtifacts(arts)
+	detail.Playback = a.playbackFor(asset, arts)
+
+	writeJSON(w, http.StatusOK, detail)
+}
+
+// playbackFor returns the HLS playback info of a ready asset, or nil.
+func (a *api) playbackFor(asset domain.Asset, arts []domain.Artifact) *playbackDTO {
+	if asset.Status != domain.AssetReady {
+		return nil
+	}
+	for i := len(arts) - 1; i >= 0; i-- { // newest HLS output wins
+		if arts[i].Type == domain.ArtifactHLS {
+			return &playbackDTO{Type: "hls", ManifestURL: a.Storage.PublicURL(arts[i].StorageKey)}
+		}
+	}
+	return nil
+}
+
+func (a *api) playback(w http.ResponseWriter, r *http.Request) {
+	asset, ok := a.loadAsset(w, r)
+	if !ok {
+		return
+	}
+	arts, err := a.Store.ListArtifacts(r.Context(), asset.ID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	pb := a.playbackFor(asset, arts)
+	if pb == nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "asset is not ready", "status": asset.Status})
+		return
+	}
+	writeJSON(w, http.StatusOK, pb)
+}
+
+func (a *api) listAssetJobs(w http.ResponseWriter, r *http.Request) {
+	asset, ok := a.loadAsset(w, r)
+	if !ok {
+		return
+	}
+	jobs, err := a.Store.ListJobs(r.Context(), asset.ID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": toJobs(jobs)})
+}
+
+func (a *api) listArtifacts(w http.ResponseWriter, r *http.Request) {
+	asset, ok := a.loadAsset(w, r)
+	if !ok {
+		return
+	}
+	arts, err := a.Store.ListArtifacts(r.Context(), asset.ID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"artifacts": toArtifacts(arts)})
+}
+
+func (a *api) getJob(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.loadJob(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, toJob(job))
+}
+
+func (a *api) listJobLogs(w http.ResponseWriter, r *http.Request) {
+	job, ok := a.loadJob(w, r)
+	if !ok {
+		return
+	}
+	logs, err := a.Store.ListJobLogs(r.Context(), job.ID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	out := make([]logDTO, 0, len(logs))
+	for _, l := range logs {
+		out = append(out, logDTO{ID: l.ID, Level: l.Level, Message: l.Message, Timestamp: l.Timestamp})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"logs": out})
+}
+
+func (a *api) loadJob(w http.ResponseWriter, r *http.Request) (domain.Job, bool) {
+	id := r.PathValue("id")
+	if !domain.IsID(id) {
+		writeError(w, http.StatusNotFound, "not found")
+		return domain.Job{}, false
+	}
+	job, err := a.Store.GetJob(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return job, false
+	}
+	if err != nil {
+		a.internalError(w, r, err)
+		return job, false
+	}
+	return job, true
+}
+
+func (a *api) internalError(w http.ResponseWriter, r *http.Request, err error) {
+	a.Log.Error("request failed", "method", r.Method, "path", r.URL.Path, "error", err)
+	writeError(w, http.StatusInternalServerError, "internal error")
+}

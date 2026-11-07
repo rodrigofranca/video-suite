@@ -39,3 +39,18 @@ func TestParseMessageRejectsBadInput(t *testing.T) {
 		}
 	}
 }
+
+func TestNextJobType(t *testing.T) {
+	cases := map[string]string{
+		JobTypeExtractMetadata:   JobTypeGenerateThumbnail,
+		JobTypeGenerateThumbnail: JobTypeTranscodeHLS,
+		JobTypeTranscodeHLS:      "",
+		"unknown":                "",
+	}
+	for in, want := range cases {
+		got, ok := NextJobType(in)
+		if got != want || ok != (want != "") {
+			t.Errorf("NextJobType(%q) = %q, %v; want %q", in, got, ok, want)
+		}
+	}
+}

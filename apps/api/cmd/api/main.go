@@ -11,8 +11,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"ultramedia/api/internal/httpapi"
 	"ultramedia/media-core/db"
+	"ultramedia/media-core/storage"
+	"ultramedia/media-core/store"
+
+	jobcontracts "ultramedia/job-contracts"
 )
 
 func main() {
@@ -28,9 +34,21 @@ func run(log *slog.Logger) error {
 	if databaseURL == "" {
 		return errors.New("DATABASE_URL environment variable is required")
 	}
+	redisURL := os.Getenv("REDIS_URL")
+	if redisURL == "" {
+		return errors.New("REDIS_URL environment variable is required")
+	}
+	storageCfg, err := storage.ConfigFromEnv()
+	if err != nil {
+		return err
+	}
 	port := os.Getenv("API_PORT")
 	if port == "" {
 		port = "8080"
+	}
+	origin := os.Getenv("DASHBOARD_ORIGIN")
+	if origin == "" {
+		origin = "http://localhost:5173"
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -42,17 +60,43 @@ func run(log *slog.Logger) error {
 	}
 	defer pool.Close()
 
+	redisOpts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return fmt.Errorf("invalid REDIS_URL: %w", err)
+	}
+	rdb := redis.NewClient(redisOpts)
+	defer rdb.Close()
+
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := rdb.Ping(checkCtx).Err(); err != nil {
+		return fmt.Errorf("connect to redis at %s: %w", redisOpts.Addr, err)
+	}
+	files := storage.New(storageCfg)
+	if err := files.Check(checkCtx); err != nil {
+		return fmt.Errorf("connect to storage at %s: %w", storageCfg.Endpoint, err)
+	}
+
 	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: httpapi.NewRouter(pool),
+		Addr: ":" + port,
+		Handler: httpapi.NewRouter(httpapi.Deps{
+			DB:      pool,
+			Store:   store.New(pool),
+			Storage: files,
+			Enqueue: func(ctx context.Context, msg jobcontracts.Message) error {
+				return rdb.XAdd(ctx, &redis.XAddArgs{Stream: jobcontracts.StreamJobs, Values: msg.Values()}).Err()
+			},
+			AllowedOrigin: origin,
+			Log:           log,
+		}),
 		// Only the header read is time-limited here: uploads of up to 2GB need
-		// long request bodies, so body limits belong to the upload handler.
+		// long request bodies, so the upload handler enforces its own limits.
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("API listening", "addr", srv.Addr)
+		log.Info("API listening", "addr", srv.Addr, "dashboard_origin", origin)
 		errc <- srv.ListenAndServe()
 	}()
 

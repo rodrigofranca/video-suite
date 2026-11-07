@@ -9,11 +9,13 @@ import (
 	"testing"
 )
 
+// Tests in this file need no database or storage.
+
 type fakeDB struct{ err error }
 
 func (f fakeDB) Ping(context.Context) error { return f.err }
 
-func TestRoutes(t *testing.T) {
+func TestRoutesWithoutServices(t *testing.T) {
 	cases := []struct {
 		name       string
 		db         Pinger
@@ -24,19 +26,20 @@ func TestRoutes(t *testing.T) {
 	}{
 		{"health ok", fakeDB{}, "GET", "/healthz", 200, `{"status":"ok"}`},
 		{"health db down", fakeDB{errors.New("down")}, "GET", "/healthz", 503, `"status":"error"`},
-		{"upload stub", fakeDB{}, "POST", "/assets/upload", 501, `{"error":"not implemented"}`},
-		{"list assets", fakeDB{}, "GET", "/assets", 200, `{"assets":[]}`},
-		{"unknown asset", fakeDB{}, "GET", "/assets/00000000-0000-0000-0000-000000000000", 404, `{"error":"not found"}`},
-		{"asset jobs stub", fakeDB{}, "GET", "/assets/x/jobs", 501, `not implemented`},
+		{"malformed asset id", fakeDB{}, "GET", "/assets/not-a-uuid", 404, `{"error":"not found"}`},
+		{"malformed job id", fakeDB{}, "GET", "/jobs/123/logs", 404, `{"error":"not found"}`},
+		{"bad status filter", fakeDB{}, "GET", "/assets?status=weird", 400, `unknown status`},
+		{"trigger job stub", fakeDB{}, "POST", "/assets/00000000-0000-0000-0000-000000000000/jobs", 501, `not implemented`},
+		{"upload without multipart", fakeDB{}, "POST", "/assets/upload", 400, `multipart/form-data`},
 		{"wrong method", fakeDB{}, "DELETE", "/assets", 405, ``},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			NewRouter(tc.db).ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
+			NewRouter(Deps{DB: tc.db}).ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
 
 			if rec.Code != tc.wantStatus {
-				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tc.wantStatus, rec.Body)
 			}
 			if !strings.Contains(rec.Body.String(), tc.wantBody) {
 				t.Fatalf("body = %q, want it to contain %q", rec.Body.String(), tc.wantBody)
@@ -45,10 +48,47 @@ func TestRoutes(t *testing.T) {
 	}
 }
 
-func TestJSONContentType(t *testing.T) {
+func TestCORS(t *testing.T) {
+	h := NewRouter(Deps{DB: fakeDB{}, AllowedOrigin: "http://localhost:5173"})
+
+	req := httptest.NewRequest(http.MethodOptions, "/assets/upload", nil)
+	req.Header.Set("Origin", "http://localhost:5173")
+	req.Header.Set("Access-Control-Request-Method", "POST")
 	rec := httptest.NewRecorder()
-	NewRouter(fakeDB{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	if got := rec.Header().Get("Content-Type"); got != "application/json" {
-		t.Fatalf("Content-Type = %q", got)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != "http://localhost:5173" {
+		t.Fatalf("preflight: status %d, headers %v", rec.Code, rec.Header())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("Origin", "http://evil.test")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("other origin got Access-Control-Allow-Origin %q", got)
+	}
+}
+
+func TestIsMP4(t *testing.T) {
+	if !isMP4([]byte("\x00\x00\x00\x20ftypisom")) {
+		t.Error("MP4 header not recognised")
+	}
+	if isMP4([]byte("GIF89a......")) || isMP4([]byte("ftyp")) {
+		t.Error("non-MP4 accepted")
+	}
+}
+
+func TestCleanFilename(t *testing.T) {
+	cases := map[string]string{
+		"clip.mp4":                        "clip.mp4",
+		"../../etc/passwd.mp4":            "passwd.mp4",
+		`C:\Users\me\video.mp4`:           "video.mp4",
+		"":                                "upload.mp4",
+		strings.Repeat("a", 300) + ".mp4": strings.Repeat("a", 251) + ".mp4",
+	}
+	for in, want := range cases {
+		if got := cleanFilename(in); got != want {
+			t.Errorf("cleanFilename(%.20q) = %.20q, want %.20q", in, got, want)
+		}
 	}
 }
