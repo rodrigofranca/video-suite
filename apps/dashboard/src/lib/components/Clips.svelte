@@ -27,7 +27,8 @@
 		duration = 0,
 		onpreview,
 		onexport,
-		onedit
+		onedit,
+		ondelete
 	}: {
 		clips: Clip[];
 		/** Another job of the video is pending or running: exports must wait. */
@@ -51,9 +52,26 @@
 			options: CaptionOptions
 		) => Promise<void>;
 		onedit?: (clipId: string, changes: { start?: number; end?: number; title?: string }) => Promise<void>;
+		ondelete?: (clipId: string) => Promise<void>;
 	} = $props();
 
 	let editing = $state(''); // id of the clip being edited
+	let confirmingDelete = $state(''); // id of the clip asking "delete?"
+	let deleting = $state(false);
+
+	async function removeClip(clip: Clip) {
+		if (!ondelete) return;
+		deleting = true;
+		error = '';
+		try {
+			await ondelete(clip.id);
+			confirmingDelete = '';
+		} catch (e) {
+			error = (e as Error).message;
+		} finally {
+			deleting = false;
+		}
+	}
 
 	type Choice = CaptionStyle | 'off';
 	// Captions per clip: highlighted words when possible, else lines, else none.
@@ -119,6 +137,15 @@
 			</p>
 			{#if clip.reason}<p class="reason">{clip.reason}</p>{/if}
 
+			{#if confirmingDelete === clip.id}
+				<div class="confirm-delete" data-testid="delete-clip-confirm">
+					<p>Delete this clip{clip.exports.some((e) => e.ready) ? ' and its exported files' : ''}? This cannot be undone.</p>
+					<button class="danger" disabled={deleting || busy} onclick={() => removeClip(clip)} data-testid="delete-clip-yes"
+						>{deleting ? 'Deleting…' : 'Yes, delete'}</button
+					>
+					<button class="secondary" onclick={() => (confirmingDelete = '')}>Cancel</button>
+				</div>
+			{/if}
 			{#if editing === clip.id && onedit}
 				<ClipEditor
 					{clip}
@@ -138,6 +165,15 @@
 				<button class="secondary" onclick={() => onpreview?.(clip.start, clip.end)}>▶ Preview</button>
 				{#if onedit && editing !== clip.id}
 					<button class="secondary" onclick={() => (editing = clip.id)} data-testid="edit-clip">✎ Edit</button>
+				{/if}
+				{#if ondelete && confirmingDelete !== clip.id}
+					<button
+						class="secondary"
+						disabled={busy}
+						title={busy ? 'Wait for the running job to finish' : 'Delete this clip'}
+						onclick={() => (confirmingDelete = clip.id)}
+						data-testid="delete-clip">🗑 Delete</button
+					>
 				{/if}
 				{#if hasSubtitles || wordTimings}
 					<label class="captions">
@@ -285,6 +321,20 @@
 		color: var(--accent);
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
+	}
+	.confirm-delete {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.6rem 0.75rem;
+		border: 1px solid var(--badge-err-fg);
+		border-radius: 8px;
+	}
+	.confirm-delete p {
+		flex-basis: 100%;
+		margin: 0;
+		font-size: 0.9rem;
 	}
 	.edited {
 		font-size: 0.75rem;

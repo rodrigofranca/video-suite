@@ -28,7 +28,8 @@ Open http://localhost:5173. Keep `make demo-logs` running in a terminal if you w
 9. **Clips.** "The same model picks the moments that work as standalone clips." Click **Preview** on the first clip, then **9:16 face**: seconds later the vertical clip plays on the page, framed on the speaker's face (with two people on screen, it cuts to whoever is talking), with captions that highlight each word as it is said, and can be downloaded. Export **9:16 crop** too to compare it with the plain centre crop. Try another **Captions** style (word box, karaoke, one word at a time), move it to the **Top**, pick another color and **CAPS**, and export again. Then click **✎ Edit**: move the start to the next sentence, rename the clip, **Preview**, **Save**: the faces are found again for the new range, and the earlier export says it was made before the edit.
 10. **Run a job again.** Open **Thumbnail**, click **Run again**. "A new attempt is added; the earlier one stays in the history."
 11. **The list.** Go back to **Videos**: thumbnail, duration, resolution, status.
-12. **What's next.** "Next: getting ready for production: sign-in, deleting videos, several qualities."
+12. **Clean up.** Open a test video, scroll to **Delete video**, confirm: "The video, its clips and every stored file are gone; the list no longer shows it."
+13. **What's next.** "Next: getting ready for production: sign-in and several qualities."
 
 ## After the demo
 

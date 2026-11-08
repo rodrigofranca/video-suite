@@ -1,6 +1,9 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import {
+		deleteAsset,
+		deleteClip,
 		editClip,
 		exportClip,
 		getAnalysis,
@@ -138,6 +141,27 @@
 		!!asset?.jobs.some((j) => j.type === 'track-faces' && (j.status === 'pending' || j.status === 'running'))
 	);
 
+	async function removeClip(clipId: string) {
+		await deleteClip(page.params.id!, clipId);
+		clips = (await getClips(page.params.id!)).clips;
+	}
+
+	// Deleting the video: asked first, at the bottom of the page.
+	let confirmDelete = $state(false);
+	let deletingAsset = $state(false);
+	let deleteError = $state('');
+	async function removeAsset() {
+		deletingAsset = true;
+		deleteError = '';
+		try {
+			await deleteAsset(page.params.id!);
+			await goto('/assets');
+		} catch (e) {
+			deleteError = (e as Error).message;
+			deletingAsset = false;
+		}
+	}
+
 	async function saveClip(clipId: string, changes: { start?: number; end?: number; title?: string }) {
 		await editClip(page.params.id!, clipId, changes);
 		const r = await getClips(page.params.id!);
@@ -245,6 +269,7 @@
 					onpreview={(start, end) => player?.playRange(start, end)}
 					onexport={startExport}
 					onedit={saveClip}
+					ondelete={removeClip}
 				/>
 			{:else if suggestJob.status === 'failed'}
 				<p class="muted">Clips could not be suggested; open the Clips job below to see why.</p>
@@ -330,6 +355,32 @@
 			</dl>
 		</section>
 	</div>
+
+	<section class="danger-zone" data-testid="danger-zone">
+		<h2>Delete video</h2>
+		{#if confirmDelete}
+			<p>
+				Delete <strong>{asset.filename}</strong>, its clips and every stored file (original, HLS, thumbnail, subtitles,
+				exports)? This cannot be undone.
+			</p>
+			<div class="danger-buttons">
+				<button class="danger" disabled={deletingAsset || jobsBusy} onclick={removeAsset} data-testid="delete-asset-yes"
+					>{deletingAsset ? 'Deleting…' : 'Yes, delete the video'}</button
+				>
+				<button class="secondary" onclick={() => (confirmDelete = false)}>Cancel</button>
+			</div>
+		{:else}
+			<button
+				class="secondary"
+				disabled={jobsBusy}
+				title={jobsBusy ? 'Wait for the running jobs to finish' : ''}
+				onclick={() => (confirmDelete = true)}
+				data-testid="delete-asset">🗑 Delete video…</button
+			>
+			{#if jobsBusy}<span class="muted">Available when no job is running.</span>{/if}
+		{/if}
+		{#if deleteError}<p class="error">{deleteError}</p>{/if}
+	</section>
 {/if}
 
 <style>
@@ -402,6 +453,19 @@
 	.columns {
 		display: grid;
 		gap: 1.5rem;
+	}
+	.danger-zone {
+		margin-top: 2rem;
+		padding-top: 1rem;
+		border-top: 1px solid var(--border);
+	}
+	.danger-zone p {
+		margin: 0 0 0.75rem;
+	}
+	.danger-buttons {
+		display: flex;
+		gap: 0.5rem;
+		flex-wrap: wrap;
 	}
 	@media (min-width: 760px) {
 		.columns {

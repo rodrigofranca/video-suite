@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -140,5 +141,42 @@ func TestPresignAddresses(t *testing.T) {
 	download, err := c.PresignForBrowser(ctx, "assets/x/clips/y/vertical.mp4", "talk-clip-1-vertical.mp4", time.Minute)
 	if err != nil || !strings.Contains(download, "response-content-disposition=attachment%3B%20filename%3D%22talk-clip-1-vertical.mp4%22") {
 		t.Fatalf("PresignForBrowser download = %s (%v)", download, err)
+	}
+}
+
+func TestDeletePrefix(t *testing.T) {
+	c := testClient(t)
+	ctx := context.Background()
+	asset, other := "test-"+strconv.FormatInt(time.Now().UnixNano(), 36), "test-other-"+strconv.FormatInt(time.Now().UnixNano(), 36)
+	keys := []string{SourceKey(asset), HLSManifestKey(asset), ClipKey(asset, "c1", "vertical"), ClipKey(asset, "c2", "original")}
+	for _, k := range append(keys, SourceKey(other)) {
+		if err := c.Upload(ctx, k, strings.NewReader("x"), "text/plain"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { c.DeletePrefix(context.Background(), AssetPrefix(other)) })
+
+	// One clip's folder, then the whole asset; the other asset is untouched.
+	if n, err := c.DeletePrefix(ctx, ClipPrefix(asset, "c1")); err != nil || n != 1 {
+		t.Fatalf("clip folder: %d, %v", n, err)
+	}
+	if ok, _ := c.Exists(ctx, ClipKey(asset, "c2", "original")); !ok {
+		t.Fatal("another clip's file was removed")
+	}
+	if n, err := c.DeletePrefix(ctx, AssetPrefix(asset)); err != nil || n != 3 {
+		t.Fatalf("asset folder: %d, %v", n, err)
+	}
+	for _, k := range keys {
+		if ok, _ := c.Exists(ctx, k); ok {
+			t.Errorf("%s still exists", k)
+		}
+	}
+	if ok, _ := c.Exists(ctx, SourceKey(other)); !ok {
+		t.Fatal("the other asset's file was removed")
+	}
+	for _, bad := range []string{"", "assets/", "assets//", "assets/x", "hls/", "assets/../", "other/x/"} {
+		if _, err := c.DeletePrefix(ctx, bad); err == nil {
+			t.Errorf("DeletePrefix(%q) did not refuse", bad)
+		}
 	}
 }

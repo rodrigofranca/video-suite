@@ -47,3 +47,14 @@ Os cortes exportados SHALL ficar em `assets/{id}/clips/{clipId}/{formato}.mp4`, 
 #### Scenario: Leitura anônima de um corte
 - **WHEN** um navegador sem credenciais pede o arquivo de um corte direto no storage
 - **THEN** o storage SHALL recusar
+
+### Requirement: Apagar uma pasta
+O cliente SHALL apagar todos os objetos sob um prefixo e dizer quantos apagou, aceitando só a pasta de um asset ou uma pasta dentro dela (`assets/<id>/...`, terminando em barra, sem `..`).
+
+#### Scenario: Prefixo perigoso
+- **WHEN** o prefixo é vazio, `assets/`, `assets/x` ou fora de `assets/`
+- **THEN** o cliente SHALL recusar sem apagar nada
+
+#### Scenario: Pasta de um corte
+- **WHEN** a pasta de um corte é apagada
+- **THEN** só os arquivos desse corte SHALL sumir

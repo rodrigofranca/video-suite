@@ -847,3 +847,74 @@ func TestEditClip(t *testing.T) {
 		t.Fatalf("edit while tracking: %d, want 409", code)
 	}
 }
+
+func TestDeleteClipAndAsset(t *testing.T) {
+	e := newEnv(t, 0)
+	rec := e.upload("to-delete.mp4", fakeMP4(1024))
+	var created struct{ AssetID string }
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	e.cleanupAsset(created.AssetID)
+	id := created.AssetID
+	ctx := context.Background()
+
+	suggest := e.jobOfType(id, jobcontracts.JobTypeSuggestClips)
+	gone, kept := domain.NewID(), domain.NewID()
+	e.store.ReplaceClips(ctx, id, []domain.Clip{
+		{ID: gone, JobID: suggest.ID, Start: 0, End: 20, Title: "Gone", Score: 6, Rank: 1, Model: "m"},
+		{ID: kept, JobID: suggest.ID, Start: 30, End: 50, Title: "Kept", Score: 5, Rank: 2, Model: "m"},
+	})
+	for _, k := range []string{storage.ClipKey(id, gone, "vertical"), storage.ClipKey(id, kept, "vertical"), storage.ThumbnailKey(id)} {
+		if err := e.storage.Upload(ctx, k, strings.NewReader("x"), "video/mp4"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// While the pipeline runs, nothing can be deleted.
+	if code := e.send(http.MethodDelete, "/assets/"+id+"/clips/"+gone, "", nil); code != http.StatusConflict {
+		t.Fatalf("delete a clip while busy: %d, want 409", code)
+	}
+	if code := e.send(http.MethodDelete, "/assets/"+id, "", nil); code != http.StatusConflict {
+		t.Fatalf("delete the video while busy: %d, want 409", code)
+	}
+	jobs, _ := e.store.ListJobs(ctx, id)
+	for _, j := range jobs {
+		e.store.FinishJob(ctx, j.ID, nil)
+	}
+
+	// One clip: its row and files go, the other clip stays.
+	if code := e.send(http.MethodDelete, "/assets/"+id+"/clips/"+gone, "", nil); code != http.StatusNoContent {
+		t.Fatalf("delete a clip: %d", code)
+	}
+	var list struct{ Clips []struct{ ID string } }
+	e.get("/assets/"+id+"/clips", &list)
+	if len(list.Clips) != 1 || list.Clips[0].ID != kept {
+		t.Fatalf("clips after deleting one = %+v", list.Clips)
+	}
+	if ok, _ := e.storage.Exists(ctx, storage.ClipKey(id, gone, "vertical")); ok {
+		t.Fatal("the deleted clip's file is still stored")
+	}
+	if ok, _ := e.storage.Exists(ctx, storage.ClipKey(id, kept, "vertical")); !ok {
+		t.Fatal("the other clip's file was removed")
+	}
+	for _, path := range []string{"/assets/" + id + "/clips/" + gone, "/assets/" + id + "/clips/not-a-uuid", "/assets/" + domain.NewID() + "/clips/" + kept} {
+		if code := e.send(http.MethodDelete, path, "", nil); code != http.StatusNotFound {
+			t.Errorf("DELETE %s: %d, want 404", path, code)
+		}
+	}
+
+	// The video: everything recorded and stored goes.
+	if code := e.send(http.MethodDelete, "/assets/"+id, "", nil); code != http.StatusNoContent {
+		t.Fatalf("delete the video: %d", code)
+	}
+	if code := e.get("/assets/"+id, nil); code != http.StatusNotFound {
+		t.Fatalf("GET after deleting: %d, want 404", code)
+	}
+	for _, k := range []string{storage.SourceKey(id), storage.ThumbnailKey(id), storage.ClipKey(id, kept, "vertical")} {
+		if ok, _ := e.storage.Exists(ctx, k); ok {
+			t.Errorf("%s is still stored", k)
+		}
+	}
+	if code := e.send(http.MethodDelete, "/assets/"+id, "", nil); code != http.StatusNotFound {
+		t.Fatalf("delete twice: %d, want 404", code)
+	}
+}

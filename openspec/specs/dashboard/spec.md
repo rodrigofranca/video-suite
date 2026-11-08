@@ -145,3 +145,10 @@ Quando o vídeo tem cortes, **Run again** no job de cortes SHALL primeiro mostra
 #### Scenario: Um corte editado entre três
 - **WHEN** o vídeo tem três cortes, um deles editado, e o usuário toca **Run again** em **Clips**
 - **THEN** o job SHALL mostrar `This replaces the other 2 clips with new suggestions. The 1 clip you edited stays.` e só rodar depois de **Yes, run again**
+
+### Requirement: Apagar pelo dashboard
+A página do vídeo SHALL ter, no fim, **Delete video**, e cada corte SHALL ter **🗑 Delete**. Os dois SHALL pedir confirmação no próprio lugar, dizendo o que será apagado e que não dá para desfazer, e SHALL ficar desativados enquanto algum job do vídeo roda. Depois de apagar o vídeo, o painel SHALL voltar para a lista.
+
+#### Scenario: Apagar o vídeo
+- **WHEN** o usuário toca **Delete video** e confirma com **Yes, delete the video**
+- **THEN** o painel SHALL mostrar a lista de vídeos, sem esse vídeo

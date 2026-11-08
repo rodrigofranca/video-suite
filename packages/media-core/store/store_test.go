@@ -370,3 +370,77 @@ func TestTranscripts(t *testing.T) {
 		t.Fatalf("GetTranscript = %+v (%s), %v", got, got.Segments, err)
 	}
 }
+
+func TestDeleteAssetIfIdle(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+	if err := s.DeleteAssetIfIdle(ctx, asset.ID); !errors.Is(err, ErrBusy) {
+		t.Fatalf("with pending jobs: %v, want ErrBusy", err)
+	}
+	for _, j := range jobs {
+		s.StartJob(ctx, j.ID)
+		s.FinishJob(ctx, j.ID, nil)
+	}
+	if err := s.DeleteAssetIfIdle(ctx, asset.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetAsset(ctx, asset.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after deleting: %v, want ErrNotFound", err)
+	}
+	if list, _ := s.ListJobs(ctx, asset.ID); len(list) != 0 {
+		t.Fatalf("jobs left: %d", len(list))
+	}
+	if err := s.DeleteAssetIfIdle(ctx, asset.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("twice: %v, want ErrNotFound", err)
+	}
+
+	// An upload in progress waits; one that stopped over an hour ago can go.
+	uploading := domain.Asset{ID: domain.NewID(), Filename: "big.mp4", Status: domain.AssetUploading}
+	s.CreateAsset(ctx, uploading)
+	t.Cleanup(func() { s.DeleteAsset(context.Background(), uploading.ID) })
+	if err := s.DeleteAssetIfIdle(ctx, uploading.ID); !errors.Is(err, ErrBusy) {
+		t.Fatalf("while uploading: %v, want ErrBusy", err)
+	}
+	s.db.Exec(ctx, `UPDATE media_assets SET updated_at = NOW() - INTERVAL '2 hours' WHERE id = $1`, uploading.ID)
+	if err := s.DeleteAssetIfIdle(ctx, uploading.ID); err != nil {
+		t.Fatalf("abandoned upload: %v", err)
+	}
+}
+
+func TestDeleteClipIfIdle(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+	for _, j := range jobs {
+		s.StartJob(ctx, j.ID)
+		s.FinishJob(ctx, j.ID, nil)
+	}
+	gone, kept := domain.NewID(), domain.NewID()
+	s.ReplaceClips(ctx, asset.ID, []domain.Clip{
+		{ID: gone, JobID: jobs[0].ID, Start: 0, End: 20, Title: "A", Score: 5, Rank: 1, Model: "m"},
+		{ID: kept, JobID: jobs[0].ID, Start: 30, End: 50, Title: "B", Score: 4, Rank: 2, Model: "m"},
+	})
+	for _, id := range []string{gone, kept} {
+		s.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: asset.ID, JobID: jobs[0].ID, Type: domain.ArtifactClip,
+			StorageKey: "k/" + id, MetadataJSON: []byte(`{"clipId":"` + id + `"}`)})
+	}
+	if err := s.DeleteClipIfIdle(ctx, asset.ID, gone); err != nil {
+		t.Fatal(err)
+	}
+	clips, _ := s.ListClips(ctx, asset.ID)
+	arts, _ := s.ListArtifacts(ctx, asset.ID)
+	if len(clips) != 1 || clips[0].ID != kept || len(arts) != 1 || !strings.Contains(string(arts[0].MetadataJSON), kept) {
+		t.Fatalf("left: %d clips, %d artifacts", len(clips), len(arts))
+	}
+	if err := s.DeleteClipIfIdle(ctx, asset.ID, gone); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("twice: %v, want ErrNotFound", err)
+	}
+	if err := s.DeleteClipIfIdle(ctx, domain.NewID(), kept); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("another asset's clip: %v, want ErrNotFound", err)
+	}
+	s.CreateJobIfIdle(ctx, domain.Job{ID: domain.NewID(), AssetID: asset.ID, Type: "export-clip", InputJSON: []byte("{}"), CreatedAt: time.Now()}, "")
+	if err := s.DeleteClipIfIdle(ctx, asset.ID, kept); !errors.Is(err, ErrBusy) {
+		t.Fatalf("while a job is pending: %v, want ErrBusy", err)
+	}
+}
