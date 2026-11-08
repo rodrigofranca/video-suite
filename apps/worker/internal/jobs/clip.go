@@ -35,8 +35,10 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	}
 	if !domain.IsID(in.ClipID) || !slices.Contains(jobcontracts.ClipFormats, in.Format) ||
 		in.OutputKey != storage.ClipKey(in.AssetID, in.ClipID, in.Format) ||
-		(in.CaptionStyle != "" && !slices.Contains(jobcontracts.CaptionStyles, in.CaptionStyle)) {
-		return fmt.Errorf("invalid input: clip_id %q, format %q, caption_style %q, output_key %q", in.ClipID, in.Format, in.CaptionStyle, in.OutputKey)
+		(in.CaptionStyle != "" && !slices.Contains(jobcontracts.CaptionStyles, in.CaptionStyle)) ||
+		(in.CaptionLanguage != "" && !slices.Contains(jobcontracts.CaptionLanguages, in.CaptionLanguage)) {
+		return fmt.Errorf("invalid input: clip_id %q, format %q, caption_style %q, caption_language %q, output_key %q",
+			in.ClipID, in.Format, in.CaptionStyle, in.CaptionLanguage, in.OutputKey)
 	}
 	clip, err := m.Store.GetClip(ctx, in.ClipID)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && clip.AssetID != in.AssetID) {
@@ -106,7 +108,7 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	job.Log.Info("uploaded clip", "key", in.OutputKey)
 	meta, _ := json.Marshal(map[string]any{
 		"clipId": clip.ID, "format": in.Format, "framing": framing,
-		"captions": subs.Path != "", "captionStyle": subs.Style, "language": subs.Language,
+		"captions": subs.Path != "", "captionStyle": subs.Style, "language": subs.Language, "translatedFrom": subs.TranslatedFrom,
 		"captionPosition": subs.Position, "captionColor": subs.Color, "captionCaps": subs.Caps,
 		"start": clip.Start, "end": clip.End, "durationSeconds": duration,
 		"width": width, "height": height, "sizeBytes": info.Size(),
@@ -123,18 +125,51 @@ const (
 	phraseWordsOriginal, phraseCharsOriginal = 7, 40
 )
 
-// clipCaptions writes the clip's captions as an ASS file sized for the clip,
-// in the requested style: word by word from the transcript's word timings,
-// or the subtitle lines. Word by word falls back to lines for transcripts
-// made before word timings were saved. It returns the file, the language and
-// the style used, or an empty path, not an error, when there is nothing to
-// burn in.
 // burned is what was burned into a clip: the ASS file and the choices it
 // ended up with, after falling back to line captions and to the defaults.
 type burned struct {
-	Path, Language, Style string
-	Position, Color       string // Color is empty for styles without an accent
-	Caps                  bool
+	Path, Language  string
+	TranslatedFrom  string // the transcript's language, for translated captions
+	Style           string
+	Position, Color string // Color is empty for styles without an accent
+	Caps            bool
+}
+
+// speech is what captions say: the transcript's words, or its translation's
+// (docs/adr/0029).
+type speech struct {
+	Words    []byte // JSON words, as in transcripts.words; nil without a transcript
+	Language string
+	From     string // the transcript's language, for a translation
+}
+
+// captionSpeech returns the words captions in language show: the
+// transcript's when language is empty (or the transcript's own), else its
+// translation, which the translate-transcript job wrote before this export.
+func (m Media) captionSpeech(ctx context.Context, assetID, language string) (speech, error) {
+	if language != "" {
+		tr, err := m.Store.GetTranslation(ctx, assetID, language)
+		if err == nil {
+			return speech{tr.Words, tr.Language, tr.SourceLanguage}, nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return speech{}, err
+		}
+	}
+	tr, err := m.Store.GetTranscript(ctx, assetID)
+	switch {
+	case errors.Is(err, store.ErrNotFound) && language == "":
+		return speech{}, nil // line captions may still exist
+	case errors.Is(err, store.ErrNotFound):
+		return speech{}, fmt.Errorf("there is no transcript to translate into %s", language)
+	case err != nil:
+		return speech{}, err
+	case language != "" && language != tr.Language:
+		// The translate-transcript job before this one failed, or a new
+		// transcript replaced the translation since.
+		return speech{}, fmt.Errorf("there is no %s translation of the transcript: the translation failed (see the translate-transcript job) or the transcript was made again since; export again to translate it", language)
+	}
+	return speech{tr.Words, tr.Language, ""}, nil
 }
 
 // accentOf is each style's own accent color; lines and one-word have none.
@@ -145,9 +180,9 @@ var accentOf = map[string]string{
 }
 
 // clipCaptions writes the clip's captions in the chosen style, position,
-// color and case (docs/adr/0021, docs/adr/0025). Word styles fall back to
-// lines when the transcript has no word timings; the path is empty when
-// there is nothing to burn.
+// color, case and language (docs/adr/0021, 0025, 0029). Word styles fall
+// back to lines when the transcript has no word timings; the path is empty
+// when there is nothing to burn.
 func (m Media) clipCaptions(ctx context.Context, job Job, in jobcontracts.ExportClipInput, clip domain.Clip, width, height int, dir string) (burned, error) {
 	style := in.CaptionStyle
 	if style == "" {
@@ -171,39 +206,39 @@ func (m Media) clipCaptions(ctx context.Context, job Job, in jobcontracts.Export
 		}
 		return captions.Options{Position: position, Color: color, Caps: caps}, color
 	}
+	said, err := m.captionSpeech(ctx, in.AssetID, in.CaptionLanguage)
+	if err != nil {
+		return burned{}, err
+	}
 	if style != jobcontracts.CaptionStyleLines {
 		opts, color := options(style)
-		path, language, err := m.wordCaptions(ctx, job, in.AssetID, style, clip, width, height, dir, opts)
+		path, err := m.wordCaptions(job, said, style, clip, width, height, dir, opts)
 		if err != nil || path != "" {
-			return burned{path, language, style, position, color, opts.Caps}, err
+			return burned{path, said.Language, said.From, style, position, color, opts.Caps}, err
 		}
 	}
 	opts, _ := options(jobcontracts.CaptionStyleLines)
-	path, language, err := m.lineCaptions(ctx, job, in.AssetID, clip, width, height, dir, opts)
+	path, language, err := m.lineCaptions(ctx, job, in.AssetID, said, clip, width, height, dir, opts)
 	if path == "" {
 		return burned{}, err
 	}
-	return burned{path, language, jobcontracts.CaptionStyleLines, position, "", opts.Caps}, err
+	return burned{path, language, said.From, jobcontracts.CaptionStyleLines, position, "", opts.Caps}, err
 }
 
-// wordCaptions writes captions that follow the transcript's word timings,
-// in one of the word styles. It returns an empty path when the transcript has
-// no word timings for the clip, so the caller can fall back to line captions.
-func (m Media) wordCaptions(ctx context.Context, job Job, assetID, style string, clip domain.Clip, width, height int, dir string, opts captions.Options) (string, string, error) {
-	tr, err := m.Store.GetTranscript(ctx, assetID)
-	if errors.Is(err, store.ErrNotFound) {
-		return "", "", nil
+// wordCaptions writes captions that follow the words' timings, in one of
+// the word styles. It returns an empty path when there are no word timings
+// for the clip, so the caller can fall back to line captions.
+func (m Media) wordCaptions(job Job, said speech, style string, clip domain.Clip, width, height int, dir string, opts captions.Options) (string, error) {
+	if said.Words == nil {
+		return "", nil // no transcript
 	}
+	all, err := captions.ParseWords(said.Words)
 	if err != nil {
-		return "", "", err
-	}
-	all, err := captions.ParseWords(tr.Words)
-	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	if len(all) == 0 {
 		job.Log.Warn("this transcript has no word timings (it was made before they were saved); using line captions. Run the transcription again for the " + style + " style")
-		return "", "", nil
+		return "", nil
 	}
 	maxWords, maxChars := phraseWordsOriginal, phraseCharsOriginal
 	if height > width {
@@ -212,7 +247,7 @@ func (m Media) wordCaptions(ctx context.Context, job Job, assetID, style string,
 	words := captions.CutWords(all, clip.Start, clip.End)
 	phrases := captions.Phrases(words, maxWords, maxChars)
 	if len(phrases) == 0 {
-		return "", "", nil
+		return "", nil
 	}
 	path := filepath.Join(dir, "captions.ass")
 	err = writeFile(path, func(f *os.File) error {
@@ -229,14 +264,24 @@ func (m Media) wordCaptions(ctx context.Context, job Job, assetID, style string,
 		}
 	})
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	job.Log.Info(fmt.Sprintf("burning in %s captions: %d words in %d phrases (%s)%s", style, len(words), len(phrases), tr.Language, describe(opts)))
-	return path, tr.Language, nil
+	job.Log.Info(fmt.Sprintf("burning in %s captions: %d words in %d phrases (%s)%s", style, len(words), len(phrases), said.describe(), describe(opts)))
+	return path, nil
 }
 
-func (m Media) lineCaptions(ctx context.Context, job Job, assetID string, clip domain.Clip, width, height int, dir string, opts captions.Options) (string, string, error) {
-	art, err := m.Store.LatestArtifact(ctx, assetID, domain.ArtifactSubtitles)
+// describe names the language for the log: "en", or "en, translated from pt".
+func (s speech) describe() string {
+	if s.From != "" {
+		return s.Language + ", translated from " + s.From
+	}
+	return s.Language
+}
+
+// lineCaptions writes the subtitle lines of the clip: the original
+// subtitles, or the translated ones for a translation.
+func (m Media) lineCaptions(ctx context.Context, job Job, assetID string, said speech, clip domain.Clip, width, height int, dir string, opts captions.Options) (string, string, error) {
+	art, meta, err := m.subtitlesFor(ctx, assetID, said)
 	if errors.Is(err, store.ErrNotFound) {
 		job.Log.Warn("no subtitles for this video; exporting without captions")
 		return "", "", nil
@@ -244,10 +289,6 @@ func (m Media) lineCaptions(ctx context.Context, job Job, assetID string, clip d
 	if err != nil {
 		return "", "", err
 	}
-	var meta struct {
-		Language string `json:"language"`
-	}
-	json.Unmarshal(art.MetadataJSON, &meta)
 
 	vttPath := filepath.Join(dir, "subtitles.vtt")
 	if err := m.Storage.DownloadFile(ctx, art.StorageKey, vttPath); err != nil {
@@ -278,8 +319,32 @@ func (m Media) lineCaptions(ctx context.Context, job Job, assetID string, clip d
 	}); err != nil {
 		return "", "", err
 	}
-	job.Log.Info(fmt.Sprintf("burning in %d line captions (%s)%s", len(cues), meta.Language, describe(opts)))
+	job.Log.Info(fmt.Sprintf("burning in %d line captions (%s)%s", len(cues), speech{Language: meta.Language, From: meta.TranslatedFrom}.describe(), describe(opts)))
 	return assPath, meta.Language, nil
+}
+
+type subtitlesMeta struct {
+	Language       string `json:"language"`
+	TranslatedFrom string `json:"translatedFrom"`
+}
+
+// subtitlesFor finds the newest subtitles file for the captions: the
+// original's, or for a translation the one in its language.
+func (m Media) subtitlesFor(ctx context.Context, assetID string, said speech) (domain.Artifact, subtitlesMeta, error) {
+	arts, err := m.Store.ListArtifacts(ctx, assetID)
+	if err != nil {
+		return domain.Artifact{}, subtitlesMeta{}, err
+	}
+	for i := len(arts) - 1; i >= 0; i-- { // arts are oldest first: look from the newest
+		var meta subtitlesMeta
+		if arts[i].Type != domain.ArtifactSubtitles || json.Unmarshal(arts[i].MetadataJSON, &meta) != nil {
+			continue
+		}
+		if said.From == "" && meta.TranslatedFrom == "" || said.From != "" && meta.TranslatedFrom != "" && meta.Language == said.Language {
+			return arts[i], meta, nil
+		}
+	}
+	return domain.Artifact{}, subtitlesMeta{}, store.ErrNotFound
 }
 
 // describe lists the caption choices that differ from the plain look, for the log.

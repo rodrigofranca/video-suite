@@ -55,7 +55,9 @@ func TestNextJobType(t *testing.T) {
 		JobTypeSuggestClips:      JobTypeTrackFaces,
 		JobTypeTrackFaces:        "",
 		JobTypeExportClip:        "", // on request, not in the pipeline
-		"unknown":                "",
+		// An export in another language waits for the translation.
+		JobTypeTranslateTranscript: JobTypeExportClip,
+		"unknown":                  "",
 	}
 	for in, want := range cases {
 		got, ok := NextJobType(in)

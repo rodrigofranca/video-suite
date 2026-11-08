@@ -378,7 +378,8 @@ func (s *Store) GetTechnicalMetadata(ctx context.Context, assetID string) (domai
 
 // ---- Transcripts ----
 
-// SaveTranscript stores an asset's transcript, replacing any earlier one.
+// SaveTranscript stores an asset's transcript, replacing any earlier one
+// and removing the translations of the earlier one.
 func (s *Store) SaveTranscript(ctx context.Context, t domain.Transcript) error {
 	segments, words := t.Segments, t.Words
 	if segments == nil {
@@ -387,15 +388,22 @@ func (s *Store) SaveTranscript(ctx context.Context, t domain.Transcript) error {
 	if words == nil {
 		words = []byte("[]")
 	}
-	_, err := s.db.Exec(ctx,
-		`INSERT INTO transcripts (id, asset_id, job_id, language, text, segments, words, model)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		 ON CONFLICT (asset_id) DO UPDATE
-		 SET id = EXCLUDED.id, job_id = EXCLUDED.job_id, language = EXCLUDED.language,
-		     text = EXCLUDED.text, segments = EXCLUDED.segments, words = EXCLUDED.words,
-		     model = EXCLUDED.model, created_at = NOW()`,
-		t.ID, t.AssetID, t.JobID, t.Language, t.Text, segments, words, t.Model)
-	return err
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`INSERT INTO transcripts (id, asset_id, job_id, language, text, segments, words, model)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			 ON CONFLICT (asset_id) DO UPDATE
+			 SET id = EXCLUDED.id, job_id = EXCLUDED.job_id, language = EXCLUDED.language,
+			     text = EXCLUDED.text, segments = EXCLUDED.segments, words = EXCLUDED.words,
+			     model = EXCLUDED.model, created_at = NOW()`,
+			t.ID, t.AssetID, t.JobID, t.Language, t.Text, segments, words, t.Model)
+		if err != nil {
+			return err
+		}
+		// Translations of the earlier transcript no longer match the speech.
+		_, err = tx.Exec(ctx, `DELETE FROM transcript_translations WHERE asset_id = $1`, t.AssetID)
+		return err
+	})
 }
 
 // GetTranscript returns an asset's transcript.
@@ -406,6 +414,53 @@ func (s *Store) GetTranscript(ctx context.Context, assetID string) (domain.Trans
 		 FROM transcripts WHERE asset_id = $1`, assetID).
 		Scan(&t.ID, &t.AssetID, &t.JobID, &t.Language, &t.Text, &t.Segments, &t.Words, &t.Model, &t.CreatedAt)
 	return t, notFound(err)
+}
+
+// ---- Translations ----
+
+// SaveTranslation stores a translation of an asset's transcript, replacing
+// an earlier one into the same language.
+func (s *Store) SaveTranslation(ctx context.Context, t domain.Translation) error {
+	segments, words := t.Segments, t.Words
+	if segments == nil {
+		segments = []byte("[]")
+	}
+	if words == nil {
+		words = []byte("[]")
+	}
+	_, err := s.db.Exec(ctx,
+		`INSERT INTO transcript_translations (id, asset_id, job_id, language, source_language, segments, words, model)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (asset_id, language) DO UPDATE
+		 SET id = EXCLUDED.id, job_id = EXCLUDED.job_id, source_language = EXCLUDED.source_language,
+		     segments = EXCLUDED.segments, words = EXCLUDED.words, model = EXCLUDED.model, created_at = NOW()`,
+		t.ID, t.AssetID, t.JobID, t.Language, t.SourceLanguage, segments, words, t.Model)
+	return err
+}
+
+// GetTranslation returns the translation of an asset's transcript into a language.
+func (s *Store) GetTranslation(ctx context.Context, assetID, language string) (domain.Translation, error) {
+	var t domain.Translation
+	err := s.db.QueryRow(ctx,
+		`SELECT id, asset_id, job_id, language, source_language, segments, words, model, created_at
+		 FROM transcript_translations WHERE asset_id = $1 AND language = $2`, assetID, language).
+		Scan(&t.ID, &t.AssetID, &t.JobID, &t.Language, &t.SourceLanguage, &t.Segments, &t.Words, &t.Model, &t.CreatedAt)
+	return t, notFound(err)
+}
+
+// TranslationLanguages lists the languages an asset's transcript has been
+// translated into, in alphabetical order.
+func (s *Store) TranslationLanguages(ctx context.Context, assetID string) ([]string, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT language FROM transcript_translations WHERE asset_id = $1 ORDER BY language`, assetID)
+	if err != nil {
+		return nil, err
+	}
+	languages, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if languages == nil {
+		languages = []string{}
+	}
+	return languages, err
 }
 
 // ---- Analyses ----

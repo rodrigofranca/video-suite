@@ -73,6 +73,32 @@ def test_last_job_does_not_chain(h):
     assert h.enqueued == []
 
 
+@pytest.mark.parametrize("fails", [False, True])
+def test_a_translation_queues_the_export_waiting_for_it(h, fails):
+    """Even after a failed translation: the export then fails with the reason."""
+    ids = {}
+    for i, (job_type, payload) in enumerate(
+        [(contracts.JOB_TRANSLATE_TRANSCRIPT, '{"language": "en"}'), (contracts.JOB_EXPORT_CLIP, '{"format": "vertical"}')]
+    ):
+        ids[job_type] = h.store.conn.execute(
+            """INSERT INTO processing_jobs (id, asset_id, type, input_json, status, created_at)
+               VALUES (gen_random_uuid(), %s, %s, %s, 'pending', NOW() + %s * INTERVAL '1 ms') RETURNING id::text""",
+            (h.asset["id"], job_type, payload, i),
+        ).fetchone()[0]
+
+    def translate(ctx, payload):
+        if fails:
+            raise RuntimeError("gateway down")
+
+    h.runner.handlers[contracts.JOB_TRANSLATE_TRANSCRIPT] = translate
+    job = h.store.get_job(ids[contracts.JOB_TRANSLATE_TRANSCRIPT])
+    try:
+        h.runner.process(contracts.Message(job.id, job.type, job.input_json))
+    except RuntimeError:
+        assert fails
+    assert [(m.job_id, m.stream) for m in h.enqueued] == [(ids[contracts.JOB_EXPORT_CLIP], contracts.STREAM_MEDIA)]
+
+
 def test_failure_is_saved_and_reraised(h):
     def boom(ctx):
         raise RuntimeError("model crashed")

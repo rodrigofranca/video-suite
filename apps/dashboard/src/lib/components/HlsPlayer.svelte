@@ -116,7 +116,7 @@
 	data-testid="player"
 >
 	{#each subtitles as sub, i (sub.url)}
-		<track kind="subtitles" src={sub.url} srclang={sub.language} label={languageName(sub.language)} default={i === 0} />
+		<track kind="subtitles" src={sub.url} srclang={sub.language} label={languageName(sub.language) + (sub.translatedFrom ? ' (translated)' : '')} default={i === 0} />
 	{/each}
 </video>
 {#if levels.length > 1}

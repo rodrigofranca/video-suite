@@ -1,5 +1,6 @@
 """Asking the language model for one JSON object and checking the answer.
-Shared by the jobs that use the model (analyze-transcript, suggest-clips).
+Shared by the jobs that use the model (analyze-transcript, suggest-clips,
+translate-transcript).
 
 The answer is checked, not trusted: the JSON is found even with code fences,
 reasoning blocks or a sentence around it, and when the job's parser rejects
@@ -30,11 +31,11 @@ class InvalidAnswer(ValueError):
 
 
 def ask(
-    client: ChatClient, ctx: JobContext, messages: list[dict], parse: Callable[[str], T]
+    client: ChatClient, ctx: JobContext, messages: list[dict], parse: Callable[[str], T], max_tokens: int = MAX_TOKENS
 ) -> tuple[T, Completion]:
     """Sends messages and parses the answer with parse, which raises
     InvalidAnswer when the answer cannot be used. Asks for a correction once."""
-    completion = _complete(client, ctx, messages)
+    completion = _complete(client, ctx, messages, max_tokens)
     try:
         return parse(completion.text), completion
     except InvalidAnswer as e:
@@ -43,17 +44,17 @@ def ask(
             {"role": "assistant", "content": completion.text},
             {"role": "user", "content": REPAIR_PROMPT.format(error=e)},
         ]
-    completion = _complete(client, ctx, messages)
+    completion = _complete(client, ctx, messages, max_tokens)
     try:
         return parse(completion.text), completion
     except InvalidAnswer as e:
         raise InvalidAnswer(f"the model's answer could not be used: {e}") from None
 
 
-def _complete(client: ChatClient, ctx: JobContext, messages: list[dict]) -> Completion:
-    completion = client.complete(messages, max_tokens=MAX_TOKENS, sleep=ctx.stop.wait, check=ctx.check)
+def _complete(client: ChatClient, ctx: JobContext, messages: list[dict], max_tokens: int) -> Completion:
+    completion = client.complete(messages, max_tokens=max_tokens, sleep=ctx.stop.wait, check=ctx.check)
     if not completion.text.strip() and completion.finish_reason == "length":
-        raise InvalidAnswer(f"the model used all {MAX_TOKENS} output tokens without answering")
+        raise InvalidAnswer(f"the model used all {max_tokens} output tokens without answering")
     return completion
 
 

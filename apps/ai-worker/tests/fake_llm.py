@@ -1,8 +1,9 @@
 """A fake OpenAI-compatible chat completions server, for tests.
 
 Tests queue answers with `answer()` and read what the client sent in
-`requests`. Run as a script, it answers every analysis prompt with a
-deterministic summary built from the transcript lines it receives, which is
+`requests`. Run as a script, it answers every prompt with a deterministic
+answer built from the transcript lines it receives (a summary, clips, or
+lines marked with the language they were to be translated into), which is
 enough to try the whole pipeline without a real model:
 
     python tests/fake_llm.py --port 8000
@@ -117,11 +118,25 @@ def demo_clips(prompt: str) -> dict:
     return {"clips": clips}
 
 
+_TARGET = re.compile(r"^Translate these subtitle lines of a video from .+? into (.+)\.$", re.MULTILINE)
+_NUMBERED = re.compile(r"^\d+\. (.+)$", re.MULTILINE)
+
+
+def demo_translation(prompt: str) -> dict:
+    """Each line marked with the target language, e.g. "(English) Olá"."""
+    target = _TARGET.search(prompt).group(1)
+    lines = _NUMBERED.findall(prompt.split("\nLines:\n", 1)[1])
+    return {"lines": [f"({target}) {line}" for line in lines]}
+
+
 def demo_answer(body: dict) -> tuple[int, dict, None]:
-    """A plausible answer built from the prompt's transcript lines: clips or an analysis."""
+    """A plausible answer built from the prompt's transcript lines: clips,
+    a translation or an analysis."""
     prompt = next((m["content"] for m in body.get("messages", []) if m.get("role") == "user"), "")
     if "standalone clips" in prompt:
         return 200, completion(json.dumps(demo_clips(prompt)), "fake-model"), None
+    if prompt.startswith("Translate these subtitle lines"):
+        return 200, completion(json.dumps(demo_translation(prompt), ensure_ascii=False), "fake-model"), None
     lines = _LINE.findall(prompt)
     text = " ".join(t for _, t in lines)
     sentences = re.split(r"(?<=[.!?])\s+", text)

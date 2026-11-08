@@ -770,6 +770,142 @@ func TestClips(t *testing.T) {
 	}
 }
 
+// Captions in another language: the first export into it translates the
+// transcript first, later ones use the translation (docs/adr/0029).
+func TestExportWithTranslatedCaptions(t *testing.T) {
+	e := newEnv(t, 0)
+	rec := e.upload("aula.mp4", fakeMP4(1024))
+	var created struct{ AssetID string }
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	e.cleanupAsset(created.AssetID)
+	id := created.AssetID
+	ctx := context.Background()
+
+	clipID := domain.NewID()
+	suggest := e.jobOfType(id, jobcontracts.JobTypeSuggestClips)
+	if err := e.store.ReplaceClips(ctx, id, []domain.Clip{
+		{ID: clipID, JobID: suggest.ID, Start: 12, End: 47.5, Title: "Best", Score: 9, Rank: 1, Model: "m"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	jobs, _ := e.store.ListJobs(ctx, id)
+	for _, j := range jobs {
+		e.store.FinishJob(ctx, j.ID, nil)
+	}
+	exportPath := "/assets/" + id + "/clips/" + clipID + "/exports"
+	if code := e.post(exportPath, `{"format": "vertical", "captionLanguage": "en"}`, nil); code != http.StatusConflict {
+		t.Fatalf("without a transcript: %d, want 409", code)
+	}
+	transcribe := e.jobOfType(id, jobcontracts.JobTypeTranscribeAudio)
+	e.store.SaveTranscript(ctx, domain.Transcript{ID: domain.NewID(), AssetID: id, JobID: transcribe.ID, Language: "pt", Text: "oi", Model: "base"})
+	if code := e.post(exportPath, `{"format": "vertical", "captionLanguage": "ja"}`, nil); code != http.StatusBadRequest {
+		t.Fatalf("a language not on offer: %d, want 400", code)
+	}
+
+	// The transcript's own language: no translation.
+	e.enqueued = nil
+	var job struct{ ID, Type, Status string }
+	if code := e.post(exportPath, `{"format": "vertical", "captionLanguage": "pt"}`, &job); code != http.StatusAccepted {
+		t.Fatalf("export in the transcript's language: %d", code)
+	}
+	in, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
+	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeExportClip || in.CaptionLanguage != "" {
+		t.Fatalf("enqueued %+v, caption language %q", e.enqueued, in.CaptionLanguage)
+	}
+	e.store.FinishJob(ctx, job.ID, nil)
+
+	// A new language: the translation is queued, the export waits for it.
+	e.enqueued = nil
+	if code := e.post(exportPath, `{"format": "vertical", "captionLanguage": "en", "captionStyle": "karaoke"}`, &job); code != http.StatusAccepted ||
+		job.Type != jobcontracts.JobTypeExportClip || job.Status != "pending" {
+		t.Fatalf("export in English: %d %+v", code, job)
+	}
+	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeTranslateTranscript || e.enqueued[0].Stream() != jobcontracts.StreamAIJobs {
+		t.Fatalf("enqueued = %+v, want only the translation, on the AI stream", e.enqueued)
+	}
+	tin, _ := jobcontracts.Decode[jobcontracts.TranslateTranscriptInput](e.enqueued[0])
+	waiting, _ := e.store.GetJob(ctx, job.ID)
+	win, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](jobcontracts.Message{Payload: waiting.InputJSON})
+	if tin.AssetID != id || tin.Language != "en" || win.CaptionLanguage != "en" || win.CaptionStyle != "karaoke" {
+		t.Fatalf("translation %+v, export %+v", tin, win)
+	}
+	var list struct {
+		TranscriptLanguage string
+		Translations       []string
+		Clips              []struct {
+			Exports []struct{ Format, Status, CaptionLanguage, TranslatedFrom string }
+		}
+	}
+	e.get("/assets/"+id+"/clips", &list)
+	if ex := list.Clips[0].Exports; list.TranscriptLanguage != "pt" || len(list.Translations) != 0 ||
+		len(ex) != 1 || ex[0].Status != "pending" || ex[0].CaptionLanguage != "en" {
+		t.Fatalf("while translating: %+v", list)
+	}
+	if code := e.post(exportPath, `{"format": "original"}`, nil); code != http.StatusConflict {
+		t.Fatalf("another export while translating: %d, want 409", code)
+	}
+
+	// The workers finish: a translation, its subtitles and the clip.
+	e.store.FinishJob(ctx, e.enqueued[0].JobID, nil)
+	e.store.FinishJob(ctx, job.ID, nil)
+	e.store.SaveTranslation(ctx, domain.Translation{ID: domain.NewID(), AssetID: id, JobID: e.enqueued[0].JobID, Language: "en", SourceLanguage: "pt", Model: "m"})
+	for _, sub := range []struct{ key, meta string }{
+		{storage.SubtitlesKey(id, "pt"), `{"language":"pt"}`},
+		{storage.SubtitlesKey(id, "en"), `{"language":"en","translatedFrom":"pt"}`},
+	} {
+		e.store.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: id, JobID: transcribe.ID, Type: domain.ArtifactSubtitles,
+			StorageKey: sub.key, MetadataJSON: []byte(sub.meta)})
+	}
+	e.store.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: id, JobID: job.ID, Type: domain.ArtifactClip,
+		StorageKey:   storage.ClipKey(id, clipID, "vertical"),
+		MetadataJSON: []byte(`{"clipId":"` + clipID + `","format":"vertical","captions":true,"captionStyle":"karaoke","language":"en","translatedFrom":"pt","start":12,"end":47.5}`)})
+	e.get("/assets/"+id+"/clips", &list)
+	if ex := list.Clips[0].Exports; strings.Join(list.Translations, ",") != "en" || ex[0].CaptionLanguage != "en" || ex[0].TranslatedFrom != "pt" {
+		t.Fatalf("when done: %+v", list)
+	}
+	rec = httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/clips/"+clipID+"/download?format=vertical", nil))
+	if loc := rec.Header().Get("Location"); rec.Code != http.StatusFound || !strings.Contains(loc, "aula-clip-1-vertical-en.mp4") {
+		t.Fatalf("download: %d %s", rec.Code, loc)
+	}
+	// The player gets the original subtitles first, then the translation.
+	var detail struct {
+		Subtitles []struct{ Language, TranslatedFrom string }
+	}
+	e.get("/assets/"+id, &detail)
+	if len(detail.Subtitles) != 2 || detail.Subtitles[0].Language != "pt" || detail.Subtitles[0].TranslatedFrom != "" ||
+		detail.Subtitles[1].Language != "en" || detail.Subtitles[1].TranslatedFrom != "pt" {
+		t.Fatalf("subtitles = %+v", detail.Subtitles)
+	}
+
+	// The translation exists: the export goes straight to the media worker.
+	e.enqueued = nil
+	if code := e.post(exportPath, `{"format": "original", "captionLanguage": "en"}`, &job); code != http.StatusAccepted {
+		t.Fatalf("second export in English: %d", code)
+	}
+	in, _ = jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
+	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeExportClip || in.CaptionLanguage != "en" {
+		t.Fatalf("enqueued %+v, caption language %q", e.enqueued, in.CaptionLanguage)
+	}
+	e.store.FinishJob(ctx, job.ID, nil)
+	// Without captions, the language does not matter.
+	e.enqueued = nil
+	e.post(exportPath, `{"format": "original", "captions": false, "captionLanguage": "es"}`, &job)
+	in, _ = jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
+	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeExportClip || in.CaptionLanguage != "" {
+		t.Fatalf("without captions: enqueued %+v, caption language %q", e.enqueued, in.CaptionLanguage)
+	}
+	e.store.FinishJob(ctx, job.ID, nil)
+
+	// A new transcript: the translation and its subtitles are gone.
+	e.store.SaveTranscript(ctx, domain.Transcript{ID: domain.NewID(), AssetID: id, JobID: transcribe.ID, Language: "pt", Text: "oi de novo", Model: "base"})
+	e.get("/assets/"+id, &detail)
+	e.get("/assets/"+id+"/clips", &list)
+	if len(detail.Subtitles) != 1 || detail.Subtitles[0].Language != "pt" || len(list.Translations) != 0 {
+		t.Fatalf("after a new transcript: subtitles %+v, translations %v", detail.Subtitles, list.Translations)
+	}
+}
+
 func TestEditClip(t *testing.T) {
 	e := newEnv(t, 0)
 	rec := e.upload("talk.mp4", fakeMP4(1024))

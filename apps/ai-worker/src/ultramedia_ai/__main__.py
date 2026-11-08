@@ -21,6 +21,7 @@ from .runner import Runner
 from .storage import Storage
 from .store import Store
 from .transcribe import Transcriber
+from .translate import Translator
 
 
 def main() -> int:
@@ -84,7 +85,7 @@ def main() -> int:
         llm = ChatClient(cfg.llm_base_url, cfg.llm_api_key, cfg.llm_model, timeout=cfg.llm_timeout_seconds)
         check_gateway(llm, log)
     else:
-        log.warning("no language model configured (LLM_BASE_URL): analysis and clip jobs will fail")
+        log.warning("no language model configured (LLM_BASE_URL): analysis, clip and translation jobs will fail")
 
     def enqueue(msg: contracts.Message) -> None:
         client.xadd(msg.stream, msg.values())
@@ -94,6 +95,7 @@ def main() -> int:
         contracts.JOB_ANALYZE_TRANSCRIPT: Analyzer(cfg, store, llm, log),
         contracts.JOB_SUGGEST_CLIPS: ClipSuggester(cfg, store, llm, log),
         contracts.JOB_TRACK_FACES: faces,
+        contracts.JOB_TRANSLATE_TRANSCRIPT: Translator(cfg, storage, store, llm, log),
     }
     runner = Runner(store, handlers, enqueue, log, stop, cfg.job_timeout_seconds)
     consumer = Consumer(client, runner.process, log, cfg.worker_name, stop)

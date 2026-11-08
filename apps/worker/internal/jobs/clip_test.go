@@ -295,6 +295,82 @@ func TestExportClipCaptionStyles(t *testing.T) {
 	}
 }
 
+// Captions in another language come from the transcript's translation
+// (docs/adr/0029); without one, the export fails and says why.
+func TestExportClipTranslatedCaptions(t *testing.T) {
+	f := newFixtureWith(t, func(path string) { grayVideo(t, path) })
+	f.jobs[jobcontracts.JobTypeExportClip] = f.jobs[jobcontracts.JobTypeSuggestClips]
+	clip := f.addClip(0, 5, clipVTT)
+	f.saveWords(`[{"start":1.0,"end":1.4,"word":"These"},{"start":1.5,"end":1.9,"word":"words"},{"start":2.0,"end":2.4,"word":"are"},` +
+		`{"start":2.5,"end":2.9,"word":"burned"},{"start":3.0,"end":3.3,"word":"into"},{"start":3.4,"end":3.6,"word":"the"},{"start":3.7,"end":4.4,"word":"picture."}]`)
+	err := f.st.SaveTranslation(f.ctx, domain.Translation{ID: domain.NewID(), AssetID: f.asset, JobID: f.jobs[jobcontracts.JobTypeSuggestClips].ID,
+		Language: "es", SourceLanguage: "en", Model: "test",
+		Segments: []byte(`[{"start":1.0,"end":4.4,"text":"Estas palabras quedan en la imagen."}]`),
+		Words: []byte(`[{"start":1.0,"end":1.5,"word":"Estas"},{"start":1.5,"end":2.4,"word":"palabras"},{"start":2.5,"end":2.9,"word":"quedan"},` +
+			`{"start":3.0,"end":3.3,"word":"en"},{"start":3.4,"end":3.6,"word":"la"},{"start":3.7,"end":4.4,"word":"imagen."}]`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The translated subtitles are newer than the original ones.
+	esKey := storage.SubtitlesKey(f.asset, "es")
+	if err := f.files.Upload(f.ctx, esKey, strings.NewReader("WEBVTT\n\n00:00:01.000 --> 00:00:04.400\nEstas palabras quedan en la imagen.\n"), "text/vtt"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.files.Delete(f.ctx, esKey) })
+	f.st.CreateArtifact(f.ctx, domain.Artifact{ID: domain.NewID(), AssetID: f.asset, JobID: f.jobs[jobcontracts.JobTypeSuggestClips].ID,
+		Type: domain.ArtifactSubtitles, StorageKey: esKey, MetadataJSON: []byte(`{"language":"es","translatedFrom":"en"}`)})
+
+	key := storage.ClipKey(f.asset, clip.ID, jobcontracts.ClipFormatVertical)
+	t.Cleanup(func() { f.files.Delete(f.ctx, key) })
+	for _, tc := range []struct {
+		style, language, log, translatedFrom string
+	}{
+		{"", "es", "burning in highlight captions: 6 words in 2 phrases (es, translated from en)", "en"},
+		{jobcontracts.CaptionStyleLines, "es", "burning in 2 line captions (es, translated from en)", "en"}, // one line, split for 9:16,
+		// The original, though the translated subtitles are newer.
+		{jobcontracts.CaptionStyleLines, "", "burning in 2 line captions (en)", ""},
+		// The transcript's own language is the original.
+		{jobcontracts.CaptionStyleKaraoke, "en", "burning in karaoke captions: 7 words in 2 phrases (en)", ""},
+	} {
+		f.logs.Reset()
+		err := f.media.ExportClip(f.ctx, f.job(jobcontracts.JobTypeExportClip), jobcontracts.ExportClipInput{
+			AssetID: f.asset, ClipID: clip.ID, StorageKey: f.src, Format: jobcontracts.ClipFormatVertical, Captions: true,
+			CaptionStyle: tc.style, CaptionLanguage: tc.language, OutputKey: key,
+		})
+		if err != nil {
+			t.Fatalf("%s %q: %v\nlogs:\n%s", tc.style, tc.language, err, f.logs.String())
+		}
+		if !strings.Contains(f.logs.String(), tc.log) {
+			t.Errorf("%s %q: logs miss %q:\n%s", tc.style, tc.language, tc.log, f.logs.String())
+		}
+		arts, _ := f.st.ListArtifacts(f.ctx, f.asset)
+		var meta struct{ Language, TranslatedFrom string }
+		json.Unmarshal(arts[len(arts)-1].MetadataJSON, &meta)
+		wantLanguage := tc.language
+		if wantLanguage == "" {
+			wantLanguage = "en"
+		}
+		if meta.Language != wantLanguage || meta.TranslatedFrom != tc.translatedFrom {
+			t.Errorf("%s %q: file metadata says %+v", tc.style, tc.language, meta)
+		}
+	}
+
+	err = f.media.ExportClip(f.ctx, f.job(jobcontracts.JobTypeExportClip), jobcontracts.ExportClipInput{
+		AssetID: f.asset, ClipID: clip.ID, StorageKey: f.src, Format: jobcontracts.ClipFormatVertical, Captions: true,
+		CaptionLanguage: "fr", OutputKey: key,
+	})
+	if err == nil || !strings.Contains(err.Error(), "no fr translation of the transcript") {
+		t.Errorf("without a translation: err = %v", err)
+	}
+	err = f.media.ExportClip(f.ctx, f.job(jobcontracts.JobTypeExportClip), jobcontracts.ExportClipInput{
+		AssetID: f.asset, ClipID: clip.ID, StorageKey: f.src, Format: jobcontracts.ClipFormatVertical, Captions: true,
+		CaptionLanguage: "ja", OutputKey: key,
+	})
+	if err == nil || !strings.Contains(err.Error(), `caption_language "ja"`) {
+		t.Errorf("an unknown language: err = %v", err)
+	}
+}
+
 // count counts the pixels of rows [from, to) of the frame at second at,
 // scaled to 216x384, that match a color.
 func count(t *testing.T, path string, at float64, from, to int, match func(r, g, b byte) bool) int {

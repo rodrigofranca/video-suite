@@ -99,8 +99,11 @@ func TestClipFilename(t *testing.T) {
 		"😀.mp4":               "video-clip-2-vertical.mp4",
 		"aula_01-intro.MP4":   "aula_01-intro-clip-2-vertical.mp4",
 	} {
-		if got := clipFilename(name, 2, "vertical"); got != want {
+		if got := clipFilename(name, 2, "vertical", false, "pt"); got != want {
 			t.Errorf("clipFilename(%q) = %q, want %q", name, got, want)
 		}
+	}
+	if got := clipFilename("aula.mp4", 1, "original", true, "en"); got != "aula-clip-1-original-en.mp4" {
+		t.Errorf("with translated captions: %q", got)
 	}
 }

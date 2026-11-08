@@ -64,6 +64,11 @@ type clipExportDTO struct {
 	CaptionPosition string `json:"captionPosition,omitempty"`
 	CaptionColor    string `json:"captionColor,omitempty"`
 	CaptionCaps     bool   `json:"captionCaps,omitempty"`
+	// CaptionLanguage is the language of the captions: of the file once it
+	// is ready, the one asked for before. TranslatedFrom is the transcript's
+	// language when the captions were translated (docs/adr/0029).
+	CaptionLanguage string `json:"captionLanguage,omitempty"`
+	TranslatedFrom  string `json:"translatedFrom,omitempty"`
 	// Framing is how a "vertical-face" file was framed: "face" or "center".
 	Framing   string `json:"framing,omitempty"`
 	Width     int    `json:"width,omitempty"`
@@ -83,6 +88,8 @@ type clipFileMeta struct {
 	CaptionPosition string  `json:"captionPosition"`
 	CaptionColor    string  `json:"captionColor"`
 	CaptionCaps     bool    `json:"captionCaps"`
+	Language        string  `json:"language"`
+	TranslatedFrom  string  `json:"translatedFrom"`
 	Framing         string  `json:"framing"`
 	Width           int     `json:"width"`
 	Height          int     `json:"height"`
@@ -92,8 +99,9 @@ type clipFileMeta struct {
 }
 
 // listClips returns an asset's suggested clips, best first, each with the
-// state of its exports, and whether the transcript has word timings (needed
-// for word-by-word captions).
+// state of its exports; whether the transcript has word timings (needed for
+// word-by-word captions); its language; and the languages it has been
+// translated into, which exports can use without translating first.
 func (a *api) listClips(w http.ResponseWriter, r *http.Request) {
 	asset, ok := a.loadAsset(w, r)
 	if !ok {
@@ -119,15 +127,23 @@ func (a *api) listClips(w http.ResponseWriter, r *http.Request) {
 	for _, c := range clips {
 		out = append(out, toClipDTO(c, jobs, arts))
 	}
-	wordTimings := false
+	wordTimings, language := false, ""
 	if tr, err := a.Store.GetTranscript(ctx, asset.ID); err == nil {
 		var words []json.RawMessage
 		wordTimings = json.Unmarshal(tr.Words, &words) == nil && len(words) > 0
+		language = tr.Language
 	} else if !errors.Is(err, store.ErrNotFound) {
 		a.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"clips": out, "wordTimings": wordTimings})
+	translations, err := a.Store.TranslationLanguages(ctx, asset.ID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"clips": out, "wordTimings": wordTimings, "transcriptLanguage": language, "translations": translations,
+	})
 }
 
 func toClipDTO(c domain.Clip, jobs []domain.Job, arts []domain.Artifact) clipDTO {
@@ -178,10 +194,15 @@ func clipExports(clip domain.Clip, jobs []domain.Job, arts []domain.Artifact) []
 			continue
 		}
 		e := clipExportDTO{Format: format, JobID: job.ID, Status: job.Status, Progress: job.Progress, Error: job.ErrorMessage}
+		var in jobcontracts.ExportClipInput
+		json.Unmarshal(job.InputJSON, &in)
+		e.CaptionLanguage = in.CaptionLanguage // asked for; the file's below
 		if file, ok := latestClipFile(arts, clipID, format); ok {
 			e.Captions, e.CaptionStyle, e.Framing, e.Width, e.Height, e.SizeBytes, e.Ready = file.Captions, file.CaptionStyle, file.Framing, file.Width, file.Height, file.SizeBytes, true
+			e.CaptionLanguage = ""
 			if file.Captions {
 				e.CaptionPosition, e.CaptionColor, e.CaptionCaps = file.CaptionPosition, file.CaptionColor, file.CaptionCaps
+				e.CaptionLanguage, e.TranslatedFrom = file.Language, file.TranslatedFrom
 			}
 			e.Outdated = math.Abs(file.Start-clip.Start) > 0.001 || math.Abs(file.End-clip.End) > 0.001
 		}
@@ -362,7 +383,10 @@ func (a *api) writeClip(w http.ResponseWriter, r *http.Request, c domain.Clip) {
 
 // exportClip handles POST /assets/{id}/clips/{clipId}/exports with
 // {"format": "vertical", "captions": true}: it queues an export-clip job.
-// Like a re-run, it waits until no other job of the asset is pending or running.
+// Like a re-run, it waits until no other job of the asset is pending or
+// running. Captions in a captionLanguage the transcript has no translation
+// into yet first queue a translate-transcript job, which the export waits
+// for (docs/adr/0029).
 func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 	asset, ok := a.loadAsset(w, r)
 	if !ok {
@@ -390,6 +414,7 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 		CaptionPosition string `json:"captionPosition"`
 		CaptionColor    string `json:"captionColor"`
 		CaptionCaps     *bool  `json:"captionCaps"`
+		CaptionLanguage string `json:"captionLanguage"`
 	}{}
 	err = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
 	if body.CaptionStyle == "" {
@@ -397,10 +422,22 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil || !slices.Contains(jobcontracts.ClipFormats, body.Format) || !slices.Contains(jobcontracts.CaptionStyles, body.CaptionStyle) ||
 		(body.CaptionPosition != "" && !slices.Contains(jobcontracts.CaptionPositions, body.CaptionPosition)) ||
-		(body.CaptionColor != "" && !slices.Contains(jobcontracts.CaptionColors, body.CaptionColor)) {
-		writeError(w, http.StatusBadRequest, `expected a JSON body like {"format": "vertical", "captions": true, "captionStyle": "highlight", "captionPosition": "bottom", "captionColor": "yellow", "captionCaps": false}; formats: `+
+		(body.CaptionColor != "" && !slices.Contains(jobcontracts.CaptionColors, body.CaptionColor)) ||
+		(body.CaptionLanguage != "" && !slices.Contains(jobcontracts.CaptionLanguages, body.CaptionLanguage)) {
+		writeError(w, http.StatusBadRequest, `expected a JSON body like {"format": "vertical", "captions": true, "captionStyle": "highlight", "captionPosition": "bottom", "captionColor": "yellow", "captionCaps": false, "captionLanguage": "en"}; formats: `+
 			strings.Join(jobcontracts.ClipFormats, ", ")+"; caption styles: "+strings.Join(jobcontracts.CaptionStyles, ", ")+
-			"; positions: "+strings.Join(jobcontracts.CaptionPositions, ", ")+"; colors: "+strings.Join(jobcontracts.CaptionColors, ", "))
+			"; positions: "+strings.Join(jobcontracts.CaptionPositions, ", ")+"; colors: "+strings.Join(jobcontracts.CaptionColors, ", ")+
+			"; languages (empty for the transcript's own): "+strings.Join(jobcontracts.CaptionLanguages, ", "))
+		return
+	}
+	captions := body.Captions == nil || *body.Captions
+	language, translate, err := a.captionLanguage(ctx, asset.ID, captions, body.CaptionLanguage)
+	if errors.Is(err, errNothingToTranslate) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		a.internalError(w, r, err)
 		return
 	}
 	src, err := a.Store.GetSource(ctx, asset.ID)
@@ -414,19 +451,28 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 	}
 	input, err := json.Marshal(jobcontracts.ExportClipInput{
 		AssetID: asset.ID, ClipID: clip.ID, StorageKey: src.StorageKey, Format: body.Format,
-		Captions: body.Captions == nil || *body.Captions, CaptionStyle: body.CaptionStyle,
+		Captions: captions, CaptionStyle: body.CaptionStyle,
 		CaptionPosition: body.CaptionPosition, CaptionColor: body.CaptionColor, CaptionCaps: body.CaptionCaps,
-		OutputKey: storage.ClipKey(asset.ID, clip.ID, body.Format),
+		CaptionLanguage: language, OutputKey: storage.ClipKey(asset.ID, clip.ID, body.Format),
 	})
 	if err != nil {
 		a.internalError(w, r, err)
 		return
 	}
+	now := time.Now()
 	job := domain.Job{
 		ID: domain.NewID(), AssetID: asset.ID, Type: jobcontracts.JobTypeExportClip, InputJSON: input,
-		Status: domain.JobPending, CreatedAt: time.Now(),
+		Status: domain.JobPending, CreatedAt: now,
 	}
-	err = a.Store.CreateJobIfIdle(ctx, job, "")
+	first, then := job, []domain.Job(nil)
+	if translate {
+		in, _ := json.Marshal(jobcontracts.TranslateTranscriptInput{AssetID: asset.ID, Language: language})
+		first = domain.Job{ID: domain.NewID(), AssetID: asset.ID, Type: jobcontracts.JobTypeTranslateTranscript, InputJSON: in,
+			Status: domain.JobPending, CreatedAt: now}
+		job.CreatedAt = now.Add(time.Millisecond) // listed after the translation it waits for
+		then = []domain.Job{job}
+	}
+	err = a.Store.CreateJobIfIdle(ctx, first, "", then...)
 	if errors.Is(err, store.ErrBusy) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -435,9 +481,13 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 		a.internalError(w, r, err)
 		return
 	}
-	if err := a.Enqueue(ctx, jobcontracts.Message{JobID: job.ID, Type: job.Type, Payload: job.InputJSON}); err != nil {
-		a.Store.FinishJob(context.WithoutCancel(ctx), job.ID, fmt.Errorf("could not enqueue job: %w", err))
-		a.Log.Error("enqueue failed", "asset_id", asset.ID, "job_id", job.ID, "error", err)
+	if err := a.Enqueue(ctx, jobcontracts.Message{JobID: first.ID, Type: first.Type, Payload: first.InputJSON}); err != nil {
+		bg := context.WithoutCancel(ctx)
+		a.Store.FinishJob(bg, first.ID, fmt.Errorf("could not enqueue job: %w", err))
+		if translate {
+			a.Store.FinishJob(bg, job.ID, errors.New("not run: the translation before it could not be queued"))
+		}
+		a.Log.Error("enqueue failed", "asset_id", asset.ID, "job_id", first.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, "the job could not be queued")
 		return
 	}
@@ -446,8 +496,40 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 		a.internalError(w, r, err)
 		return
 	}
-	a.Log.Info("clip export queued", "asset_id", asset.ID, "clip_id", clip.ID, "format", body.Format, "job_id", job.ID)
+	if translate {
+		a.Log.Info("clip export queued after a translation", "asset_id", asset.ID, "clip_id", clip.ID, "format", body.Format,
+			"language", language, "job_id", job.ID, "translate_job_id", first.ID)
+	} else {
+		a.Log.Info("clip export queued", "asset_id", asset.ID, "clip_id", clip.ID, "format", body.Format, "job_id", job.ID)
+	}
 	writeJSON(w, http.StatusAccepted, toJob(saved))
+}
+
+var errNothingToTranslate = errors.New("this video has no transcript to translate the captions from")
+
+// captionLanguage returns the language an export's captions are burned in
+// (empty for the transcript's own) and whether the transcript must be
+// translated into it first. Asking for the transcript's own language is
+// asking for no translation.
+func (a *api) captionLanguage(ctx context.Context, assetID string, captions bool, asked string) (string, bool, error) {
+	if !captions || asked == "" {
+		return "", false, nil
+	}
+	tr, err := a.Store.GetTranscript(ctx, assetID)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", false, errNothingToTranslate
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if tr.Language == asked {
+		return "", false, nil
+	}
+	_, err = a.Store.GetTranslation(ctx, assetID, asked)
+	if errors.Is(err, store.ErrNotFound) {
+		return asked, true, nil
+	}
+	return asked, false, err
 }
 
 // downloadClip handles GET /clips/{id}/download?format=vertical: it redirects
@@ -475,7 +557,8 @@ func (a *api) downloadClip(w http.ResponseWriter, r *http.Request) {
 		a.internalError(w, r, err)
 		return
 	}
-	if _, ok := latestClipFile(arts, clip.ID, format); !ok {
+	file, ok := latestClipFile(arts, clip.ID, format)
+	if !ok {
 		writeError(w, http.StatusNotFound, "this clip has not been exported in this format yet")
 		return
 	}
@@ -486,7 +569,7 @@ func (a *api) downloadClip(w http.ResponseWriter, r *http.Request) {
 			a.internalError(w, r, err)
 			return
 		}
-		filename = clipFilename(asset.Filename, clip.Rank, format)
+		filename = clipFilename(asset.Filename, clip.Rank, format, file.TranslatedFrom != "" && file.Captions, file.Language)
 	}
 	url, err := a.Storage.PresignForBrowser(ctx, storage.ClipKey(clip.AssetID, clip.ID, format), filename, downloadLinkExpiry)
 	if err != nil {
@@ -500,14 +583,18 @@ func (a *api) downloadClip(w http.ResponseWriter, r *http.Request) {
 var unsafeFilename = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 
 // clipFilename names a downloaded clip after its video, e.g.
-// "my-talk-clip-2-vertical.mp4", in plain ASCII.
-func clipFilename(videoName string, rank int, format string) string {
+// "my-talk-clip-2-vertical.mp4", in plain ASCII; with translated captions,
+// their language follows: "my-talk-clip-2-vertical-en.mp4".
+func clipFilename(videoName string, rank int, format string, translated bool, language string) string {
 	base := strings.Trim(unsafeFilename.ReplaceAllString(strings.TrimSuffix(videoName, path.Ext(videoName)), "-"), "-")
 	if len(base) > 60 {
 		base = base[:60]
 	}
 	if base == "" {
 		base = "video"
+	}
+	if translated {
+		return fmt.Sprintf("%s-clip-%d-%s-%s.mp4", base, rank, format, language)
 	}
 	return fmt.Sprintf("%s-clip-%d-%s.mp4", base, rank, format)
 }
