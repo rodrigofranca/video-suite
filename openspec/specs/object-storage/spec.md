@@ -58,3 +58,10 @@ O cliente SHALL apagar todos os objetos sob um prefixo e dizer quantos apagou, a
 #### Scenario: Pasta de um corte
 - **WHEN** a pasta de um corte é apagada
 - **THEN** só os arquivos desse corte SHALL sumir
+
+### Requirement: Listar uma pasta
+O cliente SHALL listar as chaves dos objetos sob um prefixo, página a página.
+
+#### Scenario: Arquivos antigos do HLS
+- **WHEN** o job lista `assets/{id}/hls/` depois de enviar uma nova codificação
+- **THEN** SHALL receber também os arquivos de codificações anteriores, para apagá-los

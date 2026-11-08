@@ -167,6 +167,22 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// List returns the keys of the objects whose key starts with prefix.
+func (c *Client) List(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+	pages := s3.NewListObjectsV2Paginator(c.s3, &s3.ListObjectsV2Input{Bucket: &c.bucket, Prefix: &prefix})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return keys, fmt.Errorf("list %s: %w", prefix, err)
+		}
+		for _, obj := range page.Contents {
+			keys = append(keys, aws.ToString(obj.Key))
+		}
+	}
+	return keys, nil
+}
+
 // DeletePrefix removes every object whose key starts with prefix and returns
 // how many it removed. To keep a mistake from emptying the bucket, prefix
 // must be an asset's folder or a folder inside one ("assets/<id>/...", ending
@@ -176,21 +192,16 @@ func (c *Client) DeletePrefix(ctx context.Context, prefix string) (int, error) {
 	if len(parts) < 3 || parts[0] != "assets" || parts[1] == "" || !strings.HasSuffix(prefix, "/") || strings.Contains(prefix, "..") {
 		return 0, fmt.Errorf("refusing to delete under %q: not an asset folder", prefix)
 	}
-	removed := 0
-	pages := s3.NewListObjectsV2Paginator(c.s3, &s3.ListObjectsV2Input{Bucket: &c.bucket, Prefix: &prefix})
-	for pages.HasMorePages() {
-		page, err := pages.NextPage(ctx)
-		if err != nil {
-			return removed, fmt.Errorf("list %s: %w", prefix, err)
-		}
-		for _, obj := range page.Contents {
-			if err := c.Delete(ctx, aws.ToString(obj.Key)); err != nil {
-				return removed, err
-			}
-			removed++
+	keys, err := c.List(ctx, prefix)
+	if err != nil {
+		return 0, err
+	}
+	for i, key := range keys {
+		if err := c.Delete(ctx, key); err != nil {
+			return i, err
 		}
 	}
-	return removed, nil
+	return len(keys), nil
 }
 
 // Exists reports whether an object exists at key.

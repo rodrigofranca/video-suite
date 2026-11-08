@@ -94,6 +94,15 @@ type artifactDTO struct {
 type playbackDTO struct {
 	Type        string `json:"type"`
 	ManifestURL string `json:"manifestUrl"`
+	// Renditions are the qualities in the stream, best first (docs/adr/0028);
+	// empty for videos encoded before there were several.
+	Renditions []renditionDTO `json:"renditions"`
+}
+
+type renditionDTO struct {
+	Name   string `json:"name"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
 }
 
 func toAsset(a domain.Asset) assetDTO {
@@ -331,8 +340,18 @@ func (a *api) playbackFor(asset domain.Asset, arts []domain.Artifact) *playbackD
 	if asset.Status != domain.AssetReady {
 		return nil
 	}
-	if key := latestKey(arts, domain.ArtifactHLS); key != "" {
-		return &playbackDTO{Type: "hls", ManifestURL: a.Storage.PublicURL(key)}
+	for i := len(arts) - 1; i >= 0; i-- {
+		if arts[i].Type != domain.ArtifactHLS {
+			continue
+		}
+		var meta struct {
+			Renditions []renditionDTO `json:"renditions"`
+		}
+		json.Unmarshal(arts[i].MetadataJSON, &meta)
+		if meta.Renditions == nil {
+			meta.Renditions = []renditionDTO{}
+		}
+		return &playbackDTO{Type: "hls", ManifestURL: a.Storage.PublicURL(arts[i].StorageKey), Renditions: meta.Renditions}
 	}
 	return nil
 }

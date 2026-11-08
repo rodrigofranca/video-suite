@@ -50,7 +50,7 @@ Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbna
 
 - `extract-metadata`: ffprobe → technical metadata.
 - `generate-thumbnail`: a JPEG (max 1280 px wide) at `AtSecond`, or at the middle of the video when it is shorter; first frame as a last resort.
-- `transcode-hls`: single-rendition HLS; reports progress (0–99 while encoding, 100 when done). The Asset becomes `ready` here; the next steps run while it is already playable (ADR 0017).
+- `transcode-hls`: HLS in up to four qualities by the picture's short side (1080p, 720p, 480p, 360p, never above the source), with a master playlist at `hls/index.m3u8` (ADR 0028); reports progress (0–99 while encoding, 100 when done). The Asset becomes `ready` here; the next steps run while it is already playable (ADR 0017).
 - `extract-audio`: the first audio track as 16 kHz mono FLAC, private. A video without audio is not an error.
 - `transcribe-audio`: Whisper (AI worker) → Transcript and WebVTT subtitles.
 - `analyze-transcript`: a language model, through the LLM gateway (AI worker) → Analysis. Nothing to do when there is no speech.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -21,26 +22,107 @@ const SegmentSeconds = 6
 // ManifestName is the HLS playlist file name.
 const ManifestName = "index.m3u8"
 
-// HLSArgs returns the arguments to transcode input into a single-rendition
-// HLS stream (H.264 + AAC) inside outDir.
-func HLSArgs(input, outDir string) []string {
+// Rendition is one quality of the HLS ladder (docs/adr/0028).
+type Rendition struct {
+	Name    string `json:"name"` // the short side, e.g. "720p"
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	MaxKbps int    `json:"maxKbps"` // the video bitrate cap
+}
+
+// ladder is the qualities offered, by the picture's short side, with the
+// video bitrate cap of each (H.264, up to 30 fps).
+var ladder = []struct{ short, kbps int }{{1080, 5000}, {720, 2800}, {480, 1400}, {360, 800}}
+
+// maxShort is the top quality: bigger sources are scaled down to it.
+const maxShort = 1080
+
+// Ladder returns the qualities to encode a width x height picture in, best
+// first: the source's own size (at most 1080p) and every step of the ladder
+// below it, leaving out a step within 10% of the one above. Sizes keep the
+// picture's shape, so a portrait video's "720p" is 720 wide.
+func Ladder(width, height int) []Rendition {
+	short := min(width, height)
+	if short <= 0 {
+		return nil
+	}
+	sizes := []int{min(short, maxShort)}
+	for _, step := range ladder {
+		if float64(step.short) < float64(sizes[len(sizes)-1])*0.9 {
+			sizes = append(sizes, step.short)
+		}
+	}
+	out := make([]Rendition, 0, len(sizes))
+	for _, size := range sizes {
+		w := even(int(math.Round(float64(width) * float64(size) / float64(short))))
+		h := even(int(math.Round(float64(height) * float64(size) / float64(short))))
+		out = append(out, Rendition{Name: fmt.Sprintf("%dp", min(w, h)), Width: w, Height: h, MaxKbps: kbpsFor(size)})
+	}
+	return out
+}
+
+// kbpsFor is the bitrate cap for a short side: the ladder's, in a straight
+// line between its steps, and in proportion below the lowest.
+func kbpsFor(short int) int {
+	for i, step := range ladder {
+		if short >= step.short {
+			if i == 0 {
+				return step.kbps
+			}
+			up := ladder[i-1]
+			return step.kbps + (up.kbps-step.kbps)*(short-step.short)/(up.short-step.short)
+		}
+	}
+	low := ladder[len(ladder)-1]
+	return max(low.kbps*short/low.short, 200)
+}
+
+// HLSArgs returns the arguments to transcode input into HLS (H.264 + AAC) in
+// several qualities inside outDir: a master playlist, ManifestName, that
+// lists one folder per rendition, each with its playlist and segments. The
+// renditions share keyframes at each segment start, so players can switch
+// between them. Quality is constant (CRF) up to each rendition's cap.
+func HLSArgs(input, outDir string, renditions []Rendition, audio bool) []string {
 	seg := strconv.Itoa(SegmentSeconds)
-	return []string{
-		"-hide_banner", "-nostdin", "-y", "-loglevel", "warning",
-		"-i", input,
-		"-map", "0:v:0", "-map", "0:a:0?", // first video stream; audio if present
+	split := fmt.Sprintf("[0:v:0]split=%d", len(renditions))
+	var scales, streams []string
+	args := []string{"-hide_banner", "-nostdin", "-y", "-loglevel", "warning", "-i", input}
+	var maps []string
+	for i, r := range renditions {
+		split += fmt.Sprintf("[v%d]", i)
+		scales = append(scales, fmt.Sprintf("[v%d]scale=%d:%d[o%d]", i, r.Width, r.Height, i))
+		maps = append(maps, "-map", fmt.Sprintf("[o%d]", i))
+		stream := fmt.Sprintf("v:%d", i)
+		if audio {
+			maps = append(maps, "-map", "0:a:0")
+			stream += fmt.Sprintf(",a:%d", i)
+		}
+		streams = append(streams, stream+",name:"+r.Name)
+	}
+	args = append(args, "-filter_complex", split+";"+strings.Join(scales, ";"))
+	args = append(args, maps...)
+	args = append(args,
 		"-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
 		"-pix_fmt", "yuv420p", // 8-bit 4:2:0, playable in every browser
-		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", // H.264 needs even dimensions
-		"-force_key_frames", "expr:gte(t,n_forced*" + seg + ")", // a keyframe at each segment start
-		"-c:a", "aac", "-b:a", "128k", "-ac", "2",
+		"-force_key_frames", "expr:gte(t,n_forced*"+seg+")", // a keyframe at each segment start, in every rendition
+	)
+	for i, r := range renditions {
+		args = append(args, fmt.Sprintf("-maxrate:v:%d", i), fmt.Sprintf("%dk", r.MaxKbps),
+			fmt.Sprintf("-bufsize:v:%d", i), fmt.Sprintf("%dk", 2*r.MaxKbps))
+	}
+	if audio {
+		args = append(args, "-c:a", "aac", "-b:a", "128k", "-ac", "2")
+	}
+	return append(args,
 		"-f", "hls",
 		"-hls_time", seg,
 		"-hls_playlist_type", "vod",
 		"-hls_flags", "independent_segments",
-		"-hls_segment_filename", filepath.Join(outDir, "segment_%03d.ts"),
-		filepath.Join(outDir, ManifestName),
-	}
+		"-master_pl_name", ManifestName,
+		"-hls_segment_filename", filepath.Join(outDir, "%v", "segment_%03d.ts"),
+		"-var_stream_map", strings.Join(streams, " "),
+		filepath.Join(outDir, "%v", ManifestName),
+	)
 }
 
 // maxLoggedLines caps how many FFmpeg output lines go to the job log.

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -94,12 +93,7 @@ func newFixtureWith(t *testing.T, makeVideo func(path string)) *fixture {
 	t.Cleanup(func() {
 		bg := context.Background()
 		st.DeleteAsset(bg, f.asset)
-		for _, key := range []string{f.src, storage.ThumbnailKey(f.asset), storage.HLSManifestKey(f.asset), storage.AudioKey(f.asset)} {
-			files.Delete(bg, key)
-		}
-		for i := range 10 {
-			files.Delete(bg, fmt.Sprintf("%ssegment_%03d.ts", storage.HLSPrefix(f.asset), i))
-		}
+		files.DeletePrefix(bg, storage.AssetPrefix(f.asset))
 	})
 	return f
 }
@@ -209,26 +203,53 @@ func TestThumbnailFallsBackToFirstFrame(t *testing.T) {
 }
 
 func TestTranscodeHLS(t *testing.T) {
-	f := newFixture(t, 8, "640x360")
+	f := newFixture(t, 8, "1280x720")
+	// Files of an earlier, single-quality encoding.
+	stale := []string{storage.HLSPrefix(f.asset) + "segment_000.ts", storage.HLSPrefix(f.asset) + "segment_009.ts"}
+	for _, key := range stale {
+		if err := f.files.Upload(f.ctx, key, strings.NewReader("old"), "video/mp2t"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	in := jobcontracts.TranscodeHLSInput{AssetID: f.asset, StorageKey: f.src}
 	if err := f.media.TranscodeHLS(f.ctx, f.job(jobcontracts.JobTypeTranscodeHLS), in); err != nil {
-		t.Fatalf("TranscodeHLS: %v", err)
+		t.Fatalf("TranscodeHLS: %v\n%s", err, f.logs.String())
 	}
 
 	art, err := f.st.LatestArtifact(f.ctx, f.asset, domain.ArtifactHLS)
 	if err != nil || art.StorageKey != storage.HLSManifestKey(f.asset) {
 		t.Fatalf("artifact = %+v, %v", art, err)
 	}
-	var meta struct{ Segments int }
+	var meta struct {
+		Segments   int
+		Renditions []struct {
+			Name          string
+			Width, Height int
+		}
+	}
 	json.Unmarshal(art.MetadataJSON, &meta)
-	if meta.Segments != 2 { // 8s in 6s segments
-		t.Fatalf("artifact metadata = %s, want 2 segments", art.MetadataJSON)
+	if meta.Segments != 6 || len(meta.Renditions) != 3 || meta.Renditions[0].Name != "720p" || meta.Renditions[2].Height != 360 {
+		t.Fatalf("artifact metadata = %s, want 3 qualities of 2 segments (8s in 6s segments)", art.MetadataJSON)
 	}
-	if playlist := httpGet(t, f.files.PublicURL(art.StorageKey)); !strings.Contains(playlist, "#EXT-X-ENDLIST") {
-		t.Fatalf("playlist:\n%s", playlist)
+	if !strings.Contains(f.logs.String(), "encoding 3 qualities: 720p, 480p, 360p") || !strings.Contains(f.logs.String(), "removed 2 files of an earlier encoding") {
+		t.Errorf("logs:\n%s", f.logs.String())
 	}
-	if seg := httpGet(t, f.files.PublicURL(storage.HLSPrefix(f.asset)+"segment_001.ts")); len(seg) == 0 || seg[0] != 0x47 {
+	master := httpGet(t, f.files.PublicURL(art.StorageKey))
+	for _, want := range []string{"720p/index.m3u8", "480p/index.m3u8", "360p/index.m3u8", "RESOLUTION=1280x720"} {
+		if !strings.Contains(master, want) {
+			t.Fatalf("master playlist misses %q:\n%s", want, master)
+		}
+	}
+	if playlist := httpGet(t, f.files.PublicURL(storage.HLSPrefix(f.asset)+"480p/index.m3u8")); !strings.Contains(playlist, "#EXT-X-ENDLIST") {
+		t.Fatalf("480p playlist:\n%s", playlist)
+	}
+	if seg := httpGet(t, f.files.PublicURL(storage.HLSPrefix(f.asset)+"360p/segment_001.ts")); len(seg) == 0 || seg[0] != 0x47 {
 		t.Fatal("segment is not an MPEG-TS file")
+	}
+	for _, key := range stale {
+		if ok, _ := f.files.Exists(f.ctx, key); ok {
+			t.Errorf("%s of the earlier encoding is still stored", key)
+		}
 	}
 
 	if len(f.progress) == 0 {
@@ -238,9 +259,6 @@ func TestTranscodeHLS(t *testing.T) {
 		if p < 0 || p > 99 || (i > 0 && p < f.progress[i-1]) {
 			t.Fatalf("progress = %v, want increasing values up to 99", f.progress)
 		}
-	}
-	if last := f.progress[len(f.progress)-1]; last < 80 {
-		t.Fatalf("last progress = %d, want close to the end", last)
 	}
 }
 

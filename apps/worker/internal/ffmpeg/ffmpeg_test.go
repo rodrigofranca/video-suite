@@ -3,6 +3,7 @@ package ffmpeg
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image/jpeg"
 	"log/slog"
 	"os"
@@ -23,34 +24,87 @@ func needFFmpeg(t *testing.T) {
 	}
 }
 
+func TestLadder(t *testing.T) {
+	names := func(rs []Rendition) string {
+		var out []string
+		for _, r := range rs {
+			out = append(out, fmt.Sprintf("%s %dx%d %dk", r.Name, r.Width, r.Height, r.MaxKbps))
+		}
+		return strings.Join(out, ", ")
+	}
+	for _, tc := range []struct {
+		w, h int
+		want string
+	}{
+		{1920, 1080, "1080p 1920x1080 5000k, 720p 1280x720 2800k, 480p 852x480 1400k, 360p 640x360 800k"},
+		{3840, 2160, "1080p 1920x1080 5000k, 720p 1280x720 2800k, 480p 852x480 1400k, 360p 640x360 800k"}, // no 4K
+		{1080, 1920, "1080p 1080x1920 5000k, 720p 720x1280 2800k, 480p 480x852 1400k, 360p 360x640 800k"}, // portrait
+		{1366, 768, "768p 1366x768 3093k, 480p 854x480 1400k, 360p 640x360 800k"},                         // 720p is within 10%
+		{640, 360, "360p 640x360 800k"},
+		{321, 241, "240p 320x240 535k"}, // smaller than the ladder: its own size
+	} {
+		if got := names(Ladder(tc.w, tc.h)); got != tc.want {
+			t.Errorf("Ladder(%d, %d) =\n  %s\nwant\n  %s", tc.w, tc.h, got, tc.want)
+		}
+	}
+	if Ladder(0, 0) != nil {
+		t.Error("Ladder(0, 0) should be empty")
+	}
+}
+
 func TestHLSOutput(t *testing.T) {
 	needFFmpeg(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "in.mp4")
-	testvideo.Make(t, src, 13, "321x241") // odd size: must be scaled to even
+	testvideo.Make(t, src, 13, "1280x720")
 	out := filepath.Join(dir, "hls")
 	os.Mkdir(out, 0o755)
 
 	var logs bytes.Buffer
 	var progress []time.Duration
 	record := func(d time.Duration) { progress = append(progress, d) }
-	if err := Run(context.Background(), HLSArgs(src, out), slog.New(slog.NewTextHandler(&logs, nil)), Options{Progress: record}); err != nil {
+	renditions := Ladder(1280, 720)
+	if err := Run(context.Background(), HLSArgs(src, out, renditions, true), slog.New(slog.NewTextHandler(&logs, nil)), Options{Progress: record}); err != nil {
 		t.Fatalf("Run: %v\n%s", err, logs.String())
 	}
 
-	playlist, err := os.ReadFile(filepath.Join(out, ManifestName))
+	master, err := os.ReadFile(filepath.Join(out, ManifestName))
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := string(playlist)
-	for _, want := range []string{"#EXTM3U", "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-ENDLIST", "segment_000.ts", "segment_002.ts"} {
-		if !strings.Contains(p, want) {
-			t.Errorf("playlist missing %q:\n%s", want, p)
+	for _, want := range []string{"#EXTM3U", "RESOLUTION=1280x720", "720p/index.m3u8", "RESOLUTION=852x480", "480p/index.m3u8", "RESOLUTION=640x360", "360p/index.m3u8", "mp4a.40.2"} {
+		if !strings.Contains(string(master), want) {
+			t.Errorf("master playlist missing %q:\n%s", want, master)
 		}
 	}
-	segments, _ := filepath.Glob(filepath.Join(out, "segment_*.ts"))
-	if len(segments) != 3 { // 13s in 6s segments
-		t.Errorf("got %d segments, want 3", len(segments))
+	for _, r := range renditions {
+		playlist, err := os.ReadFile(filepath.Join(out, r.Name, ManifestName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-ENDLIST", "segment_000.ts", "segment_002.ts"} {
+			if !strings.Contains(string(playlist), want) {
+				t.Errorf("%s playlist missing %q", r.Name, want)
+			}
+		}
+		if segments, _ := filepath.Glob(filepath.Join(out, r.Name, "segment_*.ts")); len(segments) != 3 { // 13s in 6s segments
+			t.Errorf("%s: %d segments, want 3", r.Name, len(segments))
+		}
+	}
+	// The renditions switch at the same points: their segments start at the same times.
+	var durations []string
+	for _, r := range renditions {
+		playlist, _ := os.ReadFile(filepath.Join(out, r.Name, ManifestName))
+		var d []string
+		for _, line := range strings.Split(string(playlist), "\n") {
+			if strings.HasPrefix(line, "#EXTINF:") {
+				d = append(d, line)
+			}
+		}
+		durations = append(durations, strings.Join(d, " "))
+	}
+	if durations[0] != durations[1] || durations[1] != durations[2] {
+		t.Errorf("segment lengths differ between renditions: %q", durations)
 	}
 
 	if len(progress) < 2 || progress[len(progress)-1] < 12*time.Second {
@@ -60,6 +114,25 @@ func TestHLSOutput(t *testing.T) {
 		if progress[i] < progress[i-1] {
 			t.Fatalf("progress went backwards: %v", progress)
 		}
+	}
+}
+
+// A silent video with an odd size: one quality, scaled to even, without audio.
+func TestHLSWithoutAudio(t *testing.T) {
+	needFFmpeg(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "silent.mp4")
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=321x241:r=25:d=3",
+		"-c:v", "libx264", "-pix_fmt", "yuv420p", src).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	out := filepath.Join(dir, "hls")
+	if err := Run(context.Background(), HLSArgs(src, out, Ladder(321, 241), false), slog.Default(), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	master, _ := os.ReadFile(filepath.Join(out, ManifestName))
+	if !strings.Contains(string(master), "240p/index.m3u8") || !strings.Contains(string(master), "RESOLUTION=320x240") || strings.Contains(string(master), "mp4a") {
+		t.Fatalf("master playlist without audio:\n%s", master)
 	}
 }
 
@@ -105,7 +178,7 @@ func TestRunReportsFFmpegError(t *testing.T) {
 	os.WriteFile(bad, []byte("\x00\x00\x00\x20ftypisom but not really a video"), 0o644)
 
 	var logs bytes.Buffer
-	err := Run(context.Background(), HLSArgs(bad, dir), slog.New(slog.NewTextHandler(&logs, nil)), Options{})
+	err := Run(context.Background(), HLSArgs(bad, dir, Ladder(640, 360), true), slog.New(slog.NewTextHandler(&logs, nil)), Options{})
 	if err == nil {
 		t.Fatal("want an error for a broken file")
 	}

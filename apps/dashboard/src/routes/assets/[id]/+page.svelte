@@ -318,6 +318,10 @@
 						<dt>Resolution</dt>
 						<dd>{formatResolution(meta.width, meta.height)}</dd>
 					{/if}
+					{#if asset.playback && asset.playback.renditions.length > 0}
+						<dt>Qualities</dt>
+						<dd data-testid="qualities">{asset.playback.renditions.map((r) => r.name).join(' · ')}</dd>
+					{/if}
 					<dt>Video</dt>
 					<dd>{meta.videoCodec}{meta.frameRate ? ` · ${meta.frameRate} fps` : ''}</dd>
 					{#if meta.audioCodec}
