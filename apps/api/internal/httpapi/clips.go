@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"path"
 	"regexp"
@@ -41,9 +42,11 @@ type clipDTO struct {
 	// is speaking, with several people on screen) or "face" (the biggest);
 	// FacePeople is how many people are on screen at once. Both are null
 	// while the clip has no face track.
-	FaceFollows *string         `json:"faceFollows"`
-	FacePeople  *int            `json:"facePeople"`
-	Exports     []clipExportDTO `json:"exports"`
+	FaceFollows *string `json:"faceFollows"`
+	FacePeople  *int    `json:"facePeople"`
+	// EditedAt is when the clip was last changed by hand, or null.
+	EditedAt *time.Time      `json:"editedAt"`
+	Exports  []clipExportDTO `json:"exports"`
 }
 
 // clipExportDTO is the newest export of a clip in one format: its job's
@@ -63,17 +66,22 @@ type clipExportDTO struct {
 	Height    int    `json:"height,omitempty"`
 	SizeBytes int64  `json:"sizeBytes,omitempty"`
 	Ready     bool   `json:"ready"` // a file can be downloaded
+	// Outdated is true when the file was cut from another start or end:
+	// the clip was edited after this export.
+	Outdated bool `json:"outdated,omitempty"`
 }
 
 type clipFileMeta struct {
-	ClipID       string `json:"clipId"`
-	Format       string `json:"format"`
-	Captions     bool   `json:"captions"`
-	CaptionStyle string `json:"captionStyle"`
-	Framing      string `json:"framing"`
-	Width        int    `json:"width"`
-	Height       int    `json:"height"`
-	SizeBytes    int64  `json:"sizeBytes"`
+	ClipID       string  `json:"clipId"`
+	Format       string  `json:"format"`
+	Captions     bool    `json:"captions"`
+	CaptionStyle string  `json:"captionStyle"`
+	Framing      string  `json:"framing"`
+	Width        int     `json:"width"`
+	Height       int     `json:"height"`
+	SizeBytes    int64   `json:"sizeBytes"`
+	Start        float64 `json:"start"`
+	End          float64 `json:"end"`
 }
 
 // listClips returns an asset's suggested clips, best first, each with the
@@ -102,12 +110,7 @@ func (a *api) listClips(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]clipDTO, 0, len(clips))
 	for _, c := range clips {
-		dto := clipDTO{
-			ID: c.ID, Start: c.Start, End: c.End, Duration: c.End - c.Start, Title: c.Title, Reason: c.Reason,
-			Score: c.Score, Rank: c.Rank, Model: c.Model, CreatedAt: c.CreatedAt, Exports: clipExports(c.ID, jobs, arts),
-		}
-		dto.FaceCoverage, dto.FaceFollows, dto.FacePeople = faceSummary(c.FaceTrack)
-		out = append(out, dto)
+		out = append(out, toClipDTO(c, jobs, arts))
 	}
 	wordTimings := false
 	if tr, err := a.Store.GetTranscript(ctx, asset.ID); err == nil {
@@ -118,6 +121,16 @@ func (a *api) listClips(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"clips": out, "wordTimings": wordTimings})
+}
+
+func toClipDTO(c domain.Clip, jobs []domain.Job, arts []domain.Artifact) clipDTO {
+	dto := clipDTO{
+		ID: c.ID, Start: c.Start, End: c.End, Duration: c.End - c.Start, Title: c.Title, Reason: c.Reason,
+		Score: c.Score, Rank: c.Rank, Model: c.Model, CreatedAt: c.CreatedAt, EditedAt: c.EditedAt,
+		Exports: clipExports(c, jobs, arts),
+	}
+	dto.FaceCoverage, dto.FaceFollows, dto.FacePeople = faceSummary(c.FaceTrack)
+	return dto
 }
 
 // faceSummary reads a clip's face track (docs/adr/0022, 0023). Tracks made
@@ -139,7 +152,8 @@ func faceSummary(track []byte) (*float64, *string, *int) {
 
 // clipExports finds, per format, the newest export job of a clip and the
 // newest file it produced.
-func clipExports(clipID string, jobs []domain.Job, arts []domain.Artifact) []clipExportDTO {
+func clipExports(clip domain.Clip, jobs []domain.Job, arts []domain.Artifact) []clipExportDTO {
+	clipID := clip.ID
 	out := []clipExportDTO{}
 	for _, format := range jobcontracts.ClipFormats {
 		var job *domain.Job
@@ -159,6 +173,7 @@ func clipExports(clipID string, jobs []domain.Job, arts []domain.Artifact) []cli
 		e := clipExportDTO{Format: format, JobID: job.ID, Status: job.Status, Progress: job.Progress, Error: job.ErrorMessage}
 		if file, ok := latestClipFile(arts, clipID, format); ok {
 			e.Captions, e.CaptionStyle, e.Framing, e.Width, e.Height, e.SizeBytes, e.Ready = file.Captions, file.CaptionStyle, file.Framing, file.Width, file.Height, file.SizeBytes, true
+			e.Outdated = math.Abs(file.Start-clip.Start) > 0.001 || math.Abs(file.End-clip.End) > 0.001
 		}
 		out = append(out, e)
 	}
@@ -179,6 +194,160 @@ func latestClipFile(arts []domain.Artifact, clipID, format string) (clipFileMeta
 		}
 	}
 	return best, found
+}
+
+// editClip handles PATCH /assets/{id}/clips/{clipId} with any of {"start",
+// "end", "title"}: it changes the clip for the exports from then on
+// (docs/adr/0024). New times must stay inside the video and give a clip of
+// domain.MinClipSeconds to domain.MaxClipSeconds; they clear the face track
+// and queue a track-faces job for this clip. Like an export, an edit waits
+// until no job of the asset is pending or running.
+func (a *api) editClip(w http.ResponseWriter, r *http.Request) {
+	asset, ok := a.loadAsset(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	clipID := r.PathValue("clipId")
+	if !domain.IsID(clipID) {
+		writeError(w, http.StatusNotFound, "clip not found")
+		return
+	}
+	clip, err := a.Store.GetClip(ctx, clipID)
+	if errors.Is(err, store.ErrNotFound) || (err == nil && clip.AssetID != asset.ID) {
+		writeError(w, http.StatusNotFound, "clip not found")
+		return
+	}
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	var body struct {
+		Start *float64 `json:"start"`
+		End   *float64 `json:"end"`
+		Title *string  `json:"title"`
+	}
+	dec := json.NewDecoder(io.LimitReader(r.Body, 4096))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil || (body.Start == nil && body.End == nil && body.Title == nil) {
+		writeError(w, http.StatusBadRequest, `expected a JSON body with any of {"start": 12.5, "end": 40, "title": "..."} (seconds from the start of the video)`)
+		return
+	}
+	edited := clip
+	if body.Start != nil {
+		edited.Start = math.Round(*body.Start*1000) / 1000
+	}
+	if body.End != nil {
+		edited.End = math.Round(*body.End*1000) / 1000
+	}
+	if body.Title != nil {
+		edited.Title = strings.Join(strings.Fields(*body.Title), " ")
+	}
+	duration, err := a.videoDuration(ctx, asset.ID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	if msg := checkClip(edited, duration); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
+	var retrack *domain.Job
+	if edited.Start != clip.Start || edited.End != clip.End {
+		src, err := a.Store.GetSource(ctx, asset.ID)
+		if err != nil {
+			a.internalError(w, r, err)
+			return
+		}
+		input, _ := json.Marshal(jobcontracts.TrackFacesInput{AssetID: asset.ID, StorageKey: src.StorageKey, ClipID: clip.ID})
+		retrack = &domain.Job{
+			ID: domain.NewID(), AssetID: asset.ID, Type: jobcontracts.JobTypeTrackFaces, InputJSON: input,
+			Status: domain.JobPending, CreatedAt: time.Now(),
+		}
+	}
+	if edited.Start == clip.Start && edited.End == clip.End && edited.Title == clip.Title {
+		a.writeClip(w, r, clip)
+		return
+	}
+	err = a.Store.EditClipIfIdle(ctx, edited, retrack)
+	if errors.Is(err, store.ErrBusy) {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "clip not found")
+		return
+	}
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	a.Log.Info("clip edited", "asset_id", asset.ID, "clip_id", clip.ID, "start", edited.Start, "end", edited.End)
+	if retrack != nil {
+		msg := jobcontracts.Message{JobID: retrack.ID, Type: retrack.Type, Payload: retrack.InputJSON}
+		if err := a.Enqueue(ctx, msg); err != nil {
+			// The edit stands; the clip stays without a face track (centred) and the job shows why.
+			a.Store.FinishJob(context.WithoutCancel(ctx), retrack.ID, fmt.Errorf("could not enqueue job: %w", err))
+			a.Log.Error("enqueue failed", "asset_id", asset.ID, "job_id", retrack.ID, "error", err)
+		}
+	}
+	saved, err := a.Store.GetClip(ctx, clip.ID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	a.writeClip(w, r, saved)
+}
+
+// checkClip returns why an edited clip is not valid, or "".
+func checkClip(c domain.Clip, duration float64) string {
+	switch {
+	case c.Start < 0 || c.End <= c.Start:
+		return "the start must be at least 0 and before the end"
+	case c.End-c.Start < domain.MinClipSeconds || c.End-c.Start > domain.MaxClipSeconds:
+		return fmt.Sprintf("a clip lasts from %.0f to %.0f seconds", domain.MinClipSeconds, domain.MaxClipSeconds)
+	case duration > 0 && c.End > duration+0.05:
+		return fmt.Sprintf("the end is after the end of the video (%.1f s)", duration)
+	case c.Title == "":
+		return "the title cannot be empty"
+	case len([]rune(c.Title)) > domain.MaxClipTitle:
+		return fmt.Sprintf("the title is longer than %d characters", domain.MaxClipTitle)
+	}
+	return ""
+}
+
+// videoDuration is the source's duration from its metadata, or 0 when unknown.
+func (a *api) videoDuration(ctx context.Context, assetID string) (float64, error) {
+	m, err := a.Store.GetTechnicalMetadata(ctx, assetID)
+	if errors.Is(err, store.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var doc struct {
+		Summary struct {
+			DurationSeconds float64 `json:"durationSeconds"`
+		} `json:"summary"`
+	}
+	json.Unmarshal(m.MetadataJSON, &doc)
+	return doc.Summary.DurationSeconds, nil
+}
+
+// writeClip answers with one clip as listClips shows it.
+func (a *api) writeClip(w http.ResponseWriter, r *http.Request, c domain.Clip) {
+	ctx := r.Context()
+	jobs, err := a.Store.ListJobs(ctx, c.AssetID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	arts, err := a.Store.ListArtifacts(ctx, c.AssetID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toClipDTO(c, jobs, arts))
 }
 
 // exportClip handles POST /assets/{id}/clips/{clipId}/exports with

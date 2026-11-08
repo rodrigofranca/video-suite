@@ -78,6 +78,13 @@ export function formatClock(seconds: number): string {
 	return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
 }
 
+/** Like formatClock, with tenths of a second: "1:08.4". */
+export function formatClockTenths(seconds: number): string {
+	const tenths = Math.round(seconds * 10);
+	const whole = Math.floor(tenths / 10);
+	return `${formatClock(whole)}.${tenths % 10}`;
+}
+
 export function formatResolution(width?: number, height?: number): string {
 	return width && height ? `${width}×${height}` : '';
 }

@@ -58,3 +58,4 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 - [0021](adr/0021-word-by-word-captions.md): transcripts keep each word's timing; clip captions come in five styles (highlighted word, word box, karaoke, one word at a time, lines).
 - [0022](adr/0022-face-following-vertical-clips.md): a pipeline step finds the main face in each clip (YuNet) and stores a camera path; the `vertical-face` export follows it, falling back to the centre. Rotated phone videos are measured as shown.
 - [0023](adr/0023-follow-the-active-speaker.md): with several people on screen, Light-ASD (an audio-visual model, run in ONNX Runtime without PyTorch) tells who is speaking and the vertical crop follows them; re-running clip suggestions tracks faces again.
+- [0024](adr/0024-edit-clips-by-hand.md): clips can be adjusted before exporting (start, end, title), snapping to transcript sentences; new times track faces again for that clip and mark older exports as outdated.

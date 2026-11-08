@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import {
+		editClip,
 		exportClip,
 		getAnalysis,
 		getAsset,
@@ -119,6 +120,17 @@
 			.catch(() => (clips = null));
 	});
 
+	let trackingFaces = $derived(
+		!!asset?.jobs.some((j) => j.type === 'track-faces' && (j.status === 'pending' || j.status === 'running'))
+	);
+
+	async function saveClip(clipId: string, changes: { start?: number; end?: number; title?: string }) {
+		await editClip(page.params.id!, clipId, changes);
+		const r = await getClips(page.params.id!);
+		clips = r.clips;
+		await updates.refresh();
+	}
+
 	async function startExport(clipId: string, format: ClipFormat, captions: boolean, style: CaptionStyle) {
 		await exportClip(page.params.id!, clipId, format, captions, style);
 		await updates.refresh();
@@ -207,8 +219,12 @@
 					busy={jobsBusy}
 					hasSubtitles={asset.subtitles.length > 0}
 					{wordTimings}
+					tracking={trackingFaces}
+					segments={transcript?.segments ?? []}
+					duration={meta?.durationSeconds ?? 0}
 					onpreview={(start, end) => player?.playRange(start, end)}
 					onexport={startExport}
+					onedit={saveClip}
 				/>
 			{:else if suggestJob.status === 'failed'}
 				<p class="muted">Clips could not be suggested; open the Clips job below to see why.</p>

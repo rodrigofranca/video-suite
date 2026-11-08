@@ -386,8 +386,12 @@ func TestMetadataAndThumbnailInResponses(t *testing.T) {
 }
 
 func (e *env) post(path, body string, out any) int {
+	return e.send(http.MethodPost, path, body, out)
+}
+
+func (e *env) send(method, path, body string, out any) int {
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
+	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	e.handler.ServeHTTP(rec, req)
 	if out != nil {
@@ -685,7 +689,7 @@ func TestClips(t *testing.T) {
 	e.store.FinishJob(ctx, job.ID, nil)
 	e.store.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: id, JobID: job.ID, Type: domain.ArtifactClip,
 		StorageKey:   storage.ClipKey(id, best, "vertical"),
-		MetadataJSON: []byte(`{"clipId":"` + best + `","format":"vertical","captions":true,"captionStyle":"lines","width":1080,"height":1920,"sizeBytes":4096}`)})
+		MetadataJSON: []byte(`{"clipId":"` + best + `","format":"vertical","captions":true,"captionStyle":"lines","width":1080,"height":1920,"sizeBytes":4096,"start":12,"end":47.5}`)})
 	e.store.SaveTranscript(ctx, domain.Transcript{ID: domain.NewID(), AssetID: id, JobID: e.jobOfType(id, jobcontracts.JobTypeTranscribeAudio).ID,
 		Language: "en", Text: "hi", Words: []byte(`[{"start":0,"end":0.4,"word":"hi"}]`), Model: "base"})
 	e.get("/assets/"+id+"/clips", &list)
@@ -712,5 +716,97 @@ func TestClips(t *testing.T) {
 		if code := e.get(path, nil); code != http.StatusNotFound {
 			t.Errorf("%s: %d, want 404", path, code)
 		}
+	}
+}
+
+func TestEditClip(t *testing.T) {
+	e := newEnv(t, 0)
+	rec := e.upload("talk.mp4", fakeMP4(1024))
+	var created struct{ AssetID string }
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	e.cleanupAsset(created.AssetID)
+	id := created.AssetID
+	ctx := context.Background()
+
+	clipID := domain.NewID()
+	suggest := e.jobOfType(id, jobcontracts.JobTypeSuggestClips)
+	if err := e.store.ReplaceClips(ctx, id, []domain.Clip{
+		{ID: clipID, JobID: suggest.ID, Start: 12, End: 47.5, Title: "Best", Score: 9, Rank: 1, Model: "m"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.store.SaveTechnicalMetadata(ctx, id, []byte(`{"summary":{"durationSeconds":120}}`))
+	e.store.SetFaceTrack(ctx, clipID, []byte(`{"coverage":1,"points":[],"width":1280,"height":720}`))
+	path := "/assets/" + id + "/clips/" + clipID
+
+	if code := e.send(http.MethodPatch, path, `{"title": "New"}`, nil); code != http.StatusConflict {
+		t.Fatalf("edit while the pipeline runs: %d, want 409", code)
+	}
+	jobs, _ := e.store.ListJobs(ctx, id)
+	for _, j := range jobs {
+		e.store.FinishJob(ctx, j.ID, nil)
+	}
+	// An export of the clip as suggested.
+	export := domain.Job{ID: domain.NewID(), AssetID: id, Type: jobcontracts.JobTypeExportClip, Status: domain.JobPending, CreatedAt: time.Now(),
+		InputJSON: []byte(`{"clip_id":"` + clipID + `","format":"vertical"}`)}
+	e.store.CreateJobIfIdle(ctx, export, "")
+	e.store.FinishJob(ctx, export.ID, nil)
+	e.store.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: id, JobID: export.ID, Type: domain.ArtifactClip,
+		StorageKey:   storage.ClipKey(id, clipID, "vertical"),
+		MetadataJSON: []byte(`{"clipId":"` + clipID + `","format":"vertical","width":1080,"height":1920,"sizeBytes":10,"start":12,"end":47.5}`)})
+
+	for _, c := range []struct{ body, why string }{
+		{`{}`, "nothing to change"},
+		{`{"start": "soon"}`, "not a number"},
+		{`{"rank": 1}`, "unknown field"},
+		{`{"start": 50}`, "start after the end"},
+		{`{"start": -1}`, "before the video"},
+		{`{"end": 13}`, "shorter than 3 s"},
+		{`{"start": 0, "end": 200}`, "longer than 180 s and the video"},
+		{`{"end": 121}`, "after the end of the video"},
+		{`{"title": "   "}`, "empty title"},
+		{`{"title": "` + strings.Repeat("a", 121) + `"}`, "title too long"},
+	} {
+		if code := e.send(http.MethodPatch, path, c.body, nil); code != http.StatusBadRequest {
+			t.Errorf("%s (%s): %d, want 400", c.body, c.why, code)
+		}
+	}
+	if code := e.send(http.MethodPatch, "/assets/"+id+"/clips/"+domain.NewID(), `{"title": "x"}`, nil); code != http.StatusNotFound {
+		t.Fatalf("unknown clip: %d", code)
+	}
+
+	// Only the title: the face track stays and nothing is queued.
+	e.enqueued = nil
+	var clip struct {
+		Title        string
+		Start, End   float64
+		EditedAt     *time.Time
+		FaceCoverage *float64
+		Exports      []struct{ Outdated bool }
+	}
+	if code := e.send(http.MethodPatch, path, `{"title": "  The  hook\n"}`, &clip); code != http.StatusOK {
+		t.Fatalf("title edit: %d", code)
+	}
+	if clip.Title != "The hook" || clip.EditedAt == nil || clip.FaceCoverage == nil || len(e.enqueued) != 0 || clip.Exports[0].Outdated {
+		t.Fatalf("after the title edit: %+v, enqueued %d", clip, len(e.enqueued))
+	}
+
+	// New times: the face track is cleared, this clip is tracked again, and the export is outdated.
+	if code := e.send(http.MethodPatch, path, `{"start": 10.25, "end": 40}`, &clip); code != http.StatusOK {
+		t.Fatalf("times edit: %d", code)
+	}
+	if clip.Start != 10.25 || clip.End != 40 || clip.FaceCoverage != nil || !clip.Exports[0].Outdated {
+		t.Fatalf("after the times edit: %+v", clip)
+	}
+	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeTrackFaces || e.enqueued[0].Stream() != jobcontracts.StreamAIJobs {
+		t.Fatalf("enqueued = %+v, want one track-faces job", e.enqueued)
+	}
+	in, _ := jobcontracts.Decode[jobcontracts.TrackFacesInput](e.enqueued[0])
+	if in.AssetID != id || in.ClipID != clipID || in.StorageKey != storage.SourceKey(id) {
+		t.Fatalf("track-faces input = %+v", in)
+	}
+	// While it runs, another edit waits.
+	if code := e.send(http.MethodPatch, path, `{"title": "Again"}`, nil); code != http.StatusConflict {
+		t.Fatalf("edit while tracking: %d, want 409", code)
 	}
 }

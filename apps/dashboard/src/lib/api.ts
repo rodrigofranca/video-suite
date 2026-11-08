@@ -113,6 +113,8 @@ export interface ClipExport {
 	sizeBytes?: number;
 	/** A file can be downloaded (possibly from an earlier export). */
 	ready: boolean;
+	/** The file was cut before the clip's start or end was changed. */
+	outdated?: boolean;
 }
 
 /** A moment that works as a short standalone video, suggested from the transcript. */
@@ -133,6 +135,8 @@ export interface Clip {
 	faceFollows: 'speaker' | 'face' | null;
 	/** People on screen at once, or null before face tracking. */
 	facePeople: number | null;
+	/** When the clip was last changed by hand, or null. */
+	editedAt: string | null;
 	exports: ClipExport[];
 }
 
@@ -187,11 +191,13 @@ export const metadataUrl = (id: string) => `${API_URL}/assets/${encodeURICompone
 export const getJobLogs = (id: string) =>
 	getJSON<{ logs: JobLog[] }>(`/jobs/${encodeURIComponent(id)}/logs`).then((r) => r.logs);
 
-async function postJSON<T>(path: string, data: unknown): Promise<T> {
+const postJSON = <T>(path: string, data: unknown) => sendJSON<T>('POST', path, data);
+
+async function sendJSON<T>(method: 'POST' | 'PATCH', path: string, data: unknown): Promise<T> {
 	let res: Response;
 	try {
 		res = await fetch(API_URL + path, {
-			method: 'POST',
+			method,
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(data)
 		});
@@ -202,6 +208,13 @@ async function postJSON<T>(path: string, data: unknown): Promise<T> {
 	if (!res.ok) throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status);
 	return body as T;
 }
+
+/** Limits of a clip edited by hand (as the API checks them). */
+export const clipLimits = { minSeconds: 3, maxSeconds: 180, maxTitle: 120 };
+
+/** Changes a clip's start, end (seconds from the start of the video) or title. */
+export const editClip = (assetId: string, clipId: string, changes: { start?: number; end?: number; title?: string }) =>
+	sendJSON<Clip>('PATCH', `/assets/${encodeURIComponent(assetId)}/clips/${encodeURIComponent(clipId)}`, changes);
 
 /** Runs one pipeline job of an asset again. */
 export const rerunJob = (assetId: string, type: string) =>

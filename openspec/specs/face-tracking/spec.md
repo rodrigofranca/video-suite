@@ -84,3 +84,10 @@ Os pesos do Light-ASD ajustados no TalkSet SHALL ser baixados uma vez do reposit
 #### Scenario: Pickle com código
 - **WHEN** o arquivo de pesos referencia `os.system`
 - **THEN** a leitura SHALL falhar com `UnpicklingError`
+
+### Requirement: Só o corte editado
+Com `clip_id`, o job SHALL rastrear só esse corte do asset, deixando os outros como estão. Se o corte não existe mais, SHALL terminar `done` com o log `nothing to track`. Um `clip_id` que não seja UUID SHALL fazer o job falhar.
+
+#### Scenario: Corte editado
+- **WHEN** o asset tem dois cortes sem rastreio e o job recebe o `clip_id` do segundo
+- **THEN** só o segundo SHALL ganhar `face_track`

@@ -289,6 +289,53 @@ func TestCreateJobIfIdleWithJobsAfterIt(t *testing.T) {
 	}
 }
 
+func TestEditClipIfIdle(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+	clip := domain.Clip{ID: domain.NewID(), JobID: jobs[0].ID, Start: 10, End: 30, Title: "A", Score: 5, Rank: 1, Model: "m"}
+	if err := s.ReplaceClips(ctx, asset.ID, []domain.Clip{clip}); err != nil {
+		t.Fatal(err)
+	}
+	s.SetFaceTrack(ctx, clip.ID, []byte(`{"coverage":1}`))
+	edited := clip
+	edited.Title = "B"
+	if err := s.EditClipIfIdle(ctx, edited, nil); !errors.Is(err, ErrBusy) {
+		t.Fatalf("while the upload's jobs are pending: %v, want ErrBusy", err)
+	}
+	for _, j := range jobs {
+		s.StartJob(ctx, j.ID)
+		s.FinishJob(ctx, j.ID, nil)
+	}
+	if err := s.EditClipIfIdle(ctx, edited, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetClip(ctx, clip.ID)
+	if got.Title != "B" || got.EditedAt == nil || got.FaceTrack == nil {
+		t.Fatalf("title edit: %+v", got)
+	}
+	edited.Start, edited.End = 5, 20
+	retrack := domain.Job{ID: domain.NewID(), AssetID: asset.ID, Type: "track-faces", InputJSON: []byte("{}"), CreatedAt: time.Now()}
+	if err := s.EditClipIfIdle(ctx, edited, &retrack); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetClip(ctx, clip.ID)
+	if got.Start != 5 || got.End != 20 || got.FaceTrack != nil {
+		t.Fatalf("times edit: %+v", got)
+	}
+	if j, err := s.GetJob(ctx, retrack.ID); err != nil || j.Status != domain.JobPending {
+		t.Fatalf("retrack job = %+v, %v", j, err)
+	}
+	if err := s.EditClipIfIdle(ctx, domain.Clip{ID: domain.NewID(), Start: 1, End: 9, Title: "x"}, nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown clip: %v, want ErrNotFound", err)
+	}
+	edited.End = edited.Start // the database refuses an empty range
+	s.FinishJob(ctx, retrack.ID, nil)
+	if err := s.EditClipIfIdle(ctx, edited, nil); err == nil {
+		t.Fatal("an empty range was saved")
+	}
+}
+
 func TestTranscripts(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

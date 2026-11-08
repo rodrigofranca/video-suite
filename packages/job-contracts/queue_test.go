@@ -1,6 +1,10 @@
 package jobcontracts
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestMessageRoundTrip(t *testing.T) {
 	in := GenerateThumbnailInput{AssetID: "a1", StorageKey: "assets/a1/source/input.mp4", AtSecond: 3}
@@ -58,5 +62,13 @@ func TestNextJobType(t *testing.T) {
 		if got != want || ok != (want != "") {
 			t.Errorf("NextJobType(%q) = %q, %v; want %q", in, got, ok, want)
 		}
+	}
+}
+
+func TestTrackFacesInputLeavesOutAnEmptyClip(t *testing.T) {
+	all, _ := json.Marshal(TrackFacesInput{AssetID: "a", StorageKey: "k"})
+	one, _ := json.Marshal(TrackFacesInput{AssetID: "a", StorageKey: "k", ClipID: "c"})
+	if strings.Contains(string(all), "clip_id") || !strings.Contains(string(one), `"clip_id":"c"`) {
+		t.Fatalf("all clips: %s; one clip: %s", all, one)
 	}
 }
