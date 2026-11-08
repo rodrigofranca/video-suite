@@ -68,6 +68,16 @@ func NewRouter(deps Deps) http.Handler {
 	mux.HandleFunc("GET /clips/{id}/download", a.downloadClip)
 	mux.HandleFunc("POST /assets/{id}/jobs", a.createJob)
 
+	mux.HandleFunc("POST /vignettes/upload", a.uploadVignette)
+	mux.HandleFunc("GET /vignettes", a.listVignettes)
+	mux.HandleFunc("GET /vignettes/{id}/file", a.vignetteFile)
+	mux.HandleFunc("DELETE /vignettes/{id}", a.deleteVignette)
+	mux.HandleFunc("GET /presets", a.listPresets)
+	mux.HandleFunc("POST /presets", a.createPreset)
+	mux.HandleFunc("GET /presets/{id}", a.getPreset)
+	mux.HandleFunc("PUT /presets/{id}", a.updatePreset)
+	mux.HandleFunc("DELETE /presets/{id}", a.deletePreset)
+
 	mux.HandleFunc("GET /jobs/{id}", a.getJob)
 	mux.HandleFunc("GET /jobs/{id}/logs", a.listJobLogs)
 
@@ -91,7 +101,7 @@ func cors(allowedOrigin string, next http.Handler) http.Handler {
 			h.Set("Access-Control-Allow-Origin", origin)
 			h.Add("Vary", "Origin")
 			if r.Method == http.MethodOptions {
-				h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 				h.Set("Access-Control-Allow-Headers", "Content-Type")
 				h.Set("Access-Control-Max-Age", "600")
 				w.WriteHeader(http.StatusNoContent)

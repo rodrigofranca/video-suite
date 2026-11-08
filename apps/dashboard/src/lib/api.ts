@@ -127,7 +127,45 @@ export interface CaptionOptions {
 	caps: boolean;
 	/** A language to translate the captions into; empty or missing for the transcript's own. */
 	language?: string;
+	/** A preset whose opening and closing the export joins (its other choices are sent explicitly). */
+	presetId?: string;
 }
+
+/** An opening or closing in the library (docs/adr/0030). */
+export interface Vignette {
+	id: string;
+	name: string;
+	filename: string;
+	sizeBytes: number;
+	createdAt: string;
+	/** Presets that use it; it cannot be deleted while they do. */
+	usedBy: string[];
+}
+
+/** A named set of export choices (docs/adr/0030). */
+export interface Preset {
+	id: string;
+	name: string;
+	captions: boolean;
+	captionStyle: CaptionStyle;
+	captionPosition: CaptionPosition;
+	/** Empty for the style's own. */
+	captionColor: CaptionColor | '';
+	/** Null for the style's own. */
+	captionCaps: boolean | null;
+	/** Empty for the transcript's own. */
+	captionLanguage: string;
+	introHorizontalId: string | null;
+	introVerticalId: string | null;
+	outroHorizontalId: string | null;
+	outroVerticalId: string | null;
+	createdAt: string;
+	updatedAt: string;
+}
+export type PresetInput = Omit<Preset, 'id' | 'createdAt' | 'updatedAt'>;
+
+/** The longest vignette accepted, in bytes and seconds (as the API and the worker check them). */
+export const vignetteLimits = { maxBytes: 100 * 1024 ** 2, maxSeconds: 30 };
 export const clipFormats: ClipFormat[] = ['original', 'vertical', 'vertical-face', 'vertical-blur'];
 
 /** The newest export of a clip in one format. */
@@ -146,6 +184,10 @@ export interface ClipExport {
 	captionLanguage?: string;
 	/** The transcript's language, when the captions were translated. */
 	translatedFrom?: string;
+	/** The preset used, and whether the file has an opening and a closing. */
+	preset?: string;
+	intro?: boolean;
+	outro?: boolean;
 	/** How a 'vertical-face' file was framed. */
 	framing?: 'face' | 'center';
 	width?: number;
@@ -236,7 +278,7 @@ export const getJobLogs = (id: string) =>
 
 const postJSON = <T>(path: string, data: unknown) => sendJSON<T>('POST', path, data);
 
-async function sendJSON<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, data?: unknown): Promise<T> {
+async function sendJSON<T>(method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', path: string, data?: unknown): Promise<T> {
 	let res: Response;
 	try {
 		res = await fetch(API_URL + path, {
@@ -287,37 +329,60 @@ export const exportClip = (
 		captionPosition: options?.position,
 		captionColor: options?.color,
 		captionCaps: options?.caps,
-		captionLanguage: options?.language || undefined
+		captionLanguage: options?.language || undefined,
+		presetId: options?.presetId || undefined
 	});
 
-/** Uploads a file, reporting progress from 0 to 1. Uses XHR because fetch has no upload progress. */
+export const listVignettes = () => getJSON<{ vignettes: Vignette[] }>('/vignettes').then((r) => r.vignettes);
+/** Link that plays a vignette (a short-lived signed link behind a redirect). */
+export const vignetteFileUrl = (id: string) => `${API_URL}/vignettes/${encodeURIComponent(id)}/file`;
+export const deleteVignette = (id: string) => sendJSON<void>('DELETE', `/vignettes/${encodeURIComponent(id)}`);
+export const listPresets = () => getJSON<{ presets: Preset[] }>('/presets').then((r) => r.presets);
+export const createPreset = (p: PresetInput) => postJSON<Preset>('/presets', p);
+export const updatePreset = (id: string, p: PresetInput) => sendJSON<Preset>('PUT', `/presets/${encodeURIComponent(id)}`, p);
+export const deletePreset = (id: string) => sendJSON<void>('DELETE', `/presets/${encodeURIComponent(id)}`);
+
+/** Uploads a vignette to the library, reporting progress from 0 to 1. */
+export function uploadVignette(name: string, file: File, onProgress: (fraction: number) => void): Promise<Vignette> {
+	return sendForm<Vignette>('/vignettes/upload', [['name', name], ['file', file]], 201, onProgress);
+}
+
+/** Uploads a file, reporting progress from 0 to 1. */
 export function uploadAsset(
 	file: File,
 	onProgress: (fraction: number) => void
 ): Promise<{ assetId: string; status: AssetStatus }> {
+	return sendForm<{ assetId: string; status: AssetStatus }>('/assets/upload', [['file', file]], 201, onProgress);
+}
+
+/** Posts a multipart form, in order, reporting upload progress from 0 to 1.
+ * Uses XHR because fetch has no upload progress. */
+function sendForm<T>(
+	path: string,
+	fields: [string, string | File][],
+	okStatus: number,
+	onProgress: (fraction: number) => void
+): Promise<T> {
 	return new Promise((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
-		xhr.open('POST', `${API_URL}/assets/upload`);
+		xhr.open('POST', API_URL + path);
 		xhr.upload.onprogress = (e) => {
 			if (e.lengthComputable) onProgress(e.loaded / e.total);
 		};
 		xhr.onload = () => {
-			let body: { assetId?: string; status?: AssetStatus; error?: string } = {};
+			let body: T & { error?: string } = {} as T & { error?: string };
 			try {
 				body = JSON.parse(xhr.responseText);
 			} catch {
 				/* not JSON */
 			}
-			if (xhr.status === 201 && body.assetId) {
-				resolve({ assetId: body.assetId, status: body.status ?? 'processing' });
-			} else {
-				reject(new ApiError(body.error ?? `Upload failed (${xhr.status})`, xhr.status));
-			}
+			if (xhr.status === okStatus) resolve(body);
+			else reject(new ApiError(body.error ?? `Upload failed (${xhr.status})`, xhr.status));
 		};
 		xhr.onerror = () =>
 			reject(new ApiError(`Could not reach the API at ${API_URL}. Is it running (make dev-api)?`, 0));
 		const form = new FormData();
-		form.append('file', file);
+		for (const [name, value] of fields) form.append(name, value);
 		xhr.send(form);
 	});
 }

@@ -52,3 +52,12 @@ func ClipKey(assetID, clipID, format string) string {
 func SubtitlesKey(assetID, language string) string {
 	return "assets/" + assetID + "/subtitles/" + language + ".vtt"
 }
+
+// VignettePrefix is the private folder of the vignette library
+// (docs/adr/0030): openings and closings joined to exported clips.
+const VignettePrefix = "library/vignettes/"
+
+// VignetteKey is where an uploaded vignette is stored.
+func VignetteKey(vignetteID string) string {
+	return VignettePrefix + vignetteID + ".mp4"
+}

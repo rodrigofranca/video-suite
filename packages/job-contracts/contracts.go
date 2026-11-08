@@ -145,8 +145,24 @@ type ExportClipInput struct {
 	CaptionColor    string `json:"caption_color,omitempty"`
 	CaptionCaps     *bool  `json:"caption_caps,omitempty"`
 	CaptionLanguage string `json:"caption_language,omitempty"`
-	OutputKey       string `json:"output_key"`
+	// Intro and Outro are vignettes joined before and after the clip, from
+	// the Preset named in Preset (docs/adr/0030); nil for none.
+	Intro     *Vignette `json:"intro,omitempty"`
+	Outro     *Vignette `json:"outro,omitempty"`
+	Preset    string    `json:"preset,omitempty"`
+	OutputKey string    `json:"output_key"`
 }
+
+// Vignette is an opening or closing, as storage keys of its versions: the
+// export uses the one in its own orientation, else the other one fitted
+// over a blurred copy of itself. At least one is set.
+type Vignette struct {
+	Horizontal string `json:"horizontal,omitempty"`
+	Vertical   string `json:"vertical,omitempty"`
+}
+
+// MaxVignetteSeconds is the longest vignette an export joins.
+const MaxVignetteSeconds = 30
 
 // TranslateTranscriptInput asks the AI worker to translate the asset's
 // transcript into Language, one of CaptionLanguages, for captions in that

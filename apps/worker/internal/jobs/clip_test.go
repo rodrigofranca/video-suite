@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -564,6 +565,83 @@ func TestExportClipFaceFallsBackToCentre(t *testing.T) {
 	for _, want := range []string{"has no face track", "a face was found in only 10% of the clip; using the centre"} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("logs miss %q:\n%s", want, logs)
+		}
+	}
+}
+
+// putVignette makes a plain-colored video, stores it in the vignette
+// library and returns its key.
+func (f *fixture) putVignette(color, size string, seconds float64) string {
+	f.t.Helper()
+	path := filepath.Join(f.t.TempDir(), color+".mp4")
+	out, err := exec.Command("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+		fmt.Sprintf("color=c=%s:s=%s:r=30:d=%.2f", color, size, seconds), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", path).CombinedOutput()
+	if err != nil {
+		f.t.Fatalf("%v: %s", err, out)
+	}
+	key := storage.VignetteKey(domain.NewID())
+	if err := f.files.UploadFile(f.ctx, key, path, "video/mp4"); err != nil {
+		f.t.Fatal(err)
+	}
+	f.t.Cleanup(func() { f.files.Delete(context.Background(), key) })
+	return key
+}
+
+// The opening and closing in the clip's orientation are used when there is
+// one, else the other version, fitted; the file records them.
+func TestExportClipWithVignettes(t *testing.T) {
+	f := newFixture(t, 6, "640x360")
+	f.jobs[jobcontracts.JobTypeExportClip] = f.jobs[jobcontracts.JobTypeSuggestClips]
+	clip := f.addClip(1, 4, "")
+	introH := f.putVignette("red", "1280x720", 1)
+	outroH, outroV := f.putVignette("green", "1280x720", 1.5), f.putVignette("blue", "720x1280", 2)
+
+	key := storage.ClipKey(f.asset, clip.ID, jobcontracts.ClipFormatVertical)
+	t.Cleanup(func() { f.files.Delete(context.Background(), key) })
+	err := f.media.ExportClip(f.ctx, f.job(jobcontracts.JobTypeExportClip), jobcontracts.ExportClipInput{
+		AssetID: f.asset, ClipID: clip.ID, StorageKey: f.src, Format: jobcontracts.ClipFormatVertical, OutputKey: key,
+		Intro: &jobcontracts.Vignette{Horizontal: introH}, Outro: &jobcontracts.Vignette{Horizontal: outroH, Vertical: outroV},
+		Preset: "My channel",
+	})
+	if err != nil {
+		t.Fatalf("%v\nlogs:\n%s", err, f.logs.String())
+	}
+	for _, want := range []string{`with the preset \"My channel\"`, "joining the opening: 1280x720, 1.0 s, silent (horizontal version, fitted)",
+		"joining the closing: 720x1280, 2.0 s, silent (vertical version)"} {
+		if !strings.Contains(f.logs.String(), want) {
+			t.Errorf("logs miss %q:\n%s", want, f.logs.String())
+		}
+	}
+	arts, _ := f.st.ListArtifacts(f.ctx, f.asset)
+	var meta struct {
+		Preset                        string
+		Intro, Outro                  bool
+		DurationSeconds, TotalSeconds float64
+	}
+	json.Unmarshal(arts[len(arts)-1].MetadataJSON, &meta)
+	if meta.Preset != "My channel" || !meta.Intro || !meta.Outro || meta.DurationSeconds != 3 || meta.TotalSeconds != 6 {
+		t.Errorf("file metadata = %+v", meta)
+	}
+	local := filepath.Join(t.TempDir(), "clip.mp4")
+	f.files.DownloadFile(f.ctx, key, local)
+	_, info, _ := ffmpeg.Probe(f.ctx, local, "clip.mp4")
+	if info.Width != 1080 || info.Height != 1920 || info.DurationSeconds < 5.9 || info.DurationSeconds > 6.15 || info.AudioCodec == "" {
+		t.Errorf("clip = %+v; want 1080x1920, 6 s, with sound", info)
+	}
+
+	for name, tc := range map[string]struct {
+		in   jobcontracts.ExportClipInput
+		want string
+	}{
+		"a key outside the library": {jobcontracts.ExportClipInput{Intro: &jobcontracts.Vignette{Vertical: f.src}}, "invalid input: opening vignette"},
+		"no version":                {jobcontracts.ExportClipInput{Outro: &jobcontracts.Vignette{}}, "invalid input: closing vignette"},
+		"a deleted vignette":        {jobcontracts.ExportClipInput{Intro: &jobcontracts.Vignette{Vertical: storage.VignetteKey(domain.NewID())}}, "could not get the opening vignette"},
+		"too long":                  {jobcontracts.ExportClipInput{Outro: &jobcontracts.Vignette{Vertical: f.putVignette("white", "720x1280", 31)}}, "the closing vignette lasts 31.0 s; vignettes can last up to 30 s"},
+	} {
+		in := tc.in
+		in.AssetID, in.ClipID, in.StorageKey, in.Format, in.OutputKey = f.asset, clip.ID, f.src, jobcontracts.ClipFormatVertical, key
+		if err := f.media.ExportClip(f.ctx, f.job(jobcontracts.JobTypeExportClip), in); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
 		}
 	}
 }

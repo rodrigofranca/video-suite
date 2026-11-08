@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS presets;
+DROP TABLE IF EXISTS vignettes;

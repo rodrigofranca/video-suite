@@ -10,6 +10,8 @@
 		getAsset,
 		getClips,
 		getTranscript,
+		listPresets,
+		listVignettes,
 		metadataUrl,
 		rerunJob,
 		type Analysis,
@@ -18,7 +20,9 @@
 		type CaptionStyle,
 		type Clip,
 		type ClipFormat,
-		type Transcript
+		type Preset,
+		type Transcript,
+		type Vignette
 	} from '$lib/api';
 	import { formatBitrate, formatBytes, formatClock, formatDate, formatResolution } from '$lib/format';
 	import { poll } from '$lib/poll.svelte';
@@ -99,6 +103,15 @@
 	let clips = $state<Clip[] | null>(null);
 	let wordTimings = $state(false);
 	let transcriptLanguage = $state('');
+	// Export presets and the vignette library, for the clips' preset choice.
+	let presets = $state<Preset[]>([]);
+	let vignettes = $state<Vignette[]>([]);
+	Promise.all([listPresets(), listVignettes()])
+		.then(([p, v]) => {
+			presets = p;
+			vignettes = v;
+		})
+		.catch(() => {});
 	let translations = $state<string[]>([]);
 	let clipsFor = '';
 	let suggestJob = $derived(asset?.jobs.findLast((j) => j.type === 'suggest-clips'));
@@ -274,6 +287,8 @@
 					{translating}
 					{transcriptLanguage}
 					{translations}
+					{presets}
+					{vignettes}
 					segments={transcript?.segments ?? []}
 					duration={meta?.durationSeconds ?? 0}
 					onpreview={(start, end) => player?.playRange(start, end)}

@@ -68,6 +68,22 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	spec := ffmpeg.ClipSpec{
 		Input: url, Start: clip.Start, Duration: duration, Format: in.Format,
 		SourceWidth: src.Width, SourceHeight: src.Height, Output: filepath.Join(dir, "clip.mp4"),
+		FrameRate: src.FrameRate, SourceAudio: src.AudioCodec != "",
+	}
+	if in.Preset != "" {
+		job.Log.Info(fmt.Sprintf("with the preset %q", in.Preset))
+	}
+	if spec.Intro, err = m.vignette(ctx, job, in.Intro, "opening", width, height, dir); err != nil {
+		return err
+	}
+	if spec.Outro, err = m.vignette(ctx, job, in.Outro, "closing", width, height, dir); err != nil {
+		return err
+	}
+	total := duration
+	for _, v := range []*ffmpeg.VignetteInput{spec.Intro, spec.Outro} {
+		if v != nil {
+			total += v.Duration
+		}
 	}
 	framing := ""
 	if in.Format == jobcontracts.ClipFormatVerticalFace {
@@ -88,10 +104,10 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	}
 	job.Log.Info("running " + ffmpeg.CommandLine(args, url))
 	started := time.Now()
-	total := time.Duration(duration * float64(time.Second))
+	length := time.Duration(total * float64(time.Second))
 	err = ffmpeg.Run(ctx, args, job.Log, ffmpeg.Options{
 		Redact:   []string{url},
-		Progress: func(written time.Duration) { job.Progress(min(int(written*100/total), 99)) },
+		Progress: func(written time.Duration) { job.Progress(min(int(written*100/length), 99)) },
 	})
 	if err != nil {
 		return err
@@ -111,6 +127,7 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 		"captions": subs.Path != "", "captionStyle": subs.Style, "language": subs.Language, "translatedFrom": subs.TranslatedFrom,
 		"captionPosition": subs.Position, "captionColor": subs.Color, "captionCaps": subs.Caps,
 		"start": clip.Start, "end": clip.End, "durationSeconds": duration,
+		"preset": in.Preset, "intro": spec.Intro != nil, "outro": spec.Outro != nil, "totalSeconds": total,
 		"width": width, "height": height, "sizeBytes": info.Size(),
 	})
 	return m.Store.CreateArtifact(ctx, domain.Artifact{
@@ -375,6 +392,48 @@ func writeFile(path string, write func(*os.File) error) error {
 		return err
 	}
 	return f.Close()
+}
+
+// vignette downloads and checks the version of an opening or closing for
+// the clip's orientation, else the other version, which FFmpeg fits over a
+// blurred copy of itself (docs/adr/0030). It returns nil without a vignette.
+func (m Media) vignette(ctx context.Context, job Job, v *jobcontracts.Vignette, role string, width, height int, dir string) (*ffmpeg.VignetteInput, error) {
+	if v == nil {
+		return nil, nil
+	}
+	want, other := "horizontal", "vertical"
+	key, fallback := v.Horizontal, v.Vertical
+	if height > width {
+		want, other = other, want
+		key, fallback = fallback, key
+	}
+	version := want + " version"
+	if key == "" {
+		key, version = fallback, other+" version, fitted"
+	}
+	if key == "" || !strings.HasPrefix(key, storage.VignettePrefix) || !strings.HasSuffix(key, ".mp4") || strings.Contains(key, "..") {
+		return nil, fmt.Errorf("invalid input: %s vignette %+v", role, *v)
+	}
+	path := filepath.Join(dir, role+".mp4")
+	if err := m.Storage.DownloadFile(ctx, key, path); err != nil {
+		return nil, fmt.Errorf("could not get the %s vignette (was it deleted from the library?): %w", role, err)
+	}
+	_, info, err := ffmpeg.Probe(ctx, path, key)
+	if err != nil {
+		return nil, fmt.Errorf("could not read the %s vignette: %w", role, err)
+	}
+	if info.Width == 0 || info.DurationSeconds <= 0 {
+		return nil, fmt.Errorf("the %s vignette has no picture", role)
+	}
+	if info.DurationSeconds > jobcontracts.MaxVignetteSeconds {
+		return nil, fmt.Errorf("the %s vignette lasts %.1f s; vignettes can last up to %d s", role, info.DurationSeconds, jobcontracts.MaxVignetteSeconds)
+	}
+	sound := "with sound"
+	if info.AudioCodec == "" {
+		sound = "silent"
+	}
+	job.Log.Info(fmt.Sprintf("joining the %s: %dx%d, %.1f s, %s (%s)", role, info.Width, info.Height, info.DurationSeconds, sound, version))
+	return &ffmpeg.VignetteInput{Path: path, Duration: info.DurationSeconds, Audio: info.AudioCodec != ""}, nil
 }
 
 // minFaceCoverage is the share of a clip in which a face must be found for
