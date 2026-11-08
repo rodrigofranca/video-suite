@@ -14,6 +14,7 @@
 	<a class="brand" href="/assets">UltraMedia</a>
 	<nav>
 		<a href="/assets" aria-current={page.url.pathname.startsWith('/assets') ? 'page' : undefined}>Videos</a>
+		<a href="/presets" aria-current={page.url.pathname.startsWith('/presets') ? 'page' : undefined}>Presets</a>
 		<a class="button" href="/upload">Upload</a>
 	</nav>
 </header>

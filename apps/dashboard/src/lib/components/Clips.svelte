@@ -13,7 +13,9 @@
 		type CaptionStyle,
 		type Clip,
 		type ClipFormat,
-		type TranscriptSegment
+		type Preset,
+		type TranscriptSegment,
+		type Vignette
 	} from '$lib/api';
 	import { captionStyleLabel, clipFormatLabel, formatBytes, formatClock, languageName } from '$lib/format';
 	import ClipEditor from './ClipEditor.svelte';
@@ -27,6 +29,8 @@
 		translating = false,
 		transcriptLanguage = '',
 		translations = [],
+		presets = [],
+		vignettes = [],
 		segments = [],
 		duration = 0,
 		onpreview,
@@ -48,6 +52,9 @@
 		/** The transcript's language, and the languages it has been translated into. */
 		transcriptLanguage?: string;
 		translations?: string[];
+		/** Export presets, and the vignette library to name their openings and closings. */
+		presets?: Preset[];
+		vignettes?: Vignette[];
 		/** Transcript segments, for snapping an edited clip to sentences. */
 		segments?: TranscriptSegment[];
 		/** The video's length in seconds, or 0 when unknown. */
@@ -104,11 +111,34 @@
 	let languageChoice = $state<Record<string, string>>({});
 	const languageOf = (clip: Clip) => languageChoice[clip.id] ?? '';
 	let otherLanguages = $derived(captionLanguages.filter((l) => l !== transcriptLanguage));
+	// A preset fills in the caption choices (which can still be changed) and
+	// brings its opening and closing (docs/adr/0030).
+	let presetChoice = $state<Record<string, string>>({});
+	const presetOf = (clip: Clip) => presets.find((p) => p.id === presetChoice[clip.id]);
+	function applyPreset(clip: Clip, id: string) {
+		presetChoice[clip.id] = id;
+		const p = presets.find((x) => x.id === id);
+		if (!p) return;
+		choice[clip.id] = !p.captions ? 'off' : available(p.captionStyle) ? p.captionStyle : fallback;
+		positionChoice[clip.id] = p.captionPosition;
+		if (p.captionColor) colorChoice[clip.id] = p.captionColor;
+		else delete colorChoice[clip.id];
+		if (p.captionCaps !== null) capsChoice[clip.id] = p.captionCaps;
+		else delete capsChoice[clip.id];
+		languageChoice[clip.id] = p.captionLanguage === transcriptLanguage ? '' : p.captionLanguage;
+	}
+	const vignetteName = (id: string | null) => vignettes.find((v) => v.id === id)?.name;
+	function presetVignettes(p: Preset): string {
+		const opening = vignetteName(p.introVerticalId) ?? vignetteName(p.introHorizontalId);
+		const closing = vignetteName(p.outroVerticalId) ?? vignetteName(p.outroHorizontalId);
+		return [opening && `opening “${opening}”`, closing && `closing “${closing}”`].filter(Boolean).join(' and ');
+	}
 	const optionsOf = (clip: Clip): CaptionOptions => ({
 		position: positionOf(clip),
 		color: colorOf(clip),
 		caps: capsOf(clip),
-		language: languageOf(clip)
+		language: languageOf(clip),
+		presetId: presetChoice[clip.id] || undefined
 	});
 	const capitalize = (p: string) => p[0].toUpperCase() + p.slice(1);
 	let starting = $state(''); // "clipId:format" being queued
@@ -189,6 +219,19 @@
 						data-testid="delete-clip">🗑 Delete</button
 					>
 				{/if}
+				{#if presets.length > 0}
+					<label class="captions">
+						Preset
+						<select
+							value={presetChoice[clip.id] ?? ''}
+							onchange={(e) => applyPreset(clip, e.currentTarget.value)}
+							data-testid="preset"
+						>
+							<option value="">None</option>
+							{#each presets as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+						</select>
+					</label>
+				{/if}
 				{#if hasSubtitles || wordTimings}
 					<label class="captions">
 						Captions
@@ -205,6 +248,11 @@
 					</label>
 				{/if}
 			</div>
+			{#if presetOf(clip) && presetVignettes(presetOf(clip)!)}
+				<p class="muted hint" data-testid="preset-vignettes">
+					Exports join the {presetVignettes(presetOf(clip)!)}.
+				</p>
+			{/if}
 			{#if (hasSubtitles || wordTimings) && captionsOf(clip) !== 'off'}
 				<div class="look" data-testid="caption-look">
 					{#if transcriptLanguage}
@@ -319,6 +367,8 @@
 										(ex.captionColor && ex.captionColor !== styleColor[ex.captionStyle ?? 'lines'] ? `, ${ex.captionColor}` : '') +
 										(ex.captionCaps && ex.captionStyle !== 'one-word' ? ', caps' : '') +
 										(ex.translatedFrom && ex.captionLanguage ? `, ${languageName(ex.captionLanguage)}` : '')
+									: ''}{ex.preset ? ` · ${ex.preset}` : ''}{ex.intro || ex.outro
+									? ` (${[ex.intro && 'opening', ex.outro && 'closing'].filter(Boolean).join(' + ')})`
 									: ''}
 							</span>
 						{/if}

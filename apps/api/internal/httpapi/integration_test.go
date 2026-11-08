@@ -1068,3 +1068,178 @@ func TestDeleteClipAndAsset(t *testing.T) {
 		t.Fatalf("delete twice: %d, want 404", code)
 	}
 }
+
+// uploadVignette posts a vignette with an optional name field before the file.
+func (e *env) uploadVignette(name, filename string, content []byte) *httptest.ResponseRecorder {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if name != "" {
+		mw.WriteField("name", name)
+	}
+	fw, _ := mw.CreateFormFile("file", filename)
+	fw.Write(content)
+	mw.Close()
+	req := httptest.NewRequest(http.MethodPost, "/vignettes/upload", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// The vignette library, presets, and an export with a preset (docs/adr/0030).
+func TestVignettesAndPresets(t *testing.T) {
+	e := newEnv(t, 0)
+	ctx := context.Background()
+
+	if rec := e.uploadVignette("", "logo.mov", fakeMP4(64)); rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("a .mov: %d", rec.Code)
+	}
+	if rec := e.uploadVignette("", "logo.mp4", []byte("not a video at all")); rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("not an MP4: %d", rec.Code)
+	}
+	var intro, outro struct {
+		ID, Name, Filename string
+		SizeBytes          int64
+	}
+	rec := e.uploadVignette("  Logo   opening ", "logo.mp4", fakeMP4(2048))
+	json.Unmarshal(rec.Body.Bytes(), &intro)
+	if rec.Code != http.StatusCreated || intro.Name != "Logo opening" || intro.Filename != "logo.mp4" || intro.SizeBytes != 2048 {
+		t.Fatalf("upload: %d %s", rec.Code, rec.Body)
+	}
+	rec = e.uploadVignette("", "Thanks for watching.mp4", fakeMP4(1024))
+	json.Unmarshal(rec.Body.Bytes(), &outro)
+	if rec.Code != http.StatusCreated || outro.Name != "Thanks for watching" {
+		t.Fatalf("upload without a name: %d %s", rec.Code, rec.Body)
+	}
+	for _, v := range []string{intro.ID, outro.ID} {
+		id := v
+		t.Cleanup(func() {
+			e.store.DeleteVignette(ctx, id)
+			e.storage.Delete(ctx, storage.VignetteKey(id))
+		})
+	}
+	if ok, _ := e.storage.Exists(ctx, storage.VignetteKey(intro.ID)); !ok {
+		t.Fatal("the vignette was not stored")
+	}
+	rec = httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/vignettes/"+intro.ID+"/file", nil))
+	if loc := rec.Header().Get("Location"); rec.Code != http.StatusFound || !strings.Contains(loc, "X-Amz-Signature") || !strings.Contains(loc, "library/vignettes/") {
+		t.Fatalf("file: %d %s", rec.Code, loc)
+	}
+
+	// Presets.
+	name := "Channel " + domain.NewID()[:8]
+	for body, want := range map[string]int{
+		`{"name": ""}`:                                               http.StatusBadRequest,
+		`{"name": "x", "captionStyle": "comic"}`:                     http.StatusBadRequest,
+		`{"name": "x", "captionLanguage": "ja"}`:                     http.StatusBadRequest,
+		`{"name": "x", "introVerticalId": "` + domain.NewID() + `"}`: http.StatusBadRequest,
+		`not json`: http.StatusBadRequest,
+	} {
+		if code := e.post("/presets", body, nil); code != want {
+			t.Errorf("POST /presets %s: %d, want %d", body, code, want)
+		}
+	}
+	var preset struct {
+		ID, Name, CaptionStyle, CaptionPosition, CaptionColor, CaptionLanguage string
+		Captions                                                               bool
+		CaptionCaps                                                            *bool
+		IntroVerticalID, IntroHorizontalID, OutroHorizontalID                  *string
+	}
+	body := `{"name": "` + name + `", "captionStyle": "box", "captionColor": "pink", "captionCaps": true, "captionLanguage": "en", "introVerticalId": "` + intro.ID + `"}`
+	if code := e.post("/presets", body, &preset); code != http.StatusCreated || preset.CaptionStyle != "box" || preset.CaptionPosition != "bottom" ||
+		!preset.Captions || preset.CaptionCaps == nil || !*preset.CaptionCaps || preset.IntroVerticalID == nil || *preset.IntroVerticalID != intro.ID || preset.IntroHorizontalID != nil {
+		t.Fatalf("create: %d %+v", code, preset)
+	}
+	t.Cleanup(func() { e.store.DeletePreset(ctx, preset.ID) })
+	if code := e.post("/presets", `{"name": "`+strings.ToLower(name)+`"}`, nil); code != http.StatusConflict {
+		t.Fatalf("the same name in lower case: %d, want 409", code)
+	}
+	var vignettes struct {
+		Vignettes []struct {
+			ID     string
+			UsedBy []string
+		}
+	}
+	e.get("/vignettes", &vignettes)
+	used := map[string][]string{}
+	for _, v := range vignettes.Vignettes {
+		used[v.ID] = v.UsedBy
+	}
+	if strings.Join(used[intro.ID], ",") != name || used[outro.ID] == nil || len(used[outro.ID]) != 0 {
+		t.Fatalf("usedBy = %v", used)
+	}
+	if code := e.send(http.MethodDelete, "/vignettes/"+intro.ID, "", nil); code != http.StatusConflict {
+		t.Fatalf("delete a vignette in use: %d, want 409", code)
+	}
+
+	// An export with the preset: its vignettes and the caption choices the body leaves out.
+	asset := e.upload("talk.mp4", fakeMP4(1024))
+	var created struct{ AssetID string }
+	json.Unmarshal(asset.Body.Bytes(), &created)
+	e.cleanupAsset(created.AssetID)
+	id := created.AssetID
+	clipID := domain.NewID()
+	e.store.ReplaceClips(ctx, id, []domain.Clip{{ID: clipID, JobID: e.jobOfType(id, jobcontracts.JobTypeSuggestClips).ID, Start: 0, End: 20, Title: "A", Score: 8, Rank: 1, Model: "m"}})
+	jobs, _ := e.store.ListJobs(ctx, id)
+	for _, j := range jobs {
+		e.store.FinishJob(ctx, j.ID, nil)
+	}
+	e.store.SaveTranscript(ctx, domain.Transcript{ID: domain.NewID(), AssetID: id, JobID: jobs[0].ID, Language: "en", Text: "hi", Model: "m"})
+	exportPath := "/assets/" + id + "/clips/" + clipID + "/exports"
+	if code := e.post(exportPath, `{"format": "vertical", "presetId": "`+domain.NewID()+`"}`, nil); code != http.StatusBadRequest {
+		t.Fatalf("an unknown preset: %d", code)
+	}
+	var job struct{ ID string }
+	e.enqueued = nil
+	if code := e.post(exportPath, `{"format": "vertical", "presetId": "`+preset.ID+`", "captionColor": "green"}`, &job); code != http.StatusAccepted {
+		t.Fatalf("export with the preset: %d", code)
+	}
+	in, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
+	if in.Preset != name || in.Intro == nil || in.Intro.Vertical != storage.VignetteKey(intro.ID) || in.Intro.Horizontal != "" || in.Outro != nil ||
+		in.CaptionStyle != "box" || in.CaptionColor != "green" || in.CaptionCaps == nil || !*in.CaptionCaps || in.CaptionPosition != "" ||
+		in.CaptionLanguage != "" { // the preset's English is the transcript's own
+		t.Fatalf("queued %+v (intro %+v)", in, in.Intro)
+	}
+	var list struct {
+		Clips []struct {
+			Exports []struct{ Format, Preset string }
+		}
+	}
+	e.get("/assets/"+id+"/clips", &list)
+	if ex := list.Clips[0].Exports; len(ex) != 1 || ex[0].Preset != name {
+		t.Fatalf("exports = %+v", ex)
+	}
+	e.store.FinishJob(ctx, job.ID, nil)
+
+	// Replacing the preset; then the vignette is free to delete.
+	var updated struct {
+		Name            string
+		Captions        bool
+		IntroVerticalID *string
+		OutroVerticalID *string
+	}
+	if code := e.send(http.MethodPut, "/presets/"+preset.ID, `{"name": "`+name+` v2", "captions": false, "outroVerticalId": "`+outro.ID+`"}`, &updated); code != 200 ||
+		updated.Name != name+" v2" || updated.Captions || updated.IntroVerticalID != nil || updated.OutroVerticalID == nil {
+		t.Fatalf("update: %d %+v", code, updated)
+	}
+	e.enqueued = nil
+	e.post(exportPath, `{"format": "original", "presetId": "`+preset.ID+`"}`, &job)
+	in, _ = jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
+	if in.Captions || in.Intro != nil || in.Outro == nil || in.Outro.Vertical != storage.VignetteKey(outro.ID) {
+		t.Fatalf("queued with the new preset: %+v", in)
+	}
+	e.store.FinishJob(ctx, job.ID, nil)
+	if code := e.send(http.MethodDelete, "/vignettes/"+intro.ID, "", nil); code != http.StatusNoContent {
+		t.Fatalf("delete a free vignette: %d", code)
+	}
+	if ok, _ := e.storage.Exists(ctx, storage.VignetteKey(intro.ID)); ok {
+		t.Fatal("the vignette file is still stored")
+	}
+	if code := e.send(http.MethodDelete, "/presets/"+preset.ID, "", nil); code != http.StatusNoContent {
+		t.Fatalf("delete the preset: %d", code)
+	}
+	if code := e.get("/presets/"+preset.ID, nil); code != http.StatusNotFound {
+		t.Fatalf("get a deleted preset: %d", code)
+	}
+}

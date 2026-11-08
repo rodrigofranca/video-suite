@@ -26,3 +26,6 @@ var idPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4
 func IsID(s string) bool {
 	return idPattern.MatchString(s)
 }
+
+// MaxVignetteBytes is the largest vignette accepted (docs/adr/0030).
+const MaxVignetteBytes int64 = 100 << 20

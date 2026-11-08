@@ -125,3 +125,10 @@ O pacote SHALL definir `After`, com o job que pode esperar por um job fora do pi
 #### Scenario: Tradução termina
 - **WHEN** um `translate-transcript` termina, com sucesso ou não, e há um `export-clip` pendente do vídeo
 - **THEN** o worker de IA SHALL pôr a exportação em `jobs`
+
+### Requirement: Vinhetas no contrato de exportação
+`ExportClipInput` SHALL ter `intro` e `outro` opcionais, cada um com as chaves `horizontal` e `vertical` de uma vinheta (ao menos uma), e `preset` com o nome do preset. O pacote SHALL definir `MaxVignetteSeconds` (30).
+
+#### Scenario: Exportação sem preset
+- **WHEN** um `ExportClipInput` sem vinhetas é codificado
+- **THEN** o JSON SHALL não ter `intro`, `outro` nem `preset`

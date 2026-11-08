@@ -28,6 +28,20 @@ type ClipSpec struct {
 	// Track is where to centre a "vertical-face" crop over time; empty
 	// means the middle of the frame.
 	Track []TrackPoint
+	// Intro and Outro are vignettes joined before and after the clip
+	// (docs/adr/0030); nil for none. They are converted to the clip's
+	// size and FrameRate (30 when unknown), and SourceAudio says whether
+	// the clip itself has sound.
+	Intro, Outro *VignetteInput
+	FrameRate    float64
+	SourceAudio  bool
+}
+
+// VignetteInput is an opening or closing to join to a clip.
+type VignetteInput struct {
+	Path     string
+	Duration float64 // seconds
+	Audio    bool
 }
 
 // TrackPoint is the centre of the 9:16 window at a time of the clip.
@@ -81,18 +95,69 @@ func ClipArgs(c ClipSpec) ([]string, error) {
 	if c.SubtitlesFile != "" {
 		graph += ",ass=filename=" + escapeFilterValue(c.SubtitlesFile)
 	}
-	graph += "[v]"
+	// Seek and length are options of the source input, so they apply to it alone.
+	inputs := []string{"-ss", seconds(c.Start), "-t", seconds(c.Duration), "-i", c.Input}
+	maps := []string{"-map", "[v]", "-map", "0:a:0?"}
+	if c.Intro != nil || c.Outro != nil {
+		graph, inputs = joinVignettes(c, graph, inputs, w, h)
+		maps = []string{"-map", "[v]", "-map", "[a]"}
+	} else {
+		graph += "[v]"
+	}
 
-	return []string{
-		"-hide_banner", "-nostdin", "-y", "-loglevel", "warning",
-		"-ss", seconds(c.Start), "-i", c.Input, "-t", seconds(c.Duration),
-		"-filter_complex", graph,
-		"-map", "[v]", "-map", "0:a:0?",
+	args := []string{"-hide_banner", "-nostdin", "-y", "-loglevel", "warning"}
+	args = append(args, inputs...)
+	args = append(args, "-filter_complex", graph)
+	args = append(args, maps...)
+	return append(args,
 		"-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
 		"-c:a", "aac", "-b:a", "160k", "-ac", "2",
 		"-movflags", "+faststart", // playable while it downloads
 		c.Output,
-	}, nil
+	), nil
+}
+
+// joinVignettes extends a clip's filter graph (its picture chain, not yet
+// labelled) with the vignettes: each is fitted whole into the clip's size
+// over a blurred copy of itself, at the clip's frame rate, with its sound or
+// silence, and the parts are joined in order into [v] and [a]. The clip gets
+// silence too when the source has no sound.
+func joinVignettes(c ClipSpec, clipGraph string, inputs []string, w, h int) (string, []string) {
+	fps := c.FrameRate
+	if fps <= 0 {
+		fps = 30
+	}
+	rate := strconv.FormatFloat(fps, 'f', 3, 64)
+	const audioFormat = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
+	audio := func(input int, has bool, duration float64, label string) string {
+		if has {
+			return fmt.Sprintf("[%d:a:0]%s[%s]", input, audioFormat, label)
+		}
+		return fmt.Sprintf("anullsrc=r=48000:cl=stereo,atrim=duration=%s,%s[%s]", seconds(duration), audioFormat, label)
+	}
+	parts := []string{clipGraph + ",fps=" + rate + ",format=yuv420p[cv]", audio(0, c.SourceAudio, c.Duration, "ca")}
+	var order []string
+	input := 0 // the source
+	vignette := func(v *VignetteInput, name string) {
+		input++
+		inputs = append(inputs, "-i", v.Path)
+		parts = append(parts,
+			fmt.Sprintf("[%[1]d:v:0]fps=%[2]s,split=2[%[3]sbg][%[3]sfg];"+
+				"[%[3]sbg]scale=%[4]d:%[5]d:force_original_aspect_ratio=increase,crop=%[4]d:%[5]d,gblur=sigma=30,eq=brightness=-0.08[%[3]sbgb];"+
+				"[%[3]sfg]scale=%[4]d:%[5]d:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1[%[3]sfgs];"+
+				"[%[3]sbgb][%[3]sfgs]overlay=(W-w)/2:(H-h)/2,setsar=1,format=yuv420p[%[3]sv]", input, rate, name, w, h),
+			audio(input, v.Audio, v.Duration, name+"a"))
+		order = append(order, "["+name+"v]["+name+"a]")
+	}
+	if c.Intro != nil {
+		vignette(c.Intro, "i")
+	}
+	order = append(order, "[cv][ca]")
+	if c.Outro != nil {
+		vignette(c.Outro, "o")
+	}
+	parts = append(parts, fmt.Sprintf("%sconcat=n=%d:v=1:a=1[v][a]", strings.Join(order, ""), len(order)))
+	return strings.Join(parts, ";"), inputs
 }
 
 func seconds(s float64) string { return strconv.FormatFloat(s, 'f', 3, 64) }

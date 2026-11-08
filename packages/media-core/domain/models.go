@@ -143,3 +143,32 @@ const (
 	// MaxClipTitle is the longest title, in characters.
 	MaxClipTitle = 120
 )
+
+// Vignette is an opening or closing in the library, an uploaded MP4 joined
+// to exported clips by a Preset (docs/adr/0030).
+type Vignette struct {
+	ID         string
+	Name       string
+	Filename   string // as uploaded
+	StorageKey string
+	SizeBytes  int64
+	CreatedAt  time.Time
+}
+
+// Preset is a named set of export choices: the captions' look and language,
+// and the opening and closing, each in a horizontal and a vertical version
+// (docs/adr/0030).
+type Preset struct {
+	ID              string
+	Name            string
+	Captions        bool
+	CaptionStyle    string
+	CaptionPosition string
+	CaptionColor    string // empty for the style's own
+	CaptionCaps     *bool  // nil for the style's own
+	CaptionLanguage string // empty for the transcript's own
+	// Vignette IDs; empty for none.
+	IntroHorizontal, IntroVertical string
+	OutroHorizontal, OutroVertical string
+	CreatedAt, UpdatedAt           time.Time
+}

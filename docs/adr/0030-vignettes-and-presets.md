@@ -1,0 +1,15 @@
+# Vinhetas de abertura e encerramento, e presets de exportação
+
+Para publicar um corte com a cara de um canal, faltavam duas coisas: uma vinheta antes e depois do corte, e um jeito de não repetir as mesmas escolhas a cada exportação. Agora há uma biblioteca de vinhetas e os **presets**: um preset guarda como a legenda aparece, em que idioma, e qual abertura e qual encerramento entram no corte. No futuro, a marca d'água entra no preset também.
+
+**A vinheta:** é um MP4 curto que você sobe pronto, com logo, animação e som. A biblioteca guarda cada vinheta uma vez, num lugar privado do storage (`library/vignettes/{id}.mp4`), e vários presets podem usar a mesma. O limite é de 100 MB por arquivo e 30 s de duração. A API confere só o tipo do arquivo, porque não tem FFmpeg; o worker mede a vinheta ao exportar e recusa as mais longas. O painel lê a duração no próprio navegador e avisa antes do envio. Uma vinheta usada por um preset não pode ser apagada, e a mensagem diz por quais.
+
+**Uma versão por formato:** cada abertura e cada encerramento do preset tem até duas versões, uma para cortes deitados (16:9) e outra para cortes em pé (9:16). A exportação usa a versão do formato do corte; se faltar, usa a outra inteira, sobre uma cópia desfocada dela mesma, como no formato `vertical-blur`. Quem tem só uma vinheta continua servido, e quem quer o acabamento certo sobe as duas.
+
+**A junção:** um só comando FFmpeg faz tudo, sem codificar o corte duas vezes. O corte é recortado, legendado e enquadrado como antes. Cada vinheta é ajustada ao tamanho e à taxa de quadros do corte, com o som em estéreo de 48 kHz, ou silêncio quando não tem som. Os três pedaços são emendados com o filtro `concat`, num corte seco: a vinheta traz a própria transição. Um vídeo sem som ganha uma trilha muda, para o arquivo ter som do começo ao fim. O início e a duração do corte passam a ser opções da entrada de origem, e não da saída, para valerem só para ela.
+
+**O preset:** guarda as escolhas de legenda (ligada ou não, estilo, posição, cor, maiúsculas, idioma) e as quatro vinhetas. O formato continua sendo escolhido no botão de exportar. Na exportação, `presetId` traz as vinhetas e as escolhas de legenda que o pedido deixa de fora; o que o pedido traz vale mais. A API copia as chaves das vinhetas e o nome do preset para o job. Assim, mudar ou apagar o preset depois não altera uma exportação já pedida, e o arquivo registra o preset e se tem abertura e encerramento. Um idioma de legenda igual ao da transcrição é a original, como em qualquer exportação (ADR 0029).
+
+**No painel:** a página nova **Presets** cria, edita e apaga presets, e sobe, toca e apaga vinhetas. Em cada corte, o seletor **Preset** preenche as opções da legenda, que ainda podem ser mudadas, e avisa quais vinhetas vão entrar. O arquivo pronto diz o preset e se tem abertura e encerramento.
+
+**Limitações:** a junção é um corte seco, sem transição entre a vinheta e o corte. As vinhetas não são legendadas nem enquadradas pelo rosto. Tudo é compartilhado entre quem usa a plataforma, porque ainda não há login.

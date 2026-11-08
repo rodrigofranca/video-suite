@@ -69,6 +69,12 @@ type clipExportDTO struct {
 	// language when the captions were translated (docs/adr/0029).
 	CaptionLanguage string `json:"captionLanguage,omitempty"`
 	TranslatedFrom  string `json:"translatedFrom,omitempty"`
+	// Preset is the name of the preset the export used (of the file once it
+	// is ready, the one asked for before); Intro and Outro say whether the
+	// file has an opening and a closing (docs/adr/0030).
+	Preset string `json:"preset,omitempty"`
+	Intro  bool   `json:"intro,omitempty"`
+	Outro  bool   `json:"outro,omitempty"`
 	// Framing is how a "vertical-face" file was framed: "face" or "center".
 	Framing   string `json:"framing,omitempty"`
 	Width     int    `json:"width,omitempty"`
@@ -90,6 +96,9 @@ type clipFileMeta struct {
 	CaptionCaps     bool    `json:"captionCaps"`
 	Language        string  `json:"language"`
 	TranslatedFrom  string  `json:"translatedFrom"`
+	Preset          string  `json:"preset"`
+	Intro           bool    `json:"intro"`
+	Outro           bool    `json:"outro"`
 	Framing         string  `json:"framing"`
 	Width           int     `json:"width"`
 	Height          int     `json:"height"`
@@ -196,10 +205,10 @@ func clipExports(clip domain.Clip, jobs []domain.Job, arts []domain.Artifact) []
 		e := clipExportDTO{Format: format, JobID: job.ID, Status: job.Status, Progress: job.Progress, Error: job.ErrorMessage}
 		var in jobcontracts.ExportClipInput
 		json.Unmarshal(job.InputJSON, &in)
-		e.CaptionLanguage = in.CaptionLanguage // asked for; the file's below
+		e.CaptionLanguage, e.Preset = in.CaptionLanguage, in.Preset // asked for; the file's below
 		if file, ok := latestClipFile(arts, clipID, format); ok {
 			e.Captions, e.CaptionStyle, e.Framing, e.Width, e.Height, e.SizeBytes, e.Ready = file.Captions, file.CaptionStyle, file.Framing, file.Width, file.Height, file.SizeBytes, true
-			e.CaptionLanguage = ""
+			e.CaptionLanguage, e.Preset, e.Intro, e.Outro = "", file.Preset, file.Intro, file.Outro
 			if file.Captions {
 				e.CaptionPosition, e.CaptionColor, e.CaptionCaps = file.CaptionPosition, file.CaptionColor, file.CaptionCaps
 				e.CaptionLanguage, e.TranslatedFrom = file.Language, file.TranslatedFrom
@@ -407,30 +416,39 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 		a.internalError(w, r, err)
 		return
 	}
-	body := struct {
-		Format          string `json:"format"`
-		Captions        *bool  `json:"captions"`
-		CaptionStyle    string `json:"captionStyle"`
-		CaptionPosition string `json:"captionPosition"`
-		CaptionColor    string `json:"captionColor"`
-		CaptionCaps     *bool  `json:"captionCaps"`
-		CaptionLanguage string `json:"captionLanguage"`
-	}{}
-	err = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
-	if body.CaptionStyle == "" {
-		body.CaptionStyle = jobcontracts.CaptionStyles[0]
+	var choice exportBody
+	err = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&choice)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, exportUsage)
+		return
 	}
-	if err != nil || !slices.Contains(jobcontracts.ClipFormats, body.Format) || !slices.Contains(jobcontracts.CaptionStyles, body.CaptionStyle) ||
+	var preset domain.Preset
+	var intro, outro *jobcontracts.Vignette
+	if choice.PresetID != "" {
+		if domain.IsID(choice.PresetID) {
+			preset, err = a.Store.GetPreset(ctx, choice.PresetID)
+		}
+		if !domain.IsID(choice.PresetID) || errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusBadRequest, "unknown preset")
+			return
+		}
+		if err == nil {
+			intro, outro, err = a.exportVignettes(ctx, preset)
+		}
+		if err != nil {
+			a.internalError(w, r, err)
+			return
+		}
+	}
+	body := choice.resolve(preset)
+	if !slices.Contains(jobcontracts.ClipFormats, body.Format) || !slices.Contains(jobcontracts.CaptionStyles, body.CaptionStyle) ||
 		(body.CaptionPosition != "" && !slices.Contains(jobcontracts.CaptionPositions, body.CaptionPosition)) ||
 		(body.CaptionColor != "" && !slices.Contains(jobcontracts.CaptionColors, body.CaptionColor)) ||
 		(body.CaptionLanguage != "" && !slices.Contains(jobcontracts.CaptionLanguages, body.CaptionLanguage)) {
-		writeError(w, http.StatusBadRequest, `expected a JSON body like {"format": "vertical", "captions": true, "captionStyle": "highlight", "captionPosition": "bottom", "captionColor": "yellow", "captionCaps": false, "captionLanguage": "en"}; formats: `+
-			strings.Join(jobcontracts.ClipFormats, ", ")+"; caption styles: "+strings.Join(jobcontracts.CaptionStyles, ", ")+
-			"; positions: "+strings.Join(jobcontracts.CaptionPositions, ", ")+"; colors: "+strings.Join(jobcontracts.CaptionColors, ", ")+
-			"; languages (empty for the transcript's own): "+strings.Join(jobcontracts.CaptionLanguages, ", "))
+		writeError(w, http.StatusBadRequest, exportUsage)
 		return
 	}
-	captions := body.Captions == nil || *body.Captions
+	captions := body.Captions
 	language, translate, err := a.captionLanguage(ctx, asset.ID, captions, body.CaptionLanguage)
 	if errors.Is(err, errNothingToTranslate) {
 		writeError(w, http.StatusConflict, err.Error())
@@ -453,7 +471,8 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 		AssetID: asset.ID, ClipID: clip.ID, StorageKey: src.StorageKey, Format: body.Format,
 		Captions: captions, CaptionStyle: body.CaptionStyle,
 		CaptionPosition: body.CaptionPosition, CaptionColor: body.CaptionColor, CaptionCaps: body.CaptionCaps,
-		CaptionLanguage: language, OutputKey: storage.ClipKey(asset.ID, clip.ID, body.Format),
+		CaptionLanguage: language, Intro: intro, Outro: outro, Preset: preset.Name,
+		OutputKey: storage.ClipKey(asset.ID, clip.ID, body.Format),
 	})
 	if err != nil {
 		a.internalError(w, r, err)
@@ -506,6 +525,64 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 }
 
 var errNothingToTranslate = errors.New("this video has no transcript to translate the captions from")
+
+var exportUsage = `expected a JSON body like {"format": "vertical", "captions": true, "captionStyle": "highlight", "captionPosition": "bottom", "captionColor": "yellow", "captionCaps": false, "captionLanguage": "en", "presetId": "<id>"}; formats: ` +
+	strings.Join(jobcontracts.ClipFormats, ", ") + "; caption styles: " + strings.Join(jobcontracts.CaptionStyles, ", ") +
+	"; positions: " + strings.Join(jobcontracts.CaptionPositions, ", ") + "; colors: " + strings.Join(jobcontracts.CaptionColors, ", ") +
+	"; languages (empty for the transcript's own): " + strings.Join(jobcontracts.CaptionLanguages, ", ")
+
+// exportBody is what POST .../exports takes. With presetId, the preset
+// gives its openings and closings, and the caption choices the body leaves
+// out (docs/adr/0030).
+type exportBody struct {
+	Format          string  `json:"format"`
+	Captions        *bool   `json:"captions"`
+	CaptionStyle    *string `json:"captionStyle"`
+	CaptionPosition *string `json:"captionPosition"`
+	CaptionColor    *string `json:"captionColor"`
+	CaptionCaps     *bool   `json:"captionCaps"`
+	CaptionLanguage *string `json:"captionLanguage"`
+	PresetID        string  `json:"presetId"`
+}
+
+// exportChoice is an export's caption choices once the preset and the
+// defaults have filled in what the body left out.
+type exportChoice struct {
+	Format                                                       string
+	Captions                                                     bool
+	CaptionStyle, CaptionPosition, CaptionColor, CaptionLanguage string
+	CaptionCaps                                                  *bool
+}
+
+// resolve fills the choices the body left out from the preset (a zero
+// Preset when none was given) and the defaults.
+func (b exportBody) resolve(p domain.Preset) exportChoice {
+	pick := func(v *string, fromPreset string) string {
+		if v != nil {
+			return *v
+		}
+		return fromPreset
+	}
+	c := exportChoice{
+		Format: b.Format, Captions: p.ID == "" || p.Captions,
+		CaptionStyle: pick(b.CaptionStyle, p.CaptionStyle), CaptionPosition: pick(b.CaptionPosition, p.CaptionPosition),
+		CaptionColor: pick(b.CaptionColor, p.CaptionColor), CaptionLanguage: pick(b.CaptionLanguage, p.CaptionLanguage),
+		CaptionCaps: p.CaptionCaps,
+	}
+	if b.Captions != nil {
+		c.Captions = *b.Captions
+	}
+	if b.CaptionCaps != nil {
+		c.CaptionCaps = b.CaptionCaps
+	}
+	if c.CaptionStyle == "" {
+		c.CaptionStyle = jobcontracts.CaptionStyles[0]
+	}
+	if c.CaptionPosition == jobcontracts.CaptionPositions[0] {
+		c.CaptionPosition = "" // the default, as before presets
+	}
+	return c
+}
 
 // captionLanguage returns the language an export's captions are burned in
 // (empty for the transcript's own) and whether the transcript must be

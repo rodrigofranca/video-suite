@@ -489,3 +489,77 @@ func TestDeleteClipIfIdle(t *testing.T) {
 		t.Fatalf("while a job is pending: %v, want ErrBusy", err)
 	}
 }
+
+func TestVignettesAndPresets(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	newVignette := func(name string) domain.Vignette {
+		t.Helper()
+		v := domain.Vignette{ID: domain.NewID(), Name: name, Filename: name + ".mp4", SizeBytes: 1000}
+		v.StorageKey = "library/vignettes/" + v.ID + ".mp4"
+		if err := s.CreateVignette(ctx, v); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { s.db.Exec(context.Background(), `DELETE FROM vignettes WHERE id = $1`, v.ID) })
+		return v
+	}
+	intro, outro := newVignette("Logo"), newVignette("Ending")
+	list, err := s.ListVignettes(ctx)
+	if err != nil || len(list) < 2 {
+		t.Fatalf("ListVignettes = %d, %v", len(list), err)
+	}
+	if got, err := s.GetVignette(ctx, intro.ID); err != nil || got.Name != "Logo" || got.StorageKey != intro.StorageKey || got.SizeBytes != 1000 {
+		t.Fatalf("GetVignette = %+v, %v", got, err)
+	}
+
+	caps := true
+	name := "Channel " + domain.NewID()[:8]
+	p := domain.Preset{ID: domain.NewID(), Name: name, Captions: true, CaptionStyle: "box", CaptionPosition: "top",
+		CaptionColor: "pink", CaptionCaps: &caps, CaptionLanguage: "en", IntroVertical: intro.ID, OutroHorizontal: outro.ID}
+	if err := s.CreatePreset(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.DeletePreset(context.Background(), p.ID) })
+	same := domain.Preset{ID: domain.NewID(), Name: strings.ToUpper(name), CaptionStyle: "lines"}
+	if err := s.CreatePreset(ctx, same); !errors.Is(err, ErrNameTaken) {
+		t.Fatalf("a second preset with the name in other case: %v, want ErrNameTaken", err)
+	}
+	got, err := s.GetPreset(ctx, p.ID)
+	if err != nil || got.Name != name || got.CaptionStyle != "box" || got.CaptionCaps == nil || !*got.CaptionCaps ||
+		got.CaptionLanguage != "en" || got.IntroVertical != intro.ID || got.IntroHorizontal != "" || got.OutroHorizontal != outro.ID {
+		t.Fatalf("GetPreset = %+v, %v", got, err)
+	}
+
+	// The vignettes in use cannot be deleted.
+	var inUse *InUseError
+	if err := s.DeleteVignette(ctx, intro.ID); !errors.As(err, &inUse) || inUse.Presets[0] != name {
+		t.Fatalf("delete a vignette in use: %v", err)
+	}
+	p.IntroVertical, p.CaptionCaps, p.Name = "", nil, name+" v2"
+	if err := s.UpdatePreset(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetPreset(ctx, p.ID)
+	if got.IntroVertical != "" || got.CaptionCaps != nil || got.Name != name+" v2" || !got.UpdatedAt.After(got.CreatedAt) {
+		t.Fatalf("after the update: %+v", got)
+	}
+	if err := s.DeleteVignette(ctx, intro.ID); err != nil {
+		t.Fatalf("delete a vignette no longer used: %v", err)
+	}
+	if err := s.DeleteVignette(ctx, intro.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete it again: %v", err)
+	}
+	if err := s.UpdatePreset(ctx, domain.Preset{ID: domain.NewID(), Name: "x", CaptionStyle: "lines"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("update an unknown preset: %v", err)
+	}
+	presets, err := s.ListPresets(ctx)
+	if err != nil || len(presets) == 0 {
+		t.Fatalf("ListPresets = %v, %v", presets, err)
+	}
+	if err := s.DeletePreset(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetPreset(ctx, p.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after delete: %v", err)
+	}
+}

@@ -94,3 +94,20 @@ export function formatBitrate(bitsPerSecond?: number): string {
 	if (!bitsPerSecond) return '';
 	return bitsPerSecond >= 1e6 ? `${(bitsPerSecond / 1e6).toFixed(1)} Mb/s` : `${Math.round(bitsPerSecond / 1e3)} kb/s`;
 }
+
+/** What a preset does, on one line: "Word box, top, pink, caps · English". */
+export function describeCaptions(p: {
+	captions: boolean;
+	captionStyle: string;
+	captionPosition: string;
+	captionColor: string;
+	captionCaps: boolean | null;
+	captionLanguage: string;
+}): string {
+	if (!p.captions) return 'No captions';
+	const parts = [captionStyleLabel(p.captionStyle)];
+	if (p.captionPosition && p.captionPosition !== 'bottom') parts.push(p.captionPosition);
+	if (p.captionColor) parts.push(p.captionColor);
+	if (p.captionCaps !== null) parts.push(p.captionCaps ? 'caps' : 'no caps');
+	return parts.join(', ') + (p.captionLanguage ? ` · ${languageName(p.captionLanguage)}` : ' · spoken language');
+}
