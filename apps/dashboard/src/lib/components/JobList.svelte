@@ -3,7 +3,17 @@
 	import { formatDuration, formatTime, jobLabel } from '$lib/format';
 	import StatusBadge from './StatusBadge.svelte';
 
-	let { jobs, onRerun }: { jobs: Job[]; onRerun?: (type: string) => Promise<void> } = $props();
+	let {
+		jobs,
+		onRerun,
+		confirmRerun = {}
+	}: {
+		jobs: Job[];
+		onRerun?: (type: string) => Promise<void>;
+		/** Per job type, what running it again changes: asked before it runs. */
+		confirmRerun?: Record<string, string>;
+	} = $props();
+	let confirming = $state<string | null>(null); // job type waiting for a yes
 
 	let openJob = $state<string | null>(null);
 	let logs = $state<JobLog[]>([]);
@@ -32,6 +42,11 @@
 
 	async function rerun(job: Job) {
 		if (!onRerun) return;
+		if (confirmRerun[job.type] && confirming !== job.type) {
+			confirming = job.type;
+			return;
+		}
+		confirming = null;
 		rerunning = job.type;
 		rerunError = '';
 		try {
@@ -87,9 +102,20 @@
 			{/if}
 			{#if canRerun(job) && (job.status === 'failed' || openJob === job.id)}
 				<div class="actions">
-					<button class="secondary" onclick={() => rerun(job)} disabled={rerunning !== null} data-testid="rerun">
-						{rerunning === job.type ? 'Starting…' : 'Run again'}
+					{#if confirming === job.type}
+						<p class="confirm" data-testid="rerun-confirm">{confirmRerun[job.type]}</p>
+					{/if}
+					<button
+						class={confirming === job.type ? 'primary' : 'secondary'}
+						onclick={() => rerun(job)}
+						disabled={rerunning !== null}
+						data-testid="rerun"
+					>
+						{rerunning === job.type ? 'Starting…' : confirming === job.type ? 'Yes, run again' : 'Run again'}
 					</button>
+					{#if confirming === job.type}
+						<button class="secondary" onclick={() => (confirming = null)}>Cancel</button>
+					{/if}
 					{#if rerunError && rerunning === null}<span class="job-error inline">{rerunError}</span>{/if}
 				</div>
 			{/if}
@@ -162,6 +188,11 @@
 	}
 	.inline {
 		margin: 0;
+	}
+	.confirm {
+		flex-basis: 100%;
+		margin: 0;
+		font-size: 0.9rem;
 	}
 	.progress {
 		height: 4px;

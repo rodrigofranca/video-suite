@@ -64,12 +64,12 @@ class ClipSuggester:
         segments = speech_segments(transcript["segments"]) if transcript else []
         if not segments:
             ctx.log.info("nothing to clip: there is no speech")
-            self.store.replace_clips(inp.asset_id, ctx.job.id, [], "")
+            self.save(ctx, inp.asset_id, [], "")
             return
         speech = segments[-1]["end"] - segments[0]["start"]
         if speech < MIN_SPEECH_SECONDS:
             ctx.log.info("nothing to clip: the speech lasts %.0f seconds, under %.0f", speech, MIN_SPEECH_SECONDS)
-            self.store.replace_clips(inp.asset_id, ctx.job.id, [], "")
+            self.save(ctx, inp.asset_id, [], "")
             return
 
         prompt = build_prompt(transcript["language"], segments)
@@ -81,7 +81,7 @@ class ClipSuggester:
         messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
         clips, completion = ask(self.client, ctx, messages, lambda text: parse_answer(text, segments))
 
-        self.store.replace_clips(inp.asset_id, ctx.job.id, clips, completion.model)
+        clips = self.save(ctx, inp.asset_id, clips, completion.model)
         if not clips:
             ctx.log.info("no moment works as a standalone clip")
         for c in clips:
@@ -93,6 +93,39 @@ class ClipSuggester:
             "%d clips; model %s, %s tokens in, %s out", len(clips), completion.model,
             count(completion.prompt_tokens), count(completion.completion_tokens),
         )
+
+
+    def save(self, ctx: JobContext, asset_id: str, clips: list[dict], model: str) -> list[dict]:
+        """Replaces the asset's suggestions with clips, keeping the clips
+        edited by hand (docs/adr/0026); returns the new clips stored."""
+        edited = self.store.edited_clips(asset_id)
+        fresh, ranks = merge_with_edited(clips, edited)
+        self.store.replace_clips(asset_id, ctx.job.id, fresh, model, ranks)
+        if edited:
+            dropped = len(clips) - len(fresh)
+            ctx.log.info(
+                "kept %d clip%s edited by hand%s", len(edited), "" if len(edited) == 1 else "s",
+                f"; left out {dropped} new suggestion{'' if dropped == 1 else 's'} that repeated them" if dropped else "",
+            )
+        return fresh
+
+
+def merge_with_edited(clips: list[dict], edited: list[dict]) -> tuple[list[dict], dict[str, int]]:
+    """New suggestions without those that share more than half of a clip
+    edited by hand, and everyone ranked by score (edited clips first on a
+    tie, then by start). Returns the new clips, ranked, and the edited
+    clips' ranks by id."""
+    fresh = [c for c in clips if not any(_overlap(c, e) > 0.5 for e in edited)]
+    everyone = [(e["score"], 0, e["start"], ("edited", e["id"])) for e in edited]
+    everyone += [(c["score"], 1, c["start"], ("new", i)) for i, c in enumerate(fresh)]
+    everyone.sort(key=lambda x: (-x[0], x[1], x[2]))
+    ranks: dict[str, int] = {}
+    for rank, (_, _, _, (kind, key)) in enumerate(everyone, start=1):
+        if kind == "edited":
+            ranks[key] = rank
+        else:
+            fresh[key] = {**fresh[key], "rank": rank}
+    return fresh, ranks
 
 
 def speech_segments(segments: list[dict]) -> list[dict]:

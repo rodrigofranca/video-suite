@@ -155,10 +155,25 @@ class Store:
         chapters = row[3] if not isinstance(row[3], str) else json.loads(row[3])
         return {"language": row[0], "summary": row[1], "tags": list(row[2]), "chapters": chapters, "model": row[4]}
 
-    def replace_clips(self, asset_id: str, job_id: str, clips: list[dict], model: str) -> None:
-        """Store an asset's suggested clips, removing earlier ones (see ReplaceClips in Go)."""
+    def edited_clips(self, asset_id: str) -> list[dict]:
+        """The asset's clips changed by hand, which new suggestions keep (docs/adr/0026)."""
+        rows = self.conn.execute(
+            """SELECT id::text, start_seconds, end_seconds, title, score FROM clips
+               WHERE asset_id = %s AND edited_at IS NOT NULL ORDER BY rank""",
+            (asset_id,),
+        ).fetchall()
+        return [{"id": r[0], "start": r[1], "end": r[2], "title": r[3], "score": r[4]} for r in rows]
+
+    def replace_clips(
+        self, asset_id: str, job_id: str, clips: list[dict], model: str, edited_ranks: dict[str, int] | None = None
+    ) -> None:
+        """Store an asset's suggested clips, removing the earlier suggestions
+        but not the clips edited by hand, which get the ranks in edited_ranks
+        (see ReplaceClips in Go)."""
         with self.conn.transaction():
-            self.conn.execute("DELETE FROM clips WHERE asset_id = %s", (asset_id,))
+            self.conn.execute("DELETE FROM clips WHERE asset_id = %s AND edited_at IS NULL", (asset_id,))
+            for clip_id, rank in (edited_ranks or {}).items():
+                self.conn.execute("UPDATE clips SET rank = %s WHERE id = %s AND asset_id = %s", (rank, clip_id, asset_id))
             for c in clips:
                 self.conn.execute(
                     """INSERT INTO clips (id, asset_id, job_id, start_seconds, end_seconds, title, reason, score, rank, model)
@@ -166,6 +181,10 @@ class Store:
                     (str(uuid.uuid4()), asset_id, job_id, c["start"], c["end"], c["title"], c["reason"],
                      c["score"], c["rank"], model),
                 )
+
+    def mark_edited(self, clip_id: str) -> None:
+        """For tests: as if someone had changed the clip by hand."""
+        self.conn.execute("UPDATE clips SET edited_at = NOW() WHERE id = %s", (clip_id,))
 
     def get_clips(self, asset_id: str) -> list[dict]:
         rows = self.conn.execute(

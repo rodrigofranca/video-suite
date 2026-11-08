@@ -383,10 +383,13 @@ func scanClip(row pgx.Row) (domain.Clip, error) {
 	return c, notFound(err)
 }
 
-// ReplaceClips stores an asset's suggested clips, removing the earlier ones.
+// ReplaceClips stores an asset's suggested clips, removing the earlier
+// suggestions but keeping the clips edited by hand, as the suggest-clips job
+// does (docs/adr/0026; the job also drops new clips that repeat an edited
+// one and ranks them all, which this method leaves to the caller).
 func (s *Store) ReplaceClips(ctx context.Context, assetID string, clips []domain.Clip) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `DELETE FROM clips WHERE asset_id = $1`, assetID); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM clips WHERE asset_id = $1 AND edited_at IS NULL`, assetID); err != nil {
 			return err
 		}
 		for _, c := range clips {

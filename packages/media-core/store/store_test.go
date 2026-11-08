@@ -329,6 +329,13 @@ func TestEditClipIfIdle(t *testing.T) {
 	if err := s.EditClipIfIdle(ctx, domain.Clip{ID: domain.NewID(), Start: 1, End: 9, Title: "x"}, nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown clip: %v, want ErrNotFound", err)
 	}
+	// New suggestions replace the others but keep the edited clip.
+	if err := s.ReplaceClips(ctx, asset.ID, []domain.Clip{{ID: domain.NewID(), JobID: jobs[0].ID, Start: 40, End: 60, Title: "New", Score: 6, Rank: 1, Model: "m"}}); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := s.ListClips(ctx, asset.ID); len(list) != 2 {
+		t.Fatalf("after new suggestions: %d clips, want the new one and the edited one", len(list))
+	}
 	edited.End = edited.Start // the database refuses an empty range
 	s.FinishJob(ctx, retrack.ID, nil)
 	if err := s.EditClipIfIdle(ctx, edited, nil); err == nil {
