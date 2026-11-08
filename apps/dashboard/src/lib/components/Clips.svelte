@@ -1,6 +1,7 @@
 <script lang="ts">
 	import {
 		captionColors,
+		captionLanguages,
 		captionPositions,
 		captionStyles,
 		clipFileUrl,
@@ -14,7 +15,7 @@
 		type ClipFormat,
 		type TranscriptSegment
 	} from '$lib/api';
-	import { captionStyleLabel, clipFormatLabel, formatBytes, formatClock } from '$lib/format';
+	import { captionStyleLabel, clipFormatLabel, formatBytes, formatClock, languageName } from '$lib/format';
 	import ClipEditor from './ClipEditor.svelte';
 
 	let {
@@ -23,6 +24,9 @@
 		hasSubtitles = false,
 		wordTimings = false,
 		tracking = false,
+		translating = false,
+		transcriptLanguage = '',
+		translations = [],
 		segments = [],
 		duration = 0,
 		onpreview,
@@ -39,6 +43,11 @@
 		wordTimings?: boolean;
 		/** A face tracking job is pending or running. */
 		tracking?: boolean;
+		/** A translation job is pending or running (an export waits for it). */
+		translating?: boolean;
+		/** The transcript's language, and the languages it has been translated into. */
+		transcriptLanguage?: string;
+		translations?: string[];
 		/** Transcript segments, for snapping an edited clip to sentences. */
 		segments?: TranscriptSegment[];
 		/** The video's length in seconds, or 0 when unknown. */
@@ -91,10 +100,15 @@
 		return c === 'off' || !styleColor[c] ? undefined : (colorChoice[clip.id] ?? styleColor[c]);
 	};
 	const capsOf = (clip: Clip) => capsChoice[clip.id] ?? captionsOf(clip) === 'one-word';
+	// The captions' language: the transcript's own ('') or a translation.
+	let languageChoice = $state<Record<string, string>>({});
+	const languageOf = (clip: Clip) => languageChoice[clip.id] ?? '';
+	let otherLanguages = $derived(captionLanguages.filter((l) => l !== transcriptLanguage));
 	const optionsOf = (clip: Clip): CaptionOptions => ({
 		position: positionOf(clip),
 		color: colorOf(clip),
-		caps: capsOf(clip)
+		caps: capsOf(clip),
+		language: languageOf(clip)
 	});
 	const capitalize = (p: string) => p[0].toUpperCase() + p.slice(1);
 	let starting = $state(''); // "clipId:format" being queued
@@ -193,6 +207,19 @@
 			</div>
 			{#if (hasSubtitles || wordTimings) && captionsOf(clip) !== 'off'}
 				<div class="look" data-testid="caption-look">
+					{#if transcriptLanguage}
+						<label>
+							Language
+							<select
+								value={languageOf(clip)}
+								onchange={(e) => (languageChoice[clip.id] = e.currentTarget.value)}
+								data-testid="caption-language"
+							>
+								<option value="">{languageName(transcriptLanguage)} (original)</option>
+								{#each otherLanguages as l (l)}<option value={l}>{languageName(l)}</option>{/each}
+							</select>
+						</label>
+					{/if}
 					<label>
 						Position
 						<select
@@ -230,6 +257,12 @@
 						CAPS
 					</label>
 				</div>
+				{#if languageOf(clip) && !translations.includes(languageOf(clip))}
+					<p class="muted hint" data-testid="translate-note">
+						The first export in {languageName(languageOf(clip))} translates the transcript with the language model; the
+						next ones reuse it.
+					</p>
+				{/if}
 			{/if}
 
 			<div class="formats">
@@ -258,7 +291,9 @@
 											: `Face in ${Math.round(clip.faceCoverage * 100)}% of the clip`}
 							</span>
 						{/if}
-						{#if active}
+						{#if active && ex.status === 'pending' && ex.captionLanguage && translating}
+							<span class="status" data-testid="translating">Translating into {languageName(ex.captionLanguage)}…</span>
+						{:else if active}
 							<span class="status" data-testid="exporting">Exporting…{ex.progress > 0 ? ` ${ex.progress}%` : ''}</span>
 						{:else if ex?.status === 'failed'}
 							<span class="status error" title={ex.error ?? ''}>Failed</span>
@@ -282,7 +317,8 @@
 									? ` · ${captionStyleLabel(ex.captionStyle ?? 'lines')}` +
 										(ex.captionPosition && ex.captionPosition !== 'bottom' ? `, ${ex.captionPosition}` : '') +
 										(ex.captionColor && ex.captionColor !== styleColor[ex.captionStyle ?? 'lines'] ? `, ${ex.captionColor}` : '') +
-										(ex.captionCaps && ex.captionStyle !== 'one-word' ? ', caps' : '')
+										(ex.captionCaps && ex.captionStyle !== 'one-word' ? ', caps' : '') +
+										(ex.translatedFrom && ex.captionLanguage ? `, ${languageName(ex.captionLanguage)}` : '')
 									: ''}
 							</span>
 						{/if}

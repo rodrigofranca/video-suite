@@ -98,6 +98,8 @@
 	// Clips: fetched when the suggestions finish and whenever an export moves.
 	let clips = $state<Clip[] | null>(null);
 	let wordTimings = $state(false);
+	let transcriptLanguage = $state('');
+	let translations = $state<string[]>([]);
 	let clipsFor = '';
 	let suggestJob = $derived(asset?.jobs.findLast((j) => j.type === 'suggest-clips'));
 	let exportJobs = $derived(asset?.jobs.filter((j) => j.type === 'export-clip') ?? []);
@@ -120,6 +122,8 @@
 			.then((r) => {
 				clips = r.clips;
 				wordTimings = r.wordTimings;
+				transcriptLanguage = r.transcriptLanguage;
+				translations = r.translations;
 			})
 			.catch(() => (clips = null));
 	});
@@ -139,6 +143,9 @@
 
 	let trackingFaces = $derived(
 		!!asset?.jobs.some((j) => j.type === 'track-faces' && (j.status === 'pending' || j.status === 'running'))
+	);
+	let translating = $derived(
+		!!asset?.jobs.some((j) => j.type === 'translate-transcript' && (j.status === 'pending' || j.status === 'running'))
 	);
 
 	async function removeClip(clipId: string) {
@@ -264,6 +271,9 @@
 					hasSubtitles={asset.subtitles.length > 0}
 					{wordTimings}
 					tracking={trackingFaces}
+					{translating}
+					{transcriptLanguage}
+					{translations}
 					segments={transcript?.segments ?? []}
 					duration={meta?.durationSeconds ?? 0}
 					onpreview={(start, end) => player?.playRange(start, end)}

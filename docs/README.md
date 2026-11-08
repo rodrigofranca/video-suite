@@ -63,3 +63,4 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 - [0026](adr/0026-keep-edited-clips-when-suggesting-again.md): suggesting clips again keeps the clips edited by hand and leaves out new suggestions that repeat them; the dashboard asks first, saying what will change.
 - [0027](adr/0027-delete-videos-and-clips.md): videos and clips can be deleted from the API and the dashboard, with every stored file; database first, then storage; only while no job runs.
 - [0028](adr/0028-adaptive-hls.md): HLS in up to four qualities (1080p, 720p, 480p, 360p) from one FFmpeg run with aligned keyframes; the master playlist keeps the old address; stale HLS files are removed; the player has a quality menu.
+- [0029](adr/0029-translated-captions.md): captions in six languages: the language model translates the transcript line for line, once per language, before the first export in it; translated words are placed on the original speech; the player gets the translated subtitles.

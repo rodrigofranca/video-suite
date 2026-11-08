@@ -371,6 +371,51 @@ func TestTranscripts(t *testing.T) {
 	}
 }
 
+func TestTranslations(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+	transcript := domain.Transcript{ID: domain.NewID(), AssetID: asset.ID, JobID: jobs[0].ID, Language: "pt", Text: "olá mundo", Model: "base"}
+	if err := s.SaveTranscript(ctx, transcript); err != nil {
+		t.Fatal(err)
+	}
+	if langs, err := s.TranslationLanguages(ctx, asset.ID); err != nil || len(langs) != 0 {
+		t.Fatalf("before: languages = %v, %v; want none", langs, err)
+	}
+	if _, err := s.GetTranslation(ctx, asset.ID, "en"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("before: err = %v, want ErrNotFound", err)
+	}
+	for _, tr := range []domain.Translation{
+		{ID: domain.NewID(), AssetID: asset.ID, JobID: jobs[0].ID, Language: "en", SourceLanguage: "pt", Model: "m1"},
+		{ID: domain.NewID(), AssetID: asset.ID, JobID: jobs[0].ID, Language: "es", SourceLanguage: "pt", Model: "m1"},
+		// Again into English: replaces the first.
+		{ID: domain.NewID(), AssetID: asset.ID, JobID: jobs[1].ID, Language: "en", SourceLanguage: "pt", Model: "m2",
+			Segments: []byte(`[{"start":0,"end":1.5,"text":"hello world"}]`),
+			Words:    []byte(`[{"start":0,"end":0.7,"word":"hello"},{"start":0.7,"end":1.5,"word":"world"}]`)},
+	} {
+		if err := s.SaveTranslation(ctx, tr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.GetTranslation(ctx, asset.ID, "en")
+	if err != nil || got.Model != "m2" || got.JobID != jobs[1].ID || got.SourceLanguage != "pt" ||
+		!strings.Contains(string(got.Words), `"word": "world"`) || !strings.Contains(string(got.Segments), "hello world") {
+		t.Fatalf("GetTranslation = %+v (%s), %v", got, got.Words, err)
+	}
+	if langs, err := s.TranslationLanguages(ctx, asset.ID); err != nil || strings.Join(langs, ",") != "en,es" {
+		t.Fatalf("languages = %v, %v; want en,es", langs, err)
+	}
+
+	// A new transcript: the translations no longer match it.
+	transcript.ID, transcript.Text = domain.NewID(), "olá de novo"
+	if err := s.SaveTranscript(ctx, transcript); err != nil {
+		t.Fatal(err)
+	}
+	if langs, err := s.TranslationLanguages(ctx, asset.ID); err != nil || len(langs) != 0 {
+		t.Fatalf("after a new transcript: languages = %v, %v; want none", langs, err)
+	}
+}
+
 func TestDeleteAssetIfIdle(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

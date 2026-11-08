@@ -61,6 +61,8 @@ export interface Playback {
 export interface Subtitles {
 	language: string;
 	url: string;
+	/** The transcript's language, for subtitles a language model translated. */
+	translatedFrom?: string;
 }
 
 export interface TranscriptSegment {
@@ -115,11 +117,16 @@ export const styleColor: Partial<Record<CaptionStyle, CaptionColor>> = {
 	box: 'violet'
 };
 
-/** How captions look besides their style. */
+/** Languages captions can be translated into (ISO 639-1). */
+export const captionLanguages = ['en', 'es', 'pt', 'fr', 'de', 'it'];
+
+/** How captions look besides their style, and their language. */
 export interface CaptionOptions {
 	position: CaptionPosition;
 	color?: CaptionColor;
 	caps: boolean;
+	/** A language to translate the captions into; empty or missing for the transcript's own. */
+	language?: string;
 }
 export const clipFormats: ClipFormat[] = ['original', 'vertical', 'vertical-face', 'vertical-blur'];
 
@@ -135,6 +142,10 @@ export interface ClipExport {
 	captionPosition?: CaptionPosition;
 	captionColor?: CaptionColor;
 	captionCaps?: boolean;
+	/** The captions' language (the file's once ready, else the one asked for). */
+	captionLanguage?: string;
+	/** The transcript's language, when the captions were translated. */
+	translatedFrom?: string;
 	/** How a 'vertical-face' file was framed. */
 	framing?: 'face' | 'center';
 	width?: number;
@@ -209,9 +220,12 @@ export const listAssets = () => getJSON<{ assets: Asset[] }>('/assets').then((r)
 export const getAsset = (id: string) => getJSON<AssetDetail>(`/assets/${encodeURIComponent(id)}`);
 export const getTranscript = (id: string) => getJSON<Transcript>(`/assets/${encodeURIComponent(id)}/transcript`);
 export const getAnalysis = (id: string) => getJSON<Analysis>(`/assets/${encodeURIComponent(id)}/analysis`);
-/** The clips, and whether the transcript has word timings (for word-by-word captions). */
+/** The clips; whether the transcript has word timings (for word-by-word
+ * captions); its language; and the languages it has been translated into. */
 export const getClips = (id: string) =>
-	getJSON<{ clips: Clip[]; wordTimings: boolean }>(`/assets/${encodeURIComponent(id)}/clips`);
+	getJSON<{ clips: Clip[]; wordTimings: boolean; transcriptLanguage: string; translations: string[] }>(
+		`/assets/${encodeURIComponent(id)}/clips`
+	);
 /** Link to an exported clip file; inline plays it instead of downloading it. */
 export const clipFileUrl = (clipId: string, format: ClipFormat, inline = false) =>
 	`${API_URL}/clips/${encodeURIComponent(clipId)}/download?format=${format}${inline ? '&inline=1' : ''}`;
@@ -256,7 +270,8 @@ export const editClip = (assetId: string, clipId: string, changes: { start?: num
 export const rerunJob = (assetId: string, type: string) =>
 	postJSON<Job>(`/assets/${encodeURIComponent(assetId)}/jobs`, { type });
 
-/** Queues the export of a clip in one format. */
+/** Queues the export of a clip in one format. Captions in a language the
+ * transcript has no translation into yet are translated first. */
 export const exportClip = (
 	assetId: string,
 	clipId: string,
@@ -271,7 +286,8 @@ export const exportClip = (
 		captionStyle,
 		captionPosition: options?.position,
 		captionColor: options?.color,
-		captionCaps: options?.caps
+		captionCaps: options?.caps,
+		captionLanguage: options?.language || undefined
 	});
 
 /** Uploads a file, reporting progress from 0 to 1. Uses XHR because fetch has no upload progress. */

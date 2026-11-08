@@ -86,6 +86,20 @@ type Transcript struct {
 	CreatedAt time.Time
 }
 
+// Translation is an asset's transcript in another language, written by a
+// language model for captions in that language (docs/adr/0029).
+type Translation struct {
+	ID             string
+	AssetID        string
+	JobID          string
+	Language       string // ISO 639-1 code of the translation
+	SourceLanguage string // the transcript's language
+	Segments       []byte // JSON: the transcript's segments, same times, translated text
+	Words          []byte // JSON: [{"start", "end", "word"}], the translated words placed on the speech
+	Model          string // model that answered, as reported by the gateway
+	CreatedAt      time.Time
+}
+
 // Analysis is what a language model wrote about an asset's transcript,
 // saved by the AI worker (docs/adr/0019).
 type Analysis struct {

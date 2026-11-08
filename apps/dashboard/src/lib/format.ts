@@ -34,7 +34,8 @@ const jobLabels: Record<string, string> = {
 	'analyze-transcript': 'Summary',
 	'suggest-clips': 'Clips',
 	'track-faces': 'Face tracking',
-	'export-clip': 'Clip export'
+	'export-clip': 'Clip export',
+	'translate-transcript': 'Translation'
 };
 
 const clipFormatLabels: Record<string, string> = {

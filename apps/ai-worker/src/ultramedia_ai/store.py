@@ -110,17 +110,21 @@ class Store:
         self, asset_id: str, job_id: str, language: str, text: str, segments: list[dict], model: str,
         words: list[dict] | None = None,
     ) -> None:
-        """Store an asset's transcript, replacing any earlier one. words holds
-        each word's start and end, for word-by-word captions."""
-        self.conn.execute(
-            """INSERT INTO transcripts (id, asset_id, job_id, language, text, segments, words, model)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT (asset_id) DO UPDATE
-               SET id = EXCLUDED.id, job_id = EXCLUDED.job_id, language = EXCLUDED.language,
-                   text = EXCLUDED.text, segments = EXCLUDED.segments, words = EXCLUDED.words,
-                   model = EXCLUDED.model, created_at = NOW()""",
-            (str(uuid.uuid4()), asset_id, job_id, language, text, Jsonb(segments), Jsonb(words or []), model),
-        )
+        """Store an asset's transcript, replacing any earlier one and removing
+        the translations of the earlier one. words holds each word's start and
+        end, for word-by-word captions."""
+        with self.conn.transaction():
+            self.conn.execute(
+                """INSERT INTO transcripts (id, asset_id, job_id, language, text, segments, words, model)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (asset_id) DO UPDATE
+                   SET id = EXCLUDED.id, job_id = EXCLUDED.job_id, language = EXCLUDED.language,
+                       text = EXCLUDED.text, segments = EXCLUDED.segments, words = EXCLUDED.words,
+                       model = EXCLUDED.model, created_at = NOW()""",
+                (str(uuid.uuid4()), asset_id, job_id, language, text, Jsonb(segments), Jsonb(words or []), model),
+            )
+            # Translations of the earlier transcript no longer match the speech.
+            self.conn.execute("DELETE FROM transcript_translations WHERE asset_id = %s", (asset_id,))
 
     def get_transcript(self, asset_id: str) -> dict | None:
         row = self.conn.execute(
@@ -131,6 +135,33 @@ class Store:
         segments = row[2] if not isinstance(row[2], str) else json.loads(row[2])
         words = row[4] if not isinstance(row[4], str) else json.loads(row[4])
         return {"language": row[0], "text": row[1], "segments": segments, "model": row[3], "words": words}
+
+    def save_translation(
+        self, asset_id: str, job_id: str, language: str, source_language: str, segments: list[dict],
+        words: list[dict], model: str,
+    ) -> None:
+        """Store a translation of an asset's transcript, replacing an earlier
+        one into the same language (see SaveTranslation in Go)."""
+        self.conn.execute(
+            """INSERT INTO transcript_translations (id, asset_id, job_id, language, source_language, segments, words, model)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (asset_id, language) DO UPDATE
+               SET id = EXCLUDED.id, job_id = EXCLUDED.job_id, source_language = EXCLUDED.source_language,
+                   segments = EXCLUDED.segments, words = EXCLUDED.words, model = EXCLUDED.model, created_at = NOW()""",
+            (str(uuid.uuid4()), asset_id, job_id, language, source_language, Jsonb(segments), Jsonb(words), model),
+        )
+
+    def get_translation(self, asset_id: str, language: str) -> dict | None:
+        row = self.conn.execute(
+            """SELECT source_language, segments, words, model FROM transcript_translations
+               WHERE asset_id = %s AND language = %s""",
+            (asset_id, language),
+        ).fetchone()
+        if not row:
+            return None
+        segments = row[1] if not isinstance(row[1], str) else json.loads(row[1])
+        words = row[2] if not isinstance(row[2], str) else json.loads(row[2])
+        return {"source_language": row[0], "segments": segments, "words": words, "model": row[3]}
 
     def save_analysis(
         self, asset_id: str, job_id: str, language: str, summary: str, tags: list[str], chapters: list[dict], model: str

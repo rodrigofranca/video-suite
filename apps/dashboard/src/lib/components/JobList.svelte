@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getJobLogs, type Job, type JobLog } from '$lib/api';
-	import { formatDuration, formatTime, jobLabel } from '$lib/format';
+	import { formatDuration, formatTime, jobLabel, languageName } from '$lib/format';
 	import StatusBadge from './StatusBadge.svelte';
 
 	let {
@@ -21,24 +21,35 @@
 	let rerunning = $state<string | null>(null);
 	let rerunError = $state('');
 
+	// Translations into different languages are different jobs, not attempts.
+	const translation = (j: Job) =>
+		j.type === 'translate-transcript' ? ((j.input as { language?: string } | null)?.language ?? '') : '';
+	const kind = (j: Job) => (translation(j) ? `${j.type}:${translation(j)}` : j.type);
+	const label = (j: Job) => jobLabel(j.type) + (translation(j) ? ` · ${languageName(translation(j))}` : '');
+
 	// Jobs come in creation order; a re-run adds a new attempt of a type.
 	let busy = $derived(jobs.some((j) => j.status === 'pending' || j.status === 'running'));
-	let latest = $derived(new Map(jobs.map((j) => [j.type, j.id])));
+	let latest = $derived(new Map(jobs.map((j) => [kind(j), j.id])));
 	let attempts = $derived.by(() => {
 		const count = new Map<string, number>();
 		const byJob = new Map<string, { n: number; total: number }>();
-		for (const j of jobs) count.set(j.type, (count.get(j.type) ?? 0) + 1);
+		for (const j of jobs) count.set(kind(j), (count.get(kind(j)) ?? 0) + 1);
 		const seen = new Map<string, number>();
 		for (const j of jobs) {
-			const n = (seen.get(j.type) ?? 0) + 1;
-			seen.set(j.type, n);
-			byJob.set(j.id, { n, total: count.get(j.type)! });
+			const n = (seen.get(kind(j)) ?? 0) + 1;
+			seen.set(kind(j), n);
+			byJob.set(j.id, { n, total: count.get(kind(j))! });
 		}
 		return byJob;
 	});
 
+	// A translation runs with an export in its language, not on its own.
 	const canRerun = (job: Job) =>
-		!!onRerun && !busy && latest.get(job.type) === job.id && (job.status === 'done' || job.status === 'failed');
+		!!onRerun &&
+		!busy &&
+		job.type !== 'translate-transcript' &&
+		latest.get(kind(job)) === job.id &&
+		(job.status === 'done' || job.status === 'failed');
 
 	async function rerun(job: Job) {
 		if (!onRerun) return;
@@ -78,10 +89,10 @@
 <ol class="jobs">
 	{#each jobs as job (job.id)}
 		{@const attempt = attempts.get(job.id)}
-		<li class="job" class:old={latest.get(job.type) !== job.id} data-testid="job-{job.type}">
+		<li class="job" class:old={latest.get(kind(job)) !== job.id} data-testid="job-{job.type}">
 			<button class="row" onclick={() => toggle(job)} aria-expanded={openJob === job.id}>
 				<span class="name">
-					{jobLabel(job.type)}
+					{label(job)}
 					{#if attempt && attempt.total > 1}<span class="attempt">attempt {attempt.n}</span>{/if}
 				</span>
 				<StatusBadge status={job.status} />

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"time"
 
 	"ultramedia/media-core/domain"
@@ -36,6 +37,9 @@ type assetDetailDTO struct {
 type subtitlesDTO struct {
 	Language string `json:"language"`
 	URL      string `json:"url"`
+	// TranslatedFrom is the transcript's language, for subtitles a language
+	// model translated (docs/adr/0029).
+	TranslatedFrom string `json:"translatedFrom,omitempty"`
 }
 
 type transcriptDTO struct {
@@ -209,7 +213,12 @@ func (a *api) getAsset(w http.ResponseWriter, r *http.Request) {
 	detail.Artifacts = toArtifacts(arts)
 	detail.Playback = a.playbackFor(asset, arts)
 	detail.ThumbnailURL = a.publicURL(latestKey(arts, domain.ArtifactThumbnail))
-	detail.Subtitles = a.subtitlesOf(arts)
+	translations, err := a.Store.TranslationLanguages(ctx, asset.ID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	detail.Subtitles = a.subtitlesOf(arts, translations)
 
 	meta, err := a.Store.GetTechnicalMetadata(ctx, asset.ID)
 	switch {
@@ -242,23 +251,29 @@ func (a *api) getMetadata(w http.ResponseWriter, r *http.Request) {
 	w.Write(meta.MetadataJSON)
 }
 
-// subtitlesOf lists the newest subtitles file per language.
-func (a *api) subtitlesOf(arts []domain.Artifact) []subtitlesDTO {
+// subtitlesOf lists the newest subtitles file per language: the
+// transcript's first, the player's default, then the translations of the
+// current transcript. A translation of an earlier transcript is left out.
+func (a *api) subtitlesOf(arts []domain.Artifact, translations []string) []subtitlesDTO {
 	out := []subtitlesDTO{}
 	seen := map[string]bool{}
-	for i := len(arts) - 1; i >= 0; i-- {
-		if arts[i].Type != domain.ArtifactSubtitles {
-			continue
+	for _, translated := range []bool{false, true} {
+		for i := len(arts) - 1; i >= 0; i-- {
+			if arts[i].Type != domain.ArtifactSubtitles {
+				continue
+			}
+			var meta struct {
+				Language       string `json:"language"`
+				TranslatedFrom string `json:"translatedFrom"`
+			}
+			json.Unmarshal(arts[i].MetadataJSON, &meta)
+			if meta.Language == "" || seen[meta.Language] || (meta.TranslatedFrom != "") != translated ||
+				translated && !slices.Contains(translations, meta.Language) {
+				continue
+			}
+			seen[meta.Language] = true
+			out = append(out, subtitlesDTO{Language: meta.Language, URL: a.Storage.PublicURL(arts[i].StorageKey), TranslatedFrom: meta.TranslatedFrom})
 		}
-		var meta struct {
-			Language string `json:"language"`
-		}
-		json.Unmarshal(arts[i].MetadataJSON, &meta)
-		if meta.Language == "" || seen[meta.Language] {
-			continue
-		}
-		seen[meta.Language] = true
-		out = append(out, subtitlesDTO{Language: meta.Language, URL: a.Storage.PublicURL(arts[i].StorageKey)})
 	}
 	return out
 }

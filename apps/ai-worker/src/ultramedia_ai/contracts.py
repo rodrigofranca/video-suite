@@ -20,6 +20,8 @@ JOB_TRANSCRIBE_AUDIO = "transcribe-audio"
 JOB_ANALYZE_TRANSCRIPT = "analyze-transcript"
 JOB_SUGGEST_CLIPS = "suggest-clips"
 JOB_TRACK_FACES = "track-faces"
+JOB_EXPORT_CLIP = "export-clip"  # runs in the Go media worker
+JOB_TRANSLATE_TRANSCRIPT = "translate-transcript"
 
 # Order in which an upload's jobs run (see jobcontracts.Pipeline).
 PIPELINE = [
@@ -33,6 +35,12 @@ PIPELINE = [
     JOB_TRACK_FACES,
 ]
 
+# For a job outside the pipeline, the job that may wait for it (see jobcontracts.After).
+AFTER = {JOB_TRANSLATE_TRANSCRIPT: JOB_EXPORT_CLIP}
+
+# Languages captions can be translated into (see jobcontracts.CaptionLanguages).
+CAPTION_LANGUAGES = ["en", "es", "pt", "fr", "de", "it"]
+
 STREAM_MEDIA = "jobs"  # Go media worker
 STREAM_AI = "jobs:ai"  # this worker
 CONSUMER_GROUPS = {STREAM_MEDIA: "workers", STREAM_AI: "ai-workers"}
@@ -41,7 +49,7 @@ FIELD_JOB_ID = "job_id"
 FIELD_TYPE = "type"
 FIELD_PAYLOAD = "payload"
 
-AI_JOB_TYPES = {JOB_TRANSCRIBE_AUDIO, JOB_ANALYZE_TRANSCRIPT, JOB_SUGGEST_CLIPS, JOB_TRACK_FACES}
+AI_JOB_TYPES = {JOB_TRANSCRIBE_AUDIO, JOB_ANALYZE_TRANSCRIPT, JOB_SUGGEST_CLIPS, JOB_TRACK_FACES, JOB_TRANSLATE_TRANSCRIPT}
 
 _UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
@@ -57,11 +65,11 @@ def stream_for(job_type: str) -> str:
 
 
 def next_job_type(job_type: str) -> str | None:
-    """The job type that follows job_type in the pipeline, if any."""
+    """The job type that follows job_type in the pipeline, or in AFTER."""
     try:
         i = PIPELINE.index(job_type)
     except ValueError:
-        return None
+        return AFTER.get(job_type)
     return PIPELINE[i + 1] if i + 1 < len(PIPELINE) else None
 
 
@@ -151,6 +159,19 @@ class TrackFacesInput:
             storage_key=str(data.get("storage_key", "")),
             clip_id=str(data.get("clip_id", "")),
         )
+
+
+@dataclass(frozen=True)
+class TranslateTranscriptInput:
+    """See jobcontracts.TranslateTranscriptInput. The transcript is read from the database."""
+
+    asset_id: str
+    language: str
+
+    @classmethod
+    def from_json(cls, payload: str | bytes) -> "TranslateTranscriptInput":
+        data = json.loads(payload)
+        return cls(asset_id=str(data.get("asset_id", "")), language=str(data.get("language", "")))
 
 
 def source_key(asset_id: str) -> str:

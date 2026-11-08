@@ -45,7 +45,7 @@ def cfg():
 def store(cfg):
     try:
         s = Store.connect(cfg.database_url)
-        s.conn.execute("SELECT edited_at FROM clips LIMIT 1")  # the newest column: all migrations applied
+        s.conn.execute("SELECT language FROM transcript_translations LIMIT 1")  # the newest table: all migrations applied
     except Exception as e:  # noqa: BLE001
         pytest.skip(f"database not available or not migrated: {e}")
     yield s

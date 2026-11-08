@@ -2,7 +2,8 @@ package jobcontracts
 
 // Job types. The Go media worker runs the FFmpeg jobs (metadata, thumbnail,
 // HLS, audio and clip export); the Python AI worker (apps/ai-worker) runs
-// transcribe-audio, analyze-transcript, suggest-clips and track-faces. See StreamFor.
+// transcribe-audio, analyze-transcript, suggest-clips, track-faces and
+// translate-transcript. See StreamFor.
 const (
 	JobTypeExtractMetadata   = "extract-metadata"
 	JobTypeGenerateThumbnail = "generate-thumbnail"
@@ -14,6 +15,9 @@ const (
 	JobTypeTrackFaces        = "track-faces"
 	// JobTypeExportClip runs on request, not in the Pipeline.
 	JobTypeExportClip = "export-clip"
+	// JobTypeTranslateTranscript runs before an export with captions in a
+	// language the transcript has no translation into yet (docs/adr/0029).
+	JobTypeTranslateTranscript = "translate-transcript"
 )
 
 // Clip export formats (ExportClipInput.Format).
@@ -60,6 +64,12 @@ var (
 	CaptionPositions = []string{"bottom", "middle", "top"}
 	CaptionColors    = []string{"yellow", "green", "pink", "blue", "violet"}
 )
+
+// CaptionLanguages are the languages captions can be translated into
+// (ExportClipInput.CaptionLanguage, TranslateTranscriptInput.Language), as
+// ISO 639-1 codes. All are written in the Latin alphabet, which the caption
+// font covers (docs/adr/0029).
+var CaptionLanguages = []string{"en", "es", "pt", "fr", "de", "it"}
 
 type ExtractMetadataInput struct {
 	AssetID    string `json:"asset_id"`
@@ -121,8 +131,9 @@ type TrackFacesInput struct {
 // MP4 at OutputKey. The clip's start and end are read from the database when
 // the job runs. Captions burns the asset's speech into the picture, in
 // CaptionStyle (empty means CaptionStyleHighlight), at CaptionPosition, with
-// CaptionColor, and in capitals when CaptionCaps is true (nil means only the
-// one-word style).
+// CaptionColor, in capitals when CaptionCaps is true (nil means only the
+// one-word style), and in CaptionLanguage: empty means the transcript's own,
+// another language its translation (docs/adr/0029).
 type ExportClipInput struct {
 	AssetID         string `json:"asset_id"`
 	ClipID          string `json:"clip_id"`
@@ -133,7 +144,17 @@ type ExportClipInput struct {
 	CaptionPosition string `json:"caption_position,omitempty"`
 	CaptionColor    string `json:"caption_color,omitempty"`
 	CaptionCaps     *bool  `json:"caption_caps,omitempty"`
+	CaptionLanguage string `json:"caption_language,omitempty"`
 	OutputKey       string `json:"output_key"`
+}
+
+// TranslateTranscriptInput asks the AI worker to translate the asset's
+// transcript into Language, one of CaptionLanguages, for captions in that
+// language (docs/adr/0029). The translation replaces an earlier one into the
+// same language; it is read from the database, not from the message.
+type TranslateTranscriptInput struct {
+	AssetID  string `json:"asset_id"`
+	Language string `json:"language"`
 }
 
 // Pipeline is the order in which an upload's jobs run. The API creates one
@@ -159,12 +180,21 @@ var RerunWith = map[string][]string{
 	JobTypeSuggestClips: {JobTypeTrackFaces},
 }
 
-// NextJobType returns the job type that follows jobType in the Pipeline.
+// After names, for a job outside the Pipeline, the job that may wait for
+// it: an export with translated captions waits for the translation
+// (docs/adr/0029). The worker queues it only when one is pending.
+var After = map[string]string{
+	JobTypeTranslateTranscript: JobTypeExportClip,
+}
+
+// NextJobType returns the job type that follows jobType in the Pipeline, or
+// in After.
 func NextJobType(jobType string) (string, bool) {
 	for i, t := range Pipeline {
 		if t == jobType && i+1 < len(Pipeline) {
 			return Pipeline[i+1], true
 		}
 	}
-	return "", false
+	next, ok := After[jobType]
+	return next, ok
 }
