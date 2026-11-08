@@ -15,7 +15,8 @@
 		type ClipFormat,
 		type Preset,
 		type TranscriptSegment,
-		type Vignette
+		type Vignette,
+		type Watermark
 	} from '$lib/api';
 	import { captionStyleLabel, clipFormatLabel, formatBytes, formatClock, languageName } from '$lib/format';
 	import ClipEditor from './ClipEditor.svelte';
@@ -31,6 +32,7 @@
 		translations = [],
 		presets = [],
 		vignettes = [],
+		watermarks = [],
 		segments = [],
 		duration = 0,
 		onpreview,
@@ -55,6 +57,7 @@
 		/** Export presets, and the vignette library to name their openings and closings. */
 		presets?: Preset[];
 		vignettes?: Vignette[];
+		watermarks?: Watermark[];
 		/** Transcript segments, for snapping an edited clip to sentences. */
 		segments?: TranscriptSegment[];
 		/** The video's length in seconds, or 0 when unknown. */
@@ -131,7 +134,12 @@
 	function presetVignettes(p: Preset): string {
 		const opening = vignetteName(p.introVerticalId) ?? vignetteName(p.introHorizontalId);
 		const closing = vignetteName(p.outroVerticalId) ?? vignetteName(p.outroHorizontalId);
-		return [opening && `opening “${opening}”`, closing && `closing “${closing}”`].filter(Boolean).join(' and ');
+		const vignettesText = [opening && `the opening “${opening}”`, closing && `the closing “${closing}”`]
+			.filter(Boolean)
+			.join(' and ');
+		const mark = watermarks.find((w) => w.id === p.watermarkId)?.name;
+		const parts = [vignettesText && `join ${vignettesText}`, mark && `lay the watermark “${mark}”`].filter(Boolean);
+		return parts.join(', and ');
 	}
 	const optionsOf = (clip: Clip): CaptionOptions => ({
 		position: positionOf(clip),
@@ -250,7 +258,7 @@
 			</div>
 			{#if presetOf(clip) && presetVignettes(presetOf(clip)!)}
 				<p class="muted hint" data-testid="preset-vignettes">
-					Exports join the {presetVignettes(presetOf(clip)!)}.
+					Exports {presetVignettes(presetOf(clip)!)}.
 				</p>
 			{/if}
 			{#if (hasSubtitles || wordTimings) && captionsOf(clip) !== 'off'}
@@ -367,8 +375,8 @@
 										(ex.captionColor && ex.captionColor !== styleColor[ex.captionStyle ?? 'lines'] ? `, ${ex.captionColor}` : '') +
 										(ex.captionCaps && ex.captionStyle !== 'one-word' ? ', caps' : '') +
 										(ex.translatedFrom && ex.captionLanguage ? `, ${languageName(ex.captionLanguage)}` : '')
-									: ''}{ex.preset ? ` · ${ex.preset}` : ''}{ex.intro || ex.outro
-									? ` (${[ex.intro && 'opening', ex.outro && 'closing'].filter(Boolean).join(' + ')})`
+									: ''}{ex.preset ? ` · ${ex.preset}` : ''}{ex.intro || ex.outro || ex.watermark
+									? ` (${[ex.intro && 'opening', ex.outro && 'closing', ex.watermark && 'watermark'].filter(Boolean).join(' + ')})`
 									: ''}
 							</span>
 						{/if}

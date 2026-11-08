@@ -14,11 +14,15 @@ import (
 // ErrNameTaken is returned when another preset has the name (in any case).
 var ErrNameTaken = errors.New("another preset has this name")
 
-// InUseError is returned when a vignette cannot be deleted because presets use it.
-type InUseError struct{ Presets []string }
+// InUseError is returned when a vignette or watermark image cannot be
+// deleted because presets use it.
+type InUseError struct {
+	What    string // "vignette" or "watermark"
+	Presets []string
+}
 
 func (e *InUseError) Error() string {
-	return "the vignette is used by the preset(s) " + strings.Join(e.Presets, ", ") + "; take it out of them first"
+	return "the " + e.What + " is used by the preset(s) " + strings.Join(e.Presets, ", ") + "; take it out of them first"
 }
 
 // ---- Vignettes ----
@@ -69,9 +73,64 @@ func (s *Store) DeleteVignette(ctx context.Context, id string) error {
 			return err
 		}
 		if len(names) > 0 {
-			return &InUseError{Presets: names}
+			return &InUseError{What: "vignette", Presets: names}
 		}
 		tag, err := tx.Exec(ctx, `DELETE FROM vignettes WHERE id = $1`, id)
+		if err == nil && tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return err
+	})
+}
+
+// ---- Watermark images ----
+
+const watermarkColumns = `id, name, filename, storage_key, size_bytes, width, height, created_at`
+
+func scanWatermark(row pgx.Row) (domain.Watermark, error) {
+	var w domain.Watermark
+	err := row.Scan(&w.ID, &w.Name, &w.Filename, &w.StorageKey, &w.SizeBytes, &w.Width, &w.Height, &w.CreatedAt)
+	return w, notFound(err)
+}
+
+// CreateWatermark adds an uploaded image to the library.
+func (s *Store) CreateWatermark(ctx context.Context, w domain.Watermark) error {
+	_, err := s.db.Exec(ctx,
+		`INSERT INTO watermarks (id, name, filename, storage_key, size_bytes, width, height) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		w.ID, w.Name, w.Filename, w.StorageKey, w.SizeBytes, w.Width, w.Height)
+	return err
+}
+
+func (s *Store) GetWatermark(ctx context.Context, id string) (domain.Watermark, error) {
+	return scanWatermark(s.db.QueryRow(ctx, `SELECT `+watermarkColumns+` FROM watermarks WHERE id = $1`, id))
+}
+
+// ListWatermarks returns the images, newest first.
+func (s *Store) ListWatermarks(ctx context.Context) ([]domain.Watermark, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+watermarkColumns+` FROM watermarks ORDER BY created_at DESC, id`)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (domain.Watermark, error) { return scanWatermark(r) })
+}
+
+// DeleteWatermark removes an image from the library. It returns an
+// *InUseError while a preset uses it, and ErrNotFound for an unknown one.
+// The caller removes the stored file.
+func (s *Store) DeleteWatermark(ctx context.Context, id string) error {
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT name FROM presets WHERE watermark_id = $1 ORDER BY lower(name) FOR UPDATE`, id)
+		if err != nil {
+			return err
+		}
+		names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		if len(names) > 0 {
+			return &InUseError{What: "watermark", Presets: names}
+		}
+		tag, err := tx.Exec(ctx, `DELETE FROM watermarks WHERE id = $1`, id)
 		if err == nil && tag.RowsAffected() == 0 {
 			return ErrNotFound
 		}
@@ -83,13 +142,29 @@ func (s *Store) DeleteVignette(ctx context.Context, id string) error {
 
 const presetColumns = `id, name, captions, caption_style, caption_position, caption_color, caption_caps, caption_language,
 	COALESCE(intro_horizontal_id::text, ''), COALESCE(intro_vertical_id::text, ''),
-	COALESCE(outro_horizontal_id::text, ''), COALESCE(outro_vertical_id::text, ''), created_at, updated_at`
+	COALESCE(outro_horizontal_id::text, ''), COALESCE(outro_vertical_id::text, ''),
+	COALESCE(watermark_id::text, ''), watermark_position, watermark_size, watermark_opacity, created_at, updated_at`
 
 func scanPreset(row pgx.Row) (domain.Preset, error) {
 	var p domain.Preset
 	err := row.Scan(&p.ID, &p.Name, &p.Captions, &p.CaptionStyle, &p.CaptionPosition, &p.CaptionColor, &p.CaptionCaps,
-		&p.CaptionLanguage, &p.IntroHorizontal, &p.IntroVertical, &p.OutroHorizontal, &p.OutroVertical, &p.CreatedAt, &p.UpdatedAt)
+		&p.CaptionLanguage, &p.IntroHorizontal, &p.IntroVertical, &p.OutroHorizontal, &p.OutroVertical,
+		&p.Watermark, &p.WatermarkPosition, &p.WatermarkSize, &p.WatermarkOpacity, &p.CreatedAt, &p.UpdatedAt)
 	return p, notFound(err)
+}
+
+// watermarkDefaults fills the watermark choices a preset left at zero.
+func watermarkDefaults(p domain.Preset) domain.Preset {
+	if p.WatermarkPosition == "" {
+		p.WatermarkPosition = "top-right"
+	}
+	if p.WatermarkSize == 0 {
+		p.WatermarkSize = 15
+	}
+	if p.WatermarkOpacity == 0 {
+		p.WatermarkOpacity = 80
+	}
+	return p
 }
 
 // orNull turns an empty ID into SQL NULL.
@@ -112,25 +187,31 @@ func nameTaken(err error) error {
 // CreatePreset saves a new preset. It returns ErrNameTaken when another
 // preset has the name.
 func (s *Store) CreatePreset(ctx context.Context, p domain.Preset) error {
+	p = watermarkDefaults(p)
 	_, err := s.db.Exec(ctx,
 		`INSERT INTO presets (id, name, captions, caption_style, caption_position, caption_color, caption_caps, caption_language,
-		                      intro_horizontal_id, intro_vertical_id, outro_horizontal_id, outro_vertical_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		                      intro_horizontal_id, intro_vertical_id, outro_horizontal_id, outro_vertical_id,
+		                      watermark_id, watermark_position, watermark_size, watermark_opacity)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
 		p.ID, p.Name, p.Captions, p.CaptionStyle, p.CaptionPosition, p.CaptionColor, p.CaptionCaps, p.CaptionLanguage,
-		orNull(p.IntroHorizontal), orNull(p.IntroVertical), orNull(p.OutroHorizontal), orNull(p.OutroVertical))
+		orNull(p.IntroHorizontal), orNull(p.IntroVertical), orNull(p.OutroHorizontal), orNull(p.OutroVertical),
+		orNull(p.Watermark), p.WatermarkPosition, p.WatermarkSize, p.WatermarkOpacity)
 	return nameTaken(err)
 }
 
 // UpdatePreset replaces a preset's choices. It returns ErrNotFound for an
 // unknown preset and ErrNameTaken when another preset has the name.
 func (s *Store) UpdatePreset(ctx context.Context, p domain.Preset) error {
+	p = watermarkDefaults(p)
 	tag, err := s.db.Exec(ctx,
 		`UPDATE presets SET name = $2, captions = $3, caption_style = $4, caption_position = $5, caption_color = $6,
 		        caption_caps = $7, caption_language = $8, intro_horizontal_id = $9, intro_vertical_id = $10,
-		        outro_horizontal_id = $11, outro_vertical_id = $12, updated_at = NOW()
+		        outro_horizontal_id = $11, outro_vertical_id = $12, watermark_id = $13, watermark_position = $14,
+		        watermark_size = $15, watermark_opacity = $16, updated_at = NOW()
 		 WHERE id = $1`,
 		p.ID, p.Name, p.Captions, p.CaptionStyle, p.CaptionPosition, p.CaptionColor, p.CaptionCaps, p.CaptionLanguage,
-		orNull(p.IntroHorizontal), orNull(p.IntroVertical), orNull(p.OutroHorizontal), orNull(p.OutroVertical))
+		orNull(p.IntroHorizontal), orNull(p.IntroVertical), orNull(p.OutroHorizontal), orNull(p.OutroVertical),
+		orNull(p.Watermark), p.WatermarkPosition, p.WatermarkSize, p.WatermarkOpacity)
 	if err != nil {
 		return nameTaken(err)
 	}

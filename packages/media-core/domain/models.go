@@ -170,5 +170,25 @@ type Preset struct {
 	// Vignette IDs; empty for none.
 	IntroHorizontal, IntroVertical string
 	OutroHorizontal, OutroVertical string
-	CreatedAt, UpdatedAt           time.Time
+	// The watermark image's ID (empty for none), its corner, its width as a
+	// percentage of the clip's shorter side, and its opacity in percent
+	// (docs/adr/0031).
+	Watermark         string
+	WatermarkPosition string
+	WatermarkSize     int
+	WatermarkOpacity  int
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+// Watermark is an image in the library, laid over exported clips by a
+// Preset (docs/adr/0031).
+type Watermark struct {
+	ID            string
+	Name          string
+	Filename      string // as uploaded
+	StorageKey    string
+	SizeBytes     int64
+	Width, Height int
+	CreatedAt     time.Time
 }

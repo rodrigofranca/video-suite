@@ -2,6 +2,7 @@ package ffmpeg
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"math"
 	"os/exec"
@@ -100,5 +101,64 @@ func TestClipWithVignetteAndNoSound(t *testing.T) {
 	_, info, _ := Probe(context.Background(), out, "clip.mp4")
 	if info.Width != 640 || info.Height != 360 || info.AudioCodec != "aac" || math.Abs(info.DurationSeconds-3) > 0.15 {
 		t.Fatalf("clip = %dx%d, audio %q, %.2f s; want 640x360 with AAC, 3 s", info.Width, info.Height, info.AudioCodec, info.DurationSeconds)
+	}
+}
+
+// pixel returns the average color of a w x h box at x, y of the frame at second at.
+func pixel(t *testing.T, path string, at float64, x, y, w, h int) (r, g, b int) {
+	t.Helper()
+	out, err := exec.Command("ffmpeg", "-v", "error", "-ss", strconv.FormatFloat(at, 'f', 2, 64), "-i", path, "-frames:v", "1",
+		"-vf", fmt.Sprintf("crop=%d:%d:%d:%d,scale=1:1", w, h, x, y), "-f", "rawvideo", "-pix_fmt", "rgb24", "-").Output()
+	if err != nil || len(out) < 3 {
+		t.Fatalf("frame at %.2f: %v", at, err)
+	}
+	return int(out[0]), int(out[1]), int(out[2])
+}
+
+// The watermark sits in its corner at its size and opacity, on the clip but
+// not on the opening.
+func TestClipWithWatermark(t *testing.T) {
+	needFFmpeg(t)
+	dir := t.TempDir()
+	src, logo, intro := filepath.Join(dir, "src.mp4"), filepath.Join(dir, "logo.png"), filepath.Join(dir, "intro.mp4")
+	colorVideo(t, src, "black", "640x360", 25, 2, true)
+	colorVideo(t, intro, "red", "640x360", 25, 1, false)
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=100x50", "-frames:v", "1", logo).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	run := func(opacity int, withIntro bool) string {
+		t.Helper()
+		out := filepath.Join(dir, fmt.Sprintf("clip-%d-%v.mp4", opacity, withIntro))
+		spec := ClipSpec{Input: src, Start: 0, Duration: 2, Format: "original", SourceWidth: 640, SourceHeight: 360, Output: out,
+			FrameRate: 25, SourceAudio: true, Watermark: &WatermarkInput{Path: logo, Position: "top-right", Size: 25, Opacity: opacity}}
+		if withIntro {
+			spec.Intro = &VignetteInput{Path: intro, Duration: 1}
+		}
+		args, err := ClipArgs(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Run(context.Background(), args, slog.Default(), Options{}); err != nil {
+			t.Fatalf("%v\n%s", err, CommandLine(args))
+		}
+		return out
+	}
+	// 25% of the 360 px side: 90x45, 14 px (4%) from the top and the right.
+	full := run(100, false)
+	if r, g, b := pixel(t, full, 1, 640-14-80, 20, 60, 30); r < 230 || g < 230 || b < 230 {
+		t.Errorf("the top-right corner should be white, got %d,%d,%d", r, g, b)
+	}
+	if r, g, b := pixel(t, full, 1, 640-14-90-20, 20, 10, 30); r > 30 || g > 30 || b > 30 {
+		t.Errorf("left of the logo should stay black, got %d,%d,%d", r, g, b)
+	}
+	if r, g, b := pixel(t, full, 1, 20, 20, 60, 30); r > 30 || g > 30 || b > 30 {
+		t.Errorf("the top-left corner should stay black, got %d,%d,%d", r, g, b)
+	}
+	half := run(50, true)
+	if r, g, b := pixel(t, half, 0.5, 640-14-80, 20, 60, 30); r < 200 || g > 40 || b > 40 {
+		t.Errorf("the opening has no watermark: want red, got %d,%d,%d", r, g, b)
+	}
+	if r, _, _ := pixel(t, half, 2, 640-14-80, 20, 60, 30); r < 100 || r > 160 {
+		t.Errorf("at 50%% opacity the logo should be grey over black, got %d", r)
 	}
 }

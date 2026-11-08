@@ -12,6 +12,7 @@
 		getTranscript,
 		listPresets,
 		listVignettes,
+		listWatermarks,
 		metadataUrl,
 		rerunJob,
 		type Analysis,
@@ -22,7 +23,8 @@
 		type ClipFormat,
 		type Preset,
 		type Transcript,
-		type Vignette
+		type Vignette,
+		type Watermark
 	} from '$lib/api';
 	import { formatBitrate, formatBytes, formatClock, formatDate, formatResolution } from '$lib/format';
 	import { poll } from '$lib/poll.svelte';
@@ -106,10 +108,12 @@
 	// Export presets and the vignette library, for the clips' preset choice.
 	let presets = $state<Preset[]>([]);
 	let vignettes = $state<Vignette[]>([]);
-	Promise.all([listPresets(), listVignettes()])
-		.then(([p, v]) => {
+	let watermarks = $state<Watermark[]>([]);
+	Promise.all([listPresets(), listVignettes(), listWatermarks()])
+		.then(([p, v, w]) => {
 			presets = p;
 			vignettes = v;
+			watermarks = w;
 		})
 		.catch(() => {});
 	let translations = $state<string[]>([]);
@@ -289,6 +293,7 @@
 					{translations}
 					{presets}
 					{vignettes}
+					{watermarks}
 					segments={transcript?.segments ?? []}
 					duration={meta?.durationSeconds ?? 0}
 					onpreview={(start, end) => player?.playRange(start, end)}

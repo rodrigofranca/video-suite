@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg" // watermark images
+	_ "image/png"
 	"os"
 	"path/filepath"
 	"slices"
@@ -79,6 +82,9 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	if spec.Outro, err = m.vignette(ctx, job, in.Outro, "closing", width, height, dir); err != nil {
 		return err
 	}
+	if spec.Watermark, err = m.watermark(ctx, job, in.Watermark, dir); err != nil {
+		return err
+	}
 	total := duration
 	for _, v := range []*ffmpeg.VignetteInput{spec.Intro, spec.Outro} {
 		if v != nil {
@@ -127,7 +133,7 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 		"captions": subs.Path != "", "captionStyle": subs.Style, "language": subs.Language, "translatedFrom": subs.TranslatedFrom,
 		"captionPosition": subs.Position, "captionColor": subs.Color, "captionCaps": subs.Caps,
 		"start": clip.Start, "end": clip.End, "durationSeconds": duration,
-		"preset": in.Preset, "intro": spec.Intro != nil, "outro": spec.Outro != nil, "totalSeconds": total,
+		"preset": in.Preset, "intro": spec.Intro != nil, "outro": spec.Outro != nil, "watermark": spec.Watermark != nil, "totalSeconds": total,
 		"width": width, "height": height, "sizeBytes": info.Size(),
 	})
 	return m.Store.CreateArtifact(ctx, domain.Artifact{
@@ -434,6 +440,37 @@ func (m Media) vignette(ctx context.Context, job Job, v *jobcontracts.Vignette, 
 	}
 	job.Log.Info(fmt.Sprintf("joining the %s: %dx%d, %.1f s, %s (%s)", role, info.Width, info.Height, info.DurationSeconds, sound, version))
 	return &ffmpeg.VignetteInput{Path: path, Duration: info.DurationSeconds, Audio: info.AudioCodec != ""}, nil
+}
+
+// watermark downloads and checks the image laid over the clip
+// (docs/adr/0031). It returns nil without one.
+func (m Media) watermark(ctx context.Context, job Job, wm *jobcontracts.Watermark, dir string) (*ffmpeg.WatermarkInput, error) {
+	if wm == nil {
+		return nil, nil
+	}
+	ext := filepath.Ext(wm.Key)
+	if !strings.HasPrefix(wm.Key, storage.WatermarkPrefix) || (ext != ".png" && ext != ".jpg") || strings.Contains(wm.Key, "..") ||
+		!slices.Contains(jobcontracts.WatermarkPositions, wm.Position) ||
+		wm.Size < jobcontracts.MinWatermarkSize || wm.Size > jobcontracts.MaxWatermarkSize ||
+		wm.Opacity < jobcontracts.MinWatermarkOpacity || wm.Opacity > jobcontracts.MaxWatermarkOpacity {
+		return nil, fmt.Errorf("invalid input: watermark %+v", *wm)
+	}
+	path := filepath.Join(dir, "watermark"+ext)
+	if err := m.Storage.DownloadFile(ctx, wm.Key, path); err != nil {
+		return nil, fmt.Errorf("could not get the watermark image (was it deleted from the library?): %w", err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	cfg, _, err := image.DecodeConfig(f)
+	f.Close()
+	if err != nil {
+		return nil, fmt.Errorf("could not read the watermark image: %w", err)
+	}
+	job.Log.Info(fmt.Sprintf("laying the watermark: %dx%d image, %s, %d%% of the shorter side, %d%% opacity",
+		cfg.Width, cfg.Height, wm.Position, wm.Size, wm.Opacity))
+	return &ffmpeg.WatermarkInput{Path: path, Position: wm.Position, Size: wm.Size, Opacity: wm.Opacity}, nil
 }
 
 // minFaceCoverage is the share of a clip in which a face must be found for

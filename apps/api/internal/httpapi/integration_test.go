@@ -7,6 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -1241,5 +1244,154 @@ func TestVignettesAndPresets(t *testing.T) {
 	}
 	if code := e.get("/presets/"+preset.ID, nil); code != http.StatusNotFound {
 		t.Fatalf("get a deleted preset: %d", code)
+	}
+}
+
+// encodeImage makes a solid image of a size as PNG or JPEG.
+func encodeImage(t *testing.T, w, h int, asJPEG bool) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for i := range img.Pix {
+		img.Pix[i] = 0xff
+	}
+	var b bytes.Buffer
+	var err error
+	if asJPEG {
+		err = jpeg.Encode(&b, img, nil)
+	} else {
+		err = png.Encode(&b, img)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+func (e *env) uploadWatermark(name, filename string, content []byte) *httptest.ResponseRecorder {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if name != "" {
+		mw.WriteField("name", name)
+	}
+	fw, _ := mw.CreateFormFile("file", filename)
+	fw.Write(content)
+	mw.Close()
+	req := httptest.NewRequest(http.MethodPost, "/watermarks/upload", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, req)
+	return rec
+}
+
+// Watermark images, a preset with one, and an export with it (docs/adr/0031).
+func TestWatermarksAndPresets(t *testing.T) {
+	e := newEnv(t, 0)
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		file    string
+		content []byte
+		want    int
+	}{
+		"text":      {"logo.png", []byte("hello"), http.StatusUnsupportedMediaType},
+		"too small": {"dot.png", encodeImage(t, 4, 4, false), http.StatusBadRequest},
+		"too wide":  {"wide.png", encodeImage(t, 4100, 10, false), http.StatusBadRequest},
+	} {
+		if rec := e.uploadWatermark("", tc.file, tc.content); rec.Code != tc.want {
+			t.Errorf("%s: %d %s, want %d", name, rec.Code, rec.Body, tc.want)
+		}
+	}
+	var logo, photo struct {
+		ID, Name      string
+		Width, Height int
+	}
+	rec := e.uploadWatermark("Channel logo", "logo.png", encodeImage(t, 120, 60, false))
+	json.Unmarshal(rec.Body.Bytes(), &logo)
+	if rec.Code != http.StatusCreated || logo.Name != "Channel logo" || logo.Width != 120 || logo.Height != 60 {
+		t.Fatalf("upload a PNG: %d %s", rec.Code, rec.Body)
+	}
+	rec = e.uploadWatermark("", "badge.jpeg", encodeImage(t, 64, 64, true))
+	json.Unmarshal(rec.Body.Bytes(), &photo)
+	if rec.Code != http.StatusCreated || photo.Name != "badge" {
+		t.Fatalf("upload a JPEG: %d %s", rec.Code, rec.Body)
+	}
+	for _, img := range []struct{ id, ext string }{{logo.ID, ".png"}, {photo.ID, ".jpg"}} {
+		img := img
+		t.Cleanup(func() {
+			e.store.DeleteWatermark(ctx, img.id)
+			e.storage.Delete(ctx, storage.WatermarkKey(img.id, img.ext))
+		})
+	}
+	if ok, _ := e.storage.Exists(ctx, storage.WatermarkKey(photo.ID, ".jpg")); !ok {
+		t.Fatal("the JPEG was not stored as .jpg")
+	}
+	rec = httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/watermarks/"+logo.ID+"/file", nil))
+	if loc := rec.Header().Get("Location"); rec.Code != http.StatusFound || !strings.Contains(loc, "library/watermarks/") {
+		t.Fatalf("file: %d %s", rec.Code, loc)
+	}
+
+	name := "Marked " + domain.NewID()[:8]
+	for body, want := range map[string]int{
+		`{"name": "x", "watermarkId": "` + domain.NewID() + `"}`:                         http.StatusBadRequest,
+		`{"name": "x", "watermarkId": "` + logo.ID + `", "watermarkPosition": "center"}`: http.StatusBadRequest,
+		`{"name": "x", "watermarkId": "` + logo.ID + `", "watermarkSize": 60}`:           http.StatusBadRequest,
+		`{"name": "x", "watermarkId": "` + logo.ID + `", "watermarkOpacity": 0}`:         http.StatusBadRequest,
+	} {
+		if code := e.post("/presets", body, nil); code != want {
+			t.Errorf("POST /presets %s: %d, want %d", body, code, want)
+		}
+	}
+	var preset struct {
+		ID, WatermarkPosition           string
+		WatermarkID                     *string
+		WatermarkSize, WatermarkOpacity int
+	}
+	if code := e.post("/presets", `{"name": "`+name+`", "watermarkId": "`+logo.ID+`"}`, &preset); code != http.StatusCreated ||
+		preset.WatermarkID == nil || *preset.WatermarkID != logo.ID || preset.WatermarkPosition != "top-right" || preset.WatermarkSize != 15 || preset.WatermarkOpacity != 80 {
+		t.Fatalf("create with the defaults: %d %+v", code, preset)
+	}
+	t.Cleanup(func() { e.store.DeletePreset(ctx, preset.ID) })
+	if code := e.send(http.MethodPut, "/presets/"+preset.ID, `{"name": "`+name+`", "watermarkId": "`+logo.ID+`", "watermarkPosition": "bottom-left", "watermarkSize": 25, "watermarkOpacity": 60}`, &preset); code != 200 ||
+		preset.WatermarkPosition != "bottom-left" || preset.WatermarkSize != 25 || preset.WatermarkOpacity != 60 {
+		t.Fatalf("update: %d %+v", code, preset)
+	}
+	var images struct {
+		Watermarks []struct {
+			ID     string
+			UsedBy []string
+		}
+	}
+	e.get("/watermarks", &images)
+	for _, img := range images.Watermarks {
+		if img.ID == logo.ID && strings.Join(img.UsedBy, ",") != name {
+			t.Fatalf("usedBy = %v", img.UsedBy)
+		}
+	}
+	if code := e.send(http.MethodDelete, "/watermarks/"+logo.ID, "", nil); code != http.StatusConflict {
+		t.Fatalf("delete an image in use: %d, want 409", code)
+	}
+
+	// An export with the preset lays the image.
+	upload := e.upload("talk.mp4", fakeMP4(1024))
+	var created struct{ AssetID string }
+	json.Unmarshal(upload.Body.Bytes(), &created)
+	e.cleanupAsset(created.AssetID)
+	id, clipID := created.AssetID, domain.NewID()
+	e.store.ReplaceClips(ctx, id, []domain.Clip{{ID: clipID, JobID: e.jobOfType(id, jobcontracts.JobTypeSuggestClips).ID, Start: 0, End: 20, Title: "A", Score: 8, Rank: 1, Model: "m"}})
+	jobs, _ := e.store.ListJobs(ctx, id)
+	for _, j := range jobs {
+		e.store.FinishJob(ctx, j.ID, nil)
+	}
+	e.enqueued = nil
+	if code := e.post("/assets/"+id+"/clips/"+clipID+"/exports", `{"format": "vertical", "captions": false, "presetId": "`+preset.ID+`"}`, nil); code != http.StatusAccepted {
+		t.Fatalf("export: %d", code)
+	}
+	in, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
+	if in.Watermark == nil || in.Watermark.Key != storage.WatermarkKey(logo.ID, ".png") || in.Watermark.Position != "bottom-left" ||
+		in.Watermark.Size != 25 || in.Watermark.Opacity != 60 {
+		t.Fatalf("queued watermark %+v", in.Watermark)
+	}
+	if code := e.send(http.MethodDelete, "/watermarks/"+photo.ID, "", nil); code != http.StatusNoContent {
+		t.Fatalf("delete a free image: %d", code)
 	}
 }

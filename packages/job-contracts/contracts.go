@@ -147,11 +147,32 @@ type ExportClipInput struct {
 	CaptionLanguage string `json:"caption_language,omitempty"`
 	// Intro and Outro are vignettes joined before and after the clip, from
 	// the Preset named in Preset (docs/adr/0030); nil for none.
-	Intro     *Vignette `json:"intro,omitempty"`
-	Outro     *Vignette `json:"outro,omitempty"`
-	Preset    string    `json:"preset,omitempty"`
-	OutputKey string    `json:"output_key"`
+	Intro *Vignette `json:"intro,omitempty"`
+	Outro *Vignette `json:"outro,omitempty"`
+	// Watermark is an image over the clip, also from the Preset
+	// (docs/adr/0031); nil for none.
+	Watermark *Watermark `json:"watermark,omitempty"`
+	Preset    string     `json:"preset,omitempty"`
+	OutputKey string     `json:"output_key"`
 }
+
+// Watermark is an image laid over a clip (not over its vignettes), below the
+// captions: the storage key of a PNG or JPEG, the corner, its width as a
+// percentage of the clip's shorter side, and its opacity in percent.
+type Watermark struct {
+	Key      string `json:"key"`
+	Position string `json:"position"`
+	Size     int    `json:"size"`
+	Opacity  int    `json:"opacity"`
+}
+
+// Watermark corners, and the limits of its size and opacity (percentages).
+var WatermarkPositions = []string{"top-right", "top-left", "bottom-right", "bottom-left"}
+
+const (
+	MinWatermarkSize, MaxWatermarkSize       = 5, 40
+	MinWatermarkOpacity, MaxWatermarkOpacity = 10, 100
+)
 
 // Vignette is an opening or closing, as storage keys of its versions: the
 // export uses the one in its own orientation, else the other one fitted

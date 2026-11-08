@@ -35,6 +35,35 @@ type ClipSpec struct {
 	Intro, Outro *VignetteInput
 	FrameRate    float64
 	SourceAudio  bool
+	// Watermark is an image laid over the clip, below the captions and not
+	// over the vignettes (docs/adr/0031); nil for none.
+	Watermark *WatermarkInput
+}
+
+// WatermarkInput is an image over a clip: its file, corner ("top-right",
+// "top-left", "bottom-right", "bottom-left"), width as a percentage of the
+// clip's shorter side, and opacity in percent.
+type WatermarkInput struct {
+	Path     string
+	Position string
+	Size     int
+	Opacity  int
+}
+
+// watermarkFilters lays the image at input over the labelled picture base,
+// a margin of 4% of the shorter side away from the corner.
+func watermarkFilters(wm *WatermarkInput, input, w, h int) string {
+	short := min(w, h)
+	margin := short * 4 / 100
+	x, y := strconv.Itoa(margin), strconv.Itoa(margin)
+	if strings.HasSuffix(wm.Position, "right") {
+		x = fmt.Sprintf("main_w-overlay_w-%d", margin)
+	}
+	if strings.HasPrefix(wm.Position, "bottom") {
+		y = fmt.Sprintf("main_h-overlay_h-%d", margin)
+	}
+	return fmt.Sprintf("[base];[%d:v:0]format=rgba,scale=%d:-1,colorchannelmixer=aa=%.2f[wm];[base][wm]overlay=x=%s:y=%s",
+		input, even(short*wm.Size/100), float64(wm.Opacity)/100, x, y)
 }
 
 // VignetteInput is an opening or closing to join to a clip.
@@ -92,14 +121,21 @@ func ClipArgs(c ClipSpec) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unknown clip format %q", c.Format)
 	}
+	// Seek and length are options of the source input, so they apply to it alone.
+	inputs := []string{"-ss", seconds(c.Start), "-t", seconds(c.Duration), "-i", c.Input}
+	next := 1 // the index of the next input
+	if c.Watermark != nil {
+		// Below the captions, so they stay readable.
+		inputs = append(inputs, "-i", c.Watermark.Path)
+		graph += watermarkFilters(c.Watermark, next, w, h)
+		next++
+	}
 	if c.SubtitlesFile != "" {
 		graph += ",ass=filename=" + escapeFilterValue(c.SubtitlesFile)
 	}
-	// Seek and length are options of the source input, so they apply to it alone.
-	inputs := []string{"-ss", seconds(c.Start), "-t", seconds(c.Duration), "-i", c.Input}
 	maps := []string{"-map", "[v]", "-map", "0:a:0?"}
 	if c.Intro != nil || c.Outro != nil {
-		graph, inputs = joinVignettes(c, graph, inputs, w, h)
+		graph, inputs = joinVignettes(c, graph, inputs, next, w, h)
 		maps = []string{"-map", "[v]", "-map", "[a]"}
 	} else {
 		graph += "[v]"
@@ -122,7 +158,7 @@ func ClipArgs(c ClipSpec) ([]string, error) {
 // over a blurred copy of itself, at the clip's frame rate, with its sound or
 // silence, and the parts are joined in order into [v] and [a]. The clip gets
 // silence too when the source has no sound.
-func joinVignettes(c ClipSpec, clipGraph string, inputs []string, w, h int) (string, []string) {
+func joinVignettes(c ClipSpec, clipGraph string, inputs []string, next, w, h int) (string, []string) {
 	fps := c.FrameRate
 	if fps <= 0 {
 		fps = 30
@@ -137,9 +173,9 @@ func joinVignettes(c ClipSpec, clipGraph string, inputs []string, w, h int) (str
 	}
 	parts := []string{clipGraph + ",fps=" + rate + ",format=yuv420p[cv]", audio(0, c.SourceAudio, c.Duration, "ca")}
 	var order []string
-	input := 0 // the source
 	vignette := func(v *VignetteInput, name string) {
-		input++
+		input := next
+		next++
 		inputs = append(inputs, "-i", v.Path)
 		parts = append(parts,
 			fmt.Sprintf("[%[1]d:v:0]fps=%[2]s,split=2[%[3]sbg][%[3]sfg];"+

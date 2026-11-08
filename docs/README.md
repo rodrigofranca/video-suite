@@ -65,3 +65,4 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 - [0028](adr/0028-adaptive-hls.md): HLS in up to four qualities (1080p, 720p, 480p, 360p) from one FFmpeg run with aligned keyframes; the master playlist keeps the old address; stale HLS files are removed; the player has a quality menu.
 - [0029](adr/0029-translated-captions.md): captions in six languages: the language model translates the transcript line for line, once per language, before the first export in it; translated words are placed on the original speech; the player gets the translated subtitles.
 - [0030](adr/0030-vignettes-and-presets.md): opening and closing vignettes from a private library, joined to exports in one FFmpeg run (fitted when the shape differs); presets keep the caption choices and the vignettes.
+- [0031](adr/0031-watermark.md): a watermark image in presets, in a corner, sized by the clip's shorter side so it matches in both shapes, under the captions and not on the vignettes.

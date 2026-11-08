@@ -72,9 +72,10 @@ type clipExportDTO struct {
 	// Preset is the name of the preset the export used (of the file once it
 	// is ready, the one asked for before); Intro and Outro say whether the
 	// file has an opening and a closing (docs/adr/0030).
-	Preset string `json:"preset,omitempty"`
-	Intro  bool   `json:"intro,omitempty"`
-	Outro  bool   `json:"outro,omitempty"`
+	Preset    string `json:"preset,omitempty"`
+	Intro     bool   `json:"intro,omitempty"`
+	Outro     bool   `json:"outro,omitempty"`
+	Watermark bool   `json:"watermark,omitempty"`
 	// Framing is how a "vertical-face" file was framed: "face" or "center".
 	Framing   string `json:"framing,omitempty"`
 	Width     int    `json:"width,omitempty"`
@@ -99,6 +100,7 @@ type clipFileMeta struct {
 	Preset          string  `json:"preset"`
 	Intro           bool    `json:"intro"`
 	Outro           bool    `json:"outro"`
+	Watermark       bool    `json:"watermark"`
 	Framing         string  `json:"framing"`
 	Width           int     `json:"width"`
 	Height          int     `json:"height"`
@@ -208,7 +210,7 @@ func clipExports(clip domain.Clip, jobs []domain.Job, arts []domain.Artifact) []
 		e.CaptionLanguage, e.Preset = in.CaptionLanguage, in.Preset // asked for; the file's below
 		if file, ok := latestClipFile(arts, clipID, format); ok {
 			e.Captions, e.CaptionStyle, e.Framing, e.Width, e.Height, e.SizeBytes, e.Ready = file.Captions, file.CaptionStyle, file.Framing, file.Width, file.Height, file.SizeBytes, true
-			e.CaptionLanguage, e.Preset, e.Intro, e.Outro = "", file.Preset, file.Intro, file.Outro
+			e.CaptionLanguage, e.Preset, e.Intro, e.Outro, e.Watermark = "", file.Preset, file.Intro, file.Outro, file.Watermark
 			if file.Captions {
 				e.CaptionPosition, e.CaptionColor, e.CaptionCaps = file.CaptionPosition, file.CaptionColor, file.CaptionCaps
 				e.CaptionLanguage, e.TranslatedFrom = file.Language, file.TranslatedFrom
@@ -424,6 +426,7 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 	}
 	var preset domain.Preset
 	var intro, outro *jobcontracts.Vignette
+	var watermark *jobcontracts.Watermark
 	if choice.PresetID != "" {
 		if domain.IsID(choice.PresetID) {
 			preset, err = a.Store.GetPreset(ctx, choice.PresetID)
@@ -434,6 +437,9 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			intro, outro, err = a.exportVignettes(ctx, preset)
+		}
+		if err == nil {
+			watermark, err = a.exportWatermark(ctx, preset)
 		}
 		if err != nil {
 			a.internalError(w, r, err)
@@ -471,7 +477,7 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 		AssetID: asset.ID, ClipID: clip.ID, StorageKey: src.StorageKey, Format: body.Format,
 		Captions: captions, CaptionStyle: body.CaptionStyle,
 		CaptionPosition: body.CaptionPosition, CaptionColor: body.CaptionColor, CaptionCaps: body.CaptionCaps,
-		CaptionLanguage: language, Intro: intro, Outro: outro, Preset: preset.Name,
+		CaptionLanguage: language, Intro: intro, Outro: outro, Watermark: watermark, Preset: preset.Name,
 		OutputKey: storage.ClipKey(asset.ID, clip.ID, body.Format),
 	})
 	if err != nil {
