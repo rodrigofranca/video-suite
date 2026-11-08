@@ -3,6 +3,16 @@ package storage
 // Object keys are always generated from IDs, never from user input
 // (file names are only stored as metadata).
 
+// AssetPrefix is the folder that holds everything stored for an asset.
+func AssetPrefix(assetID string) string {
+	return "assets/" + assetID + "/"
+}
+
+// ClipPrefix is the folder that holds a clip's exported files.
+func ClipPrefix(assetID, clipID string) string {
+	return AssetPrefix(assetID) + "clips/" + clipID + "/"
+}
+
 // SourceKey is where an asset's original upload is stored.
 func SourceKey(assetID string) string {
 	return "assets/" + assetID + "/source/input.mp4"

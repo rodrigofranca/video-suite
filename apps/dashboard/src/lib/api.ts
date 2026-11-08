@@ -220,7 +220,7 @@ export const getJobLogs = (id: string) =>
 
 const postJSON = <T>(path: string, data: unknown) => sendJSON<T>('POST', path, data);
 
-async function sendJSON<T>(method: 'POST' | 'PATCH', path: string, data: unknown): Promise<T> {
+async function sendJSON<T>(method: 'POST' | 'PATCH' | 'DELETE', path: string, data?: unknown): Promise<T> {
 	let res: Response;
 	try {
 		res = await fetch(API_URL + path, {
@@ -235,6 +235,13 @@ async function sendJSON<T>(method: 'POST' | 'PATCH', path: string, data: unknown
 	if (!res.ok) throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status);
 	return body as T;
 }
+
+/** Deletes a video, its clips and every stored file. */
+export const deleteAsset = (assetId: string) => sendJSON<void>('DELETE', `/assets/${encodeURIComponent(assetId)}`);
+
+/** Deletes a clip and its exported files. */
+export const deleteClip = (assetId: string, clipId: string) =>
+	sendJSON<void>('DELETE', `/assets/${encodeURIComponent(assetId)}/clips/${encodeURIComponent(clipId)}`);
 
 /** Limits of a clip edited by hand (as the API checks them). */
 export const clipLimits = { minSeconds: 3, maxSeconds: 180, maxTitle: 120 };

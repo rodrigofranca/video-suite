@@ -167,6 +167,32 @@ func (c *Client) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+// DeletePrefix removes every object whose key starts with prefix and returns
+// how many it removed. To keep a mistake from emptying the bucket, prefix
+// must be an asset's folder or a folder inside one ("assets/<id>/...", ending
+// in a slash).
+func (c *Client) DeletePrefix(ctx context.Context, prefix string) (int, error) {
+	parts := strings.Split(prefix, "/")
+	if len(parts) < 3 || parts[0] != "assets" || parts[1] == "" || !strings.HasSuffix(prefix, "/") || strings.Contains(prefix, "..") {
+		return 0, fmt.Errorf("refusing to delete under %q: not an asset folder", prefix)
+	}
+	removed := 0
+	pages := s3.NewListObjectsV2Paginator(c.s3, &s3.ListObjectsV2Input{Bucket: &c.bucket, Prefix: &prefix})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return removed, fmt.Errorf("list %s: %w", prefix, err)
+		}
+		for _, obj := range page.Contents {
+			if err := c.Delete(ctx, aws.ToString(obj.Key)); err != nil {
+				return removed, err
+			}
+			removed++
+		}
+	}
+	return removed, nil
+}
+
 // Exists reports whether an object exists at key.
 func (c *Client) Exists(ctx context.Context, key string) (bool, error) {
 	_, err := c.s3.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &c.bucket, Key: &key})

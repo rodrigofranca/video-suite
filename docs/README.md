@@ -61,3 +61,4 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 - [0024](adr/0024-edit-clips-by-hand.md): clips can be adjusted before exporting (start, end, title), snapping to transcript sentences; new times track faces again for that clip and mark older exports as outdated.
 - [0025](adr/0025-caption-position-color-and-case.md): burned-in captions can sit at the bottom, middle or top, take one of five accent colors and be all capitals, chosen per export; each style keeps its own look by default.
 - [0026](adr/0026-keep-edited-clips-when-suggesting-again.md): suggesting clips again keeps the clips edited by hand and leaves out new suggestions that repeat them; the dashboard asks first, saying what will change.
+- [0027](adr/0027-delete-videos-and-clips.md): videos and clips can be deleted from the API and the dashboard, with every stored file; database first, then storage; only while no job runs.

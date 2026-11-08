@@ -96,6 +96,20 @@
 		text-decoration: none;
 		cursor: pointer;
 	}
+	:global(button.danger) {
+		font: inherit;
+		font-size: 0.9rem;
+		background: #dc2626; /* white text reads on it in light and dark themes */
+		color: #fff;
+		border: 0;
+		border-radius: 8px;
+		padding: 0.5rem 1rem;
+		cursor: pointer;
+	}
+	:global(button.danger:disabled) {
+		opacity: 0.5;
+		cursor: default;
+	}
 	:global(button.primary:disabled) {
 		opacity: 0.5;
 		cursor: default;

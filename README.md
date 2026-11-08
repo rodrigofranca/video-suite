@@ -79,6 +79,7 @@ Open http://localhost:5173, click **Upload**, pick an MP4 and watch the jobs run
 | `POST` | `/assets/upload` | Upload (multipart field `file`, `.mp4`, up to 2 GB) → `201 {"assetId", "status"}` |
 | `GET` | `/assets?status=` | Assets, newest first, with `thumbnailUrl` and `metadata` summary |
 | `GET` | `/assets/{id}` | Asset with source, jobs, artifacts, `thumbnailUrl`, `metadata` and `playback` (when ready) |
+| `DELETE` | `/assets/{id}` | Delete the video, everything recorded about it and all its stored files → `204`; `409` while uploading or while any job is pending or running |
 | `GET` | `/assets/{id}/metadata` | Metadata summary and full ffprobe output |
 | `GET` | `/assets/{id}/jobs` | Jobs in pipeline order, with `progress` (0–100) |
 | `GET` | `/assets/{id}/artifacts` | Files produced by jobs |
@@ -86,6 +87,7 @@ Open http://localhost:5173, click **Upload**, pick an MP4 and watch the jobs run
 | `GET` | `/assets/{id}/transcript` | Language, model, full text and timed segments; `404` until transcribed |
 | `GET` | `/assets/{id}/analysis` | Summary, tags, chapters (`start` in seconds, `title`), language and model; `404` until analyzed |
 | `GET` | `/assets/{id}/clips` | Suggested clips, best first, each with the state of its exports per format, and `wordTimings` (caption styles that follow each word are possible) |
+| `DELETE` | `/assets/{id}/clips/{clipId}` | Delete a clip and its exported files → `204` (the export jobs stay in the history); `409` while any job of the asset is pending or running |
 | `PATCH` | `/assets/{id}/clips/{clipId}` | Adjust a clip before exporting it: any of `{"start": 12.5, "end": 40, "title": "..."}` (seconds from the start of the video; 3 s to 3 min, inside the video). New times clear the face track and queue `track-faces` for that clip; `409` while any job of the asset is pending or running |
 | `POST` | `/assets/{id}/clips/{clipId}/exports` | Export a clip: `{"format": "original" \| "vertical" \| "vertical-face" \| "vertical-blur", "captions": true, "captionStyle": "highlight" \| "box" \| "karaoke" \| "one-word" \| "lines", "captionPosition": "bottom" \| "middle" \| "top", "captionColor": "yellow" \| "green" \| "pink" \| "blue" \| "violet", "captionCaps": true}` (the last three optional: each style has its own color and case) → `202` with the job; `409` while any job of the asset is pending or running |
 | `GET` | `/clips/{id}/download?format=` | `302` to a 15-minute signed link that saves the exported file (`&inline=1` plays it instead) |
@@ -155,5 +157,5 @@ Milestone 1 is a working core, not a production service:
 - **Crash recovery needs a stable worker name.** A restarted worker resumes its own unfinished job only if `WORKER_NAME` is unchanged.
 - **Progress starts after the download.** The encoding percentage stays at 0 while the worker downloads the source.
 - **Leftover segments.** Re-running HLS overwrites the playlist and segments, but if the new run produces fewer segments the extra old files stay in storage (the playlist does not reference them).
-- **No deletion.** Assets cannot be deleted from the API or dashboard yet.
+- **Deleting cannot be undone.** There is no trash: deleting a video or a clip removes its files at once ([ADR 0027](docs/adr/0027-delete-videos-and-clips.md)).
 - **The dashboard image is built for one API address.** `PUBLIC_API_URL` is fixed when the image is built (`http://localhost:8080` in the demo).

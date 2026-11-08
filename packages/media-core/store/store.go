@@ -57,6 +57,73 @@ func (s *Store) DeleteAsset(ctx context.Context, id string) error {
 	return err
 }
 
+// abandonedUpload is how long an asset can stay "uploading" before it counts
+// as an upload that stopped (the API restarted mid-upload) and can be deleted.
+const abandonedUpload = time.Hour
+
+// DeleteAssetIfIdle removes an asset and, by cascade, everything recorded
+// about it, while none of its jobs is pending or running and it is not being
+// uploaded (docs/adr/0027). It returns ErrNotFound for an unknown asset and
+// ErrBusy otherwise. The caller removes the stored files.
+func (s *Store) DeleteAssetIfIdle(ctx context.Context, id string) error {
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		var status string
+		var updated time.Time
+		err := tx.QueryRow(ctx, `SELECT status, updated_at FROM media_assets WHERE id = $1 FOR UPDATE`, id).Scan(&status, &updated)
+		if err != nil {
+			return notFound(err)
+		}
+		if status == domain.AssetUploading && time.Since(updated) < abandonedUpload {
+			return ErrBusy
+		}
+		if err := checkIdle(ctx, tx, id); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `DELETE FROM media_assets WHERE id = $1`, id)
+		return err
+	})
+}
+
+// DeleteClipIfIdle removes a clip and the records of its exported files,
+// while none of its asset's jobs is pending or running. The export jobs stay
+// in the history. It returns ErrNotFound for a clip that is not the asset's.
+func (s *Store) DeleteClipIfIdle(ctx context.Context, assetID, clipID string) error {
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM media_assets WHERE id = $1 FOR UPDATE`, assetID); err != nil {
+			return err
+		}
+		if err := checkIdle(ctx, tx, assetID); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `DELETE FROM clips WHERE id = $1 AND asset_id = $2`, clipID, assetID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		_, err = tx.Exec(ctx,
+			`DELETE FROM artifacts WHERE asset_id = $1 AND type = $2 AND metadata_json->>'clipId' = $3`,
+			assetID, domain.ArtifactClip, clipID)
+		return err
+	})
+}
+
+// checkIdle returns ErrBusy while any job of the asset is pending or running.
+func checkIdle(ctx context.Context, tx pgx.Tx, assetID string) error {
+	var busy bool
+	err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM processing_jobs WHERE asset_id = $1 AND status IN ($2, $3))`,
+		assetID, domain.JobPending, domain.JobRunning).Scan(&busy)
+	if err != nil {
+		return err
+	}
+	if busy {
+		return ErrBusy
+	}
+	return nil
+}
+
 func (s *Store) GetAsset(ctx context.Context, id string) (domain.Asset, error) {
 	return scanAsset(s.db.QueryRow(ctx, `SELECT `+assetColumns+` FROM media_assets WHERE id = $1`, id))
 }

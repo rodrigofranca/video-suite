@@ -10,6 +10,8 @@ Status is persisted in the database: `uploading → processing → ready | faile
 
 `ready` = HLS generated and playable. Failures in metadata or thumbnail jobs are visible in Job logs but do not set Asset to `failed`. `failed` = HLS job failed.
 
+An Asset can be deleted when it is not uploading and none of its Jobs is pending or running: its rows go by cascade and every stored file under `assets/{id}/` goes after them (ADR 0027). A single Clip can be deleted the same way, with its exported files.
+
 **Not**: a physical file, a rendition, or a blob.
 
 ## Source
