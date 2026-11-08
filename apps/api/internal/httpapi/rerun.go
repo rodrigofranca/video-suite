@@ -18,7 +18,8 @@ import (
 // createJob handles POST /assets/{id}/jobs with {"type": "<job type>"}: it
 // runs one pipeline job again for an asset whose jobs have all finished. The
 // new job is a new row, so earlier attempts stay in the history
-// (docs/adr/0015). Only that job runs; the pipeline does not continue.
+// (docs/adr/0015). Only that job runs, and the jobs that work on its result
+// (jobcontracts.RerunWith), which the worker queues after it.
 func (a *api) createJob(w http.ResponseWriter, r *http.Request) {
 	asset, ok := a.loadAsset(w, r)
 	if !ok {
@@ -55,13 +56,22 @@ func (a *api) createJob(w http.ResponseWriter, r *http.Request) {
 		ID: domain.NewID(), AssetID: asset.ID, Type: body.Type, InputJSON: input,
 		Status: domain.JobPending, CreatedAt: time.Now(),
 	}
+	var then []domain.Job
+	for _, typ := range jobcontracts.RerunWith[body.Type] {
+		in, err := jobInput(typ, asset.ID, src.StorageKey)
+		if err != nil {
+			a.internalError(w, r, err)
+			return
+		}
+		then = append(then, domain.Job{ID: domain.NewID(), AssetID: asset.ID, Type: typ, InputJSON: in, CreatedAt: job.CreatedAt})
+	}
 	// The HLS job decides whether the asset is ready (docs/adr/0003), so the
 	// asset is processing again until it ends.
 	assetStatus := ""
 	if job.Type == jobcontracts.JobTypeTranscodeHLS {
 		assetStatus = domain.AssetProcessing
 	}
-	err = a.Store.CreateJobIfIdle(ctx, job, assetStatus)
+	err = a.Store.CreateJobIfIdle(ctx, job, assetStatus, then...)
 	if errors.Is(err, store.ErrBusy) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
@@ -74,6 +84,9 @@ func (a *api) createJob(w http.ResponseWriter, r *http.Request) {
 	if err := a.Enqueue(ctx, jobcontracts.Message{JobID: job.ID, Type: job.Type, Payload: job.InputJSON}); err != nil {
 		bg := context.WithoutCancel(ctx)
 		a.Store.FinishJob(bg, job.ID, fmt.Errorf("could not enqueue job: %w", err))
+		for _, j := range then {
+			a.Store.FinishJob(bg, j.ID, errors.New("not run: the job before it could not be queued"))
+		}
 		if assetStatus != "" {
 			a.Store.SetAssetStatus(bg, asset.ID, domain.AssetFailed)
 		}

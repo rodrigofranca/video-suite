@@ -36,8 +36,14 @@ type clipDTO struct {
 	CreatedAt time.Time `json:"createdAt"`
 	// FaceCoverage is the share of the clip in which a face was found, or
 	// null while the clip has no face track.
-	FaceCoverage *float64        `json:"faceCoverage"`
-	Exports      []clipExportDTO `json:"exports"`
+	FaceCoverage *float64 `json:"faceCoverage"`
+	// FaceFollows is what a "vertical-face" export follows: "speaker" (who
+	// is speaking, with several people on screen) or "face" (the biggest);
+	// FacePeople is how many people are on screen at once. Both are null
+	// while the clip has no face track.
+	FaceFollows *string         `json:"faceFollows"`
+	FacePeople  *int            `json:"facePeople"`
+	Exports     []clipExportDTO `json:"exports"`
 }
 
 // clipExportDTO is the newest export of a clip in one format: its job's
@@ -96,11 +102,12 @@ func (a *api) listClips(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]clipDTO, 0, len(clips))
 	for _, c := range clips {
-		out = append(out, clipDTO{
+		dto := clipDTO{
 			ID: c.ID, Start: c.Start, End: c.End, Duration: c.End - c.Start, Title: c.Title, Reason: c.Reason,
 			Score: c.Score, Rank: c.Rank, Model: c.Model, CreatedAt: c.CreatedAt, Exports: clipExports(c.ID, jobs, arts),
-			FaceCoverage: faceCoverage(c.FaceTrack),
-		})
+		}
+		dto.FaceCoverage, dto.FaceFollows, dto.FacePeople = faceSummary(c.FaceTrack)
+		out = append(out, dto)
 	}
 	wordTimings := false
 	if tr, err := a.Store.GetTranscript(ctx, asset.ID); err == nil {
@@ -113,14 +120,21 @@ func (a *api) listClips(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"clips": out, "wordTimings": wordTimings})
 }
 
-func faceCoverage(track []byte) *float64 {
+// faceSummary reads a clip's face track (docs/adr/0022, 0023). Tracks made
+// before speakers were followed have neither "follows" nor "people".
+func faceSummary(track []byte) (*float64, *string, *int) {
 	var t struct {
 		Coverage float64 `json:"coverage"`
+		Follows  string  `json:"follows"`
+		People   *int    `json:"people"`
 	}
 	if len(track) == 0 || json.Unmarshal(track, &t) != nil {
-		return nil
+		return nil, nil, nil
 	}
-	return &t.Coverage
+	if t.Follows == "" {
+		t.Follows = "face"
+	}
+	return &t.Coverage, &t.Follows, t.People
 }
 
 // clipExports finds, per format, the newest export job of a clip and the

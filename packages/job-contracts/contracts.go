@@ -136,6 +136,13 @@ var Pipeline = []string{
 	JobTypeTrackFaces,
 }
 
+// RerunWith lists, for a job run again by hand, the jobs that run again
+// after it because they work on its result: new clip suggestions need their
+// faces tracked again (docs/adr/0023). They follow it in Pipeline order.
+var RerunWith = map[string][]string{
+	JobTypeSuggestClips: {JobTypeTrackFaces},
+}
+
 // NextJobType returns the job type that follows jobType in the Pipeline.
 func NextJobType(jobType string) (string, bool) {
 	for i, t := range Pipeline {

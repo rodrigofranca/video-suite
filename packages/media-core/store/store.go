@@ -205,11 +205,12 @@ func (s *Store) FinishJob(ctx context.Context, id string, jobErr error) error {
 var ErrBusy = errors.New("the asset still has jobs pending or running")
 
 // CreateJobIfIdle adds a pending job for an asset whose jobs have all
-// finished. When assetStatus is not empty the asset moves to that status in
-// the same transaction. It returns ErrNotFound for an unknown asset and
-// ErrBusy while any job of the asset is pending or running. The asset row is
-// locked, so concurrent calls cannot both succeed.
-func (s *Store) CreateJobIfIdle(ctx context.Context, job domain.Job, assetStatus string) error {
+// finished, and the pending jobs in then, which the pipeline runs after it.
+// When assetStatus is not empty the asset moves to that status in the same
+// transaction. It returns ErrNotFound for an unknown asset and ErrBusy while
+// any job of the asset is pending or running. The asset row is locked, so
+// concurrent calls cannot both succeed.
+func (s *Store) CreateJobIfIdle(ctx context.Context, job domain.Job, assetStatus string, then ...domain.Job) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		var current string
 		err := tx.QueryRow(ctx, `SELECT status FROM media_assets WHERE id = $1 FOR UPDATE`, job.AssetID).Scan(&current)
@@ -226,12 +227,17 @@ func (s *Store) CreateJobIfIdle(ctx context.Context, job domain.Job, assetStatus
 		if busy || current == domain.AssetUploading {
 			return ErrBusy
 		}
-		_, err = tx.Exec(ctx,
-			`INSERT INTO processing_jobs (id, asset_id, type, input_json, status, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6)`,
-			job.ID, job.AssetID, job.Type, job.InputJSON, domain.JobPending, job.CreatedAt)
-		if err != nil || assetStatus == "" {
-			return err
+		for _, j := range append([]domain.Job{job}, then...) {
+			_, err = tx.Exec(ctx,
+				`INSERT INTO processing_jobs (id, asset_id, type, input_json, status, created_at)
+				 VALUES ($1, $2, $3, $4, $5, $6)`,
+				j.ID, job.AssetID, j.Type, j.InputJSON, domain.JobPending, j.CreatedAt)
+			if err != nil {
+				return err
+			}
+		}
+		if assetStatus == "" {
+			return nil
 		}
 		_, err = tx.Exec(ctx,
 			`UPDATE media_assets SET status = $2, updated_at = NOW() WHERE id = $1`, job.AssetID, assetStatus)

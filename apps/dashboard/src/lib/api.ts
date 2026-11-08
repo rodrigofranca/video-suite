@@ -129,6 +129,10 @@ export interface Clip {
 	createdAt: string;
 	/** Share of the clip with a face, or null before face tracking. */
 	faceCoverage: number | null;
+	/** What '9:16 face' follows: who speaks (several people) or the biggest face. */
+	faceFollows: 'speaker' | 'face' | null;
+	/** People on screen at once, or null before face tracking. */
+	facePeople: number | null;
 	exports: ClipExport[];
 }
 

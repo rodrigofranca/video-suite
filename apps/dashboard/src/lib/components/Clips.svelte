@@ -104,7 +104,9 @@
 									? 'No face tracking yet: centred'
 									: clip.faceCoverage < 0.3
 										? 'Few faces found: centred'
-										: `Face in ${Math.round(clip.faceCoverage * 100)}% of the clip`}
+										: clip.faceFollows === 'speaker'
+											? `Follows who speaks · ${clip.facePeople} people`
+											: `Face in ${Math.round(clip.faceCoverage * 100)}% of the clip`}
 							</span>
 						{/if}
 						{#if active}

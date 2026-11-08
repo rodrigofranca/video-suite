@@ -450,6 +450,29 @@ func TestRerunJob(t *testing.T) {
 		t.Fatalf("jobs = %d, want one more than the pipeline", len(jobs))
 	}
 
+	// Re-running the clip suggestions also tracks faces again, after them.
+	e.store.StartJob(ctx, job.ID)
+	e.store.FinishJob(ctx, job.ID, nil)
+	e.enqueued = nil
+	var clips struct{ ID, Type string }
+	if code := e.post("/assets/"+id+"/jobs", `{"type":"suggest-clips"}`, &clips); code != http.StatusAccepted {
+		t.Fatalf("re-run clips: %d", code)
+	}
+	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeSuggestClips {
+		t.Fatalf("enqueued = %+v, want only suggest-clips", e.enqueued)
+	}
+	track, err := e.store.NextPendingJob(ctx, id, jobcontracts.JobTypeTrackFaces)
+	if err != nil {
+		t.Fatalf("no pending track-faces job after re-running clips: %v", err)
+	}
+	if in, _ := jobcontracts.Decode[jobcontracts.TrackFacesInput](jobcontracts.Message{Payload: track.InputJSON}); in.AssetID != id || in.StorageKey != storage.SourceKey(id) {
+		t.Fatalf("track-faces input = %+v", in)
+	}
+	for _, j := range []string{clips.ID, track.ID} {
+		e.store.StartJob(ctx, j)
+		e.store.FinishJob(ctx, j, nil)
+	}
+
 	// Re-running HLS makes the asset processing again.
 	e.store.StartJob(ctx, job.ID)
 	e.store.FinishJob(ctx, job.ID, nil)
@@ -609,8 +632,14 @@ func TestClips(t *testing.T) {
 	}
 	e.store.SetFaceTrack(ctx, best, []byte(`{"coverage":0.85,"points":[],"width":1280,"height":720}`))
 	e.get("/assets/"+id+"/clips", &raw)
-	if string(raw.Clips[0]["faceCoverage"]) != "0.85" {
-		t.Fatalf("faceCoverage = %s, want 0.85", raw.Clips[0]["faceCoverage"])
+	if string(raw.Clips[0]["faceCoverage"]) != "0.85" || string(raw.Clips[0]["faceFollows"]) != `"face"` || string(raw.Clips[0]["facePeople"]) != "null" {
+		t.Fatalf("face = %s, %s, %s; want 0.85, face, null (a track from before speakers)",
+			raw.Clips[0]["faceCoverage"], raw.Clips[0]["faceFollows"], raw.Clips[0]["facePeople"])
+	}
+	e.store.SetFaceTrack(ctx, best, []byte(`{"coverage":1,"points":[],"width":1280,"height":720,"follows":"speaker","people":2}`))
+	e.get("/assets/"+id+"/clips", &raw)
+	if string(raw.Clips[0]["faceFollows"]) != `"speaker"` || string(raw.Clips[0]["facePeople"]) != "2" {
+		t.Fatalf("face = %s, %s; want speaker, 2", raw.Clips[0]["faceFollows"], raw.Clips[0]["facePeople"])
 	}
 
 	exportPath := "/assets/" + id + "/clips/" + best + "/exports"

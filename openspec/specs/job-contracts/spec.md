@@ -93,3 +93,10 @@ O pacote SHALL definir `suggest-clips` (`SuggestClipsInput`: `asset_id`) e `trac
 #### Scenario: Exportação fora do pipeline
 - **WHEN** `NextJobType("export-clip")` é chamado
 - **THEN** SHALL indicar que não há próximo passo
+
+### Requirement: Jobs refeitos juntos
+O pacote SHALL definir `RerunWith`, com os jobs que rodam de novo depois de um job refeito à mão porque usam o resultado dele: `suggest-clips` leva `track-faces`.
+
+#### Scenario: Cortes refeitos
+- **WHEN** `RerunWith["suggest-clips"]` é lido
+- **THEN** SHALL ser `["track-faces"]`
