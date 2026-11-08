@@ -121,6 +121,19 @@
 			.catch(() => (clips = null));
 	});
 
+	// What suggesting clips again does, asked before it runs (docs/adr/0026).
+	let resuggestNote = $derived.by(() => {
+		if (!clips || clips.length === 0) return '';
+		const edited = clips.filter((c) => c.editedAt).length;
+		const others = clips.length - edited;
+		const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+		if (edited === 0) return `This replaces the ${plural(others, 'clip')} below with new suggestions.`;
+		const keep = `The ${plural(edited, 'clip')} you edited stay${edited === 1 ? 's' : ''}`;
+		return others === 0
+			? `${keep}; new suggestions are added around ${edited === 1 ? 'it' : 'them'}.`
+			: `This replaces the other ${plural(others, 'clip')} with new suggestions. ${keep}.`;
+	});
+
 	let trackingFaces = $derived(
 		!!asset?.jobs.some((j) => j.type === 'track-faces' && (j.status === 'pending' || j.status === 'running'))
 	);
@@ -267,7 +280,7 @@
 	<div class="columns">
 		<section>
 			<h2>Processing jobs</h2>
-			<JobList jobs={pipelineJobs} onRerun={rerun} />
+			<JobList jobs={pipelineJobs} onRerun={rerun} confirmRerun={resuggestNote ? { 'suggest-clips': resuggestNote } : {}} />
 		</section>
 
 		<section>

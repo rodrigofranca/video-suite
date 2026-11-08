@@ -10,7 +10,14 @@ import pytest
 from fake_llm import FakeLLM
 from ultramedia_ai import contracts
 from ultramedia_ai.answers import InvalidAnswer, NotConfigured
-from ultramedia_ai.clips import ClipSuggester, build_prompt, clean_clips, parse_answer, speech_segments
+from ultramedia_ai.clips import (
+    ClipSuggester,
+    build_prompt,
+    clean_clips,
+    merge_with_edited,
+    parse_answer,
+    speech_segments,
+)
 from ultramedia_ai.llm import ChatClient
 from ultramedia_ai.runner import JobContext
 
@@ -97,6 +104,47 @@ def test_saves_clips_and_a_rerun_replaces_them(cfg, store, asset, fake):
     fake.answer({"clips": []})
     run(cfg, store, asset, fake)
     assert store.get_clips(asset["id"]) == []
+
+
+def test_suggesting_again_keeps_the_clips_edited_by_hand(cfg, store, asset, fake, caplog):
+    caplog.set_level(logging.INFO)
+    save_transcript(store, asset, SEGMENTS)
+    fake.answer({"clips": [
+        {"start": 10, "end": 49.5, "title": "Primeiro", "score": 6},
+        {"start": 60, "end": 89.5, "title": "Segundo", "score": 5},
+    ]})
+    run(cfg, store, asset, fake)
+    first, second = store.clip_ranges(asset["id"])
+    store.mark_edited(second["id"])
+
+    # The new answer repeats the edited clip (60-89.5) and brings a better one.
+    fake.answer({"clips": [
+        {"start": 60, "end": 79.5, "title": "Repete o editado", "score": 9},
+        {"start": 0, "end": 29.5, "title": "Novo e melhor", "score": 8},
+    ]})
+    run(cfg, store, asset, fake)
+    clips = store.get_clips(asset["id"])
+    assert [(c["title"], c["rank"]) for c in clips] == [("Novo e melhor", 1), ("Segundo", 2)]
+    assert [c["id"] for c in store.clip_ranges(asset["id"])][1] == second["id"]  # the same clip, not a copy
+    assert "kept 1 clip edited by hand; left out 1 new suggestion that repeated them" in caplog.text
+
+    # Nothing to clip any more: the edited clip still stays.
+    fake.answer({"clips": []})
+    run(cfg, store, asset, fake)
+    assert [(c["title"], c["rank"]) for c in store.get_clips(asset["id"])] == [("Segundo", 1)]
+
+
+def test_merge_with_edited_ranks_everyone_by_score():
+    edited = [{"id": "e1", "start": 100.0, "end": 130.0, "score": 7}]
+    new = [
+        {"start": 0.0, "end": 30.0, "title": "a", "score": 9, "rank": 1},
+        {"start": 105.0, "end": 125.0, "title": "repeat", "score": 8, "rank": 2},
+        {"start": 40.0, "end": 70.0, "title": "b", "score": 7, "rank": 3},
+    ]
+    fresh, ranks = merge_with_edited(new, edited)
+    assert [(c["title"], c["rank"]) for c in fresh] == [("a", 1), ("b", 3)]
+    assert ranks == {"e1": 2}  # a tie with b: the edited clip first
+    assert merge_with_edited(new, []) == ([{**c, "rank": i} for i, c in enumerate(new, start=1)], {})
 
 
 def test_asks_again_when_the_answer_is_not_json(cfg, store, asset, fake):
