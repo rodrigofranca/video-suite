@@ -140,11 +140,79 @@ func chunk(text string, maxChars int) []string {
 
 // Style sizes the captions for a frame: bold white text with a dark outline,
 // centered near the bottom. Vertical video keeps them higher, clear of the
-// buttons that social apps draw at the bottom.
+// buttons that social apps draw at the bottom. With applies a person's
+// choices: another position, an accent color, capitals.
 type Style struct {
 	Width, Height int
 	FontSize      int
-	MarginV       int // distance from the bottom edge
+	MarginV       int    // distance from the bottom edge (from the top edge at the top)
+	Align         int    // ASS alignment: 2 bottom center (also when 0), 5 middle, 8 top
+	Accent        string // ASS color of the highlighted word, the box and the karaoke fill
+	Caps          bool   // all capitals
+}
+
+// Options are the choices made for one export (docs/adr/0025).
+type Options struct {
+	Position string // "bottom" (or empty), "middle" or "top"
+	Color    string // see Colors; empty for the style's own
+	Caps     bool
+}
+
+// Colors are the accent colors on offer, as ASS colors (&HAABBGGRR).
+var Colors = map[string]string{
+	"yellow": "&H0000E6FF", // #FFE600
+	"green":  "&H005EE83C", // #3CE85E
+	"pink":   "&H00B84FFF", // #FF4FB8
+	"blue":   "&H00FFB533", // #33B5FF
+	"violet": "&H00F65C8B", // #8B5CF6
+}
+
+// With returns the style moved and colored as chosen. defaultColor is the
+// style's own accent, used when no color is chosen.
+func (st Style) With(o Options, defaultColor string) Style {
+	switch o.Position {
+	case "top":
+		// Clear of the bars apps draw at the top of vertical video.
+		st.Align, st.MarginV = 8, st.Height*6/100
+		if st.Height > st.Width {
+			st.MarginV = st.Height * 14 / 100
+		}
+	case "middle":
+		st.Align, st.MarginV = 5, 0
+	default:
+		st.Align = 2
+	}
+	st.Accent = Colors[defaultColor]
+	if c, ok := Colors[o.Color]; ok {
+		st.Accent = c
+	}
+	st.Caps = o.Caps
+	return st
+}
+
+// ColorName is the name of the accent color the style ends up with, or "".
+func (st Style) ColorName() string {
+	for name, c := range Colors {
+		if c == st.Accent {
+			return name
+		}
+	}
+	return ""
+}
+
+func (st Style) align() int {
+	if st.Align == 0 {
+		return 2
+	}
+	return st.Align
+}
+
+// text escapes a caption and puts it in capitals when chosen.
+func (st Style) text(s string) string {
+	if st.Caps {
+		s = strings.ToUpper(s)
+	}
+	return escape(s)
 }
 
 // StyleFor returns the caption style for a frame of the given size.
@@ -161,7 +229,7 @@ func WriteASS(w io.Writer, cues []Cue, st Style) error {
 		return err
 	}
 	for _, c := range cues {
-		if _, err := fmt.Fprintf(w, "Dialogue: 0,%s,%s,Default,,0,0,0,,%s\n", assTime(c.Start), assTime(c.End), escape(c.Text)); err != nil {
+		if _, err := fmt.Fprintf(w, "Dialogue: 0,%s,%s,Default,,0,0,0,,%s\n", assTime(c.Start), assTime(c.End), st.text(c.Text)); err != nil {
 			return err
 		}
 	}
@@ -169,7 +237,8 @@ func WriteASS(w io.Writer, cues []Cue, st Style) error {
 }
 
 // writeHeader writes the ASS script info, the Default style (bold white
-// DejaVu Sans with a dark outline, bottom center) and any extra style lines.
+// DejaVu Sans with a dark outline, at the style's alignment) and any extra
+// style lines.
 func writeHeader(w io.Writer, st Style, extraStyles ...string) error {
 	outline := max(st.FontSize/12, 2)
 	margin := st.Width * 6 / 100
@@ -182,11 +251,11 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,DejaVu Sans,%d,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,%d,%d,2,%d,%d,%d,1
+Style: Default,DejaVu Sans,%d,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,%d,%d,%d,%d,%d,%d,1
 %s
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-`, st.Width, st.Height, st.FontSize, outline, outline/2, margin, margin, st.MarginV, extraLines(extraStyles))
+`, st.Width, st.Height, st.FontSize, outline, outline/2, st.align(), margin, margin, st.MarginV, extraLines(extraStyles))
 	return err
 }
 

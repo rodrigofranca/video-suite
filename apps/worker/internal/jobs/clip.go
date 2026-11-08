@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"ultramedia/media-core/domain"
@@ -70,12 +71,13 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	if in.Format == jobcontracts.ClipFormatVerticalFace {
 		spec.Track, framing = faceTrack(job, clip, src.Width, src.Height)
 	}
-	language, style := "", ""
+	var subs burned
 	if in.Captions {
-		spec.SubtitlesFile, language, style, err = m.clipCaptions(ctx, job, in, clip, width, height, dir)
+		subs, err = m.clipCaptions(ctx, job, in, clip, width, height, dir)
 		if err != nil {
 			return err
 		}
+		spec.SubtitlesFile = subs.Path
 	}
 
 	args, err := ffmpeg.ClipArgs(spec)
@@ -104,7 +106,8 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	job.Log.Info("uploaded clip", "key", in.OutputKey)
 	meta, _ := json.Marshal(map[string]any{
 		"clipId": clip.ID, "format": in.Format, "framing": framing,
-		"captions": spec.SubtitlesFile != "", "captionStyle": style, "language": language,
+		"captions": subs.Path != "", "captionStyle": subs.Style, "language": subs.Language,
+		"captionPosition": subs.Position, "captionColor": subs.Color, "captionCaps": subs.Caps,
 		"start": clip.Start, "end": clip.End, "durationSeconds": duration,
 		"width": width, "height": height, "sizeBytes": info.Size(),
 	})
@@ -126,28 +129,67 @@ const (
 // made before word timings were saved. It returns the file, the language and
 // the style used, or an empty path, not an error, when there is nothing to
 // burn in.
-func (m Media) clipCaptions(ctx context.Context, job Job, in jobcontracts.ExportClipInput, clip domain.Clip, width, height int, dir string) (string, string, string, error) {
+// burned is what was burned into a clip: the ASS file and the choices it
+// ended up with, after falling back to line captions and to the defaults.
+type burned struct {
+	Path, Language, Style string
+	Position, Color       string // Color is empty for styles without an accent
+	Caps                  bool
+}
+
+// accentOf is each style's own accent color; lines and one-word have none.
+var accentOf = map[string]string{
+	jobcontracts.CaptionStyleHighlight: "yellow",
+	jobcontracts.CaptionStyleKaraoke:   "yellow",
+	jobcontracts.CaptionStyleBox:       "violet",
+}
+
+// clipCaptions writes the clip's captions in the chosen style, position,
+// color and case (docs/adr/0021, docs/adr/0025). Word styles fall back to
+// lines when the transcript has no word timings; the path is empty when
+// there is nothing to burn.
+func (m Media) clipCaptions(ctx context.Context, job Job, in jobcontracts.ExportClipInput, clip domain.Clip, width, height int, dir string) (burned, error) {
 	style := in.CaptionStyle
 	if style == "" {
 		style = jobcontracts.CaptionStyles[0]
 	}
+	position := in.CaptionPosition
+	if position == "" {
+		position = jobcontracts.CaptionPositions[0]
+	}
+	options := func(style string) (captions.Options, string) {
+		caps := style == jobcontracts.CaptionStyleOneWord // its look, unless turned off
+		if in.CaptionCaps != nil {
+			caps = *in.CaptionCaps
+		}
+		color := ""
+		if accentOf[style] != "" {
+			color = accentOf[style]
+			if slices.Contains(jobcontracts.CaptionColors, in.CaptionColor) {
+				color = in.CaptionColor
+			}
+		}
+		return captions.Options{Position: position, Color: color, Caps: caps}, color
+	}
 	if style != jobcontracts.CaptionStyleLines {
-		path, language, err := m.wordCaptions(ctx, job, in.AssetID, style, clip, width, height, dir)
+		opts, color := options(style)
+		path, language, err := m.wordCaptions(ctx, job, in.AssetID, style, clip, width, height, dir, opts)
 		if err != nil || path != "" {
-			return path, language, style, err
+			return burned{path, language, style, position, color, opts.Caps}, err
 		}
 	}
-	path, language, err := m.lineCaptions(ctx, job, in.AssetID, clip, width, height, dir)
+	opts, _ := options(jobcontracts.CaptionStyleLines)
+	path, language, err := m.lineCaptions(ctx, job, in.AssetID, clip, width, height, dir, opts)
 	if path == "" {
-		return "", "", "", err
+		return burned{}, err
 	}
-	return path, language, jobcontracts.CaptionStyleLines, err
+	return burned{path, language, jobcontracts.CaptionStyleLines, position, "", opts.Caps}, err
 }
 
 // wordCaptions writes captions that follow the transcript's word timings,
 // in one of the word styles. It returns an empty path when the transcript has
 // no word timings for the clip, so the caller can fall back to line captions.
-func (m Media) wordCaptions(ctx context.Context, job Job, assetID, style string, clip domain.Clip, width, height int, dir string) (string, string, error) {
+func (m Media) wordCaptions(ctx context.Context, job Job, assetID, style string, clip domain.Clip, width, height int, dir string, opts captions.Options) (string, string, error) {
 	tr, err := m.Store.GetTranscript(ctx, assetID)
 	if errors.Is(err, store.ErrNotFound) {
 		return "", "", nil
@@ -174,14 +216,14 @@ func (m Media) wordCaptions(ctx context.Context, job Job, assetID, style string,
 	}
 	path := filepath.Join(dir, "captions.ass")
 	err = writeFile(path, func(f *os.File) error {
-		phraseStyle := captions.WordStyleFor(width, height)
+		phraseStyle := captions.WordStyleFor(width, height).With(opts, opts.Color)
 		switch style {
 		case jobcontracts.CaptionStyleBox:
 			return captions.WriteBox(f, phrases, phraseStyle)
 		case jobcontracts.CaptionStyleKaraoke:
 			return captions.WriteKaraoke(f, phrases, phraseStyle)
 		case jobcontracts.CaptionStyleOneWord:
-			return captions.WriteOneWord(f, words, captions.OneWordStyleFor(width, height))
+			return captions.WriteOneWord(f, words, captions.OneWordStyleFor(width, height).With(opts, ""))
 		default:
 			return captions.WriteHighlight(f, phrases, phraseStyle)
 		}
@@ -189,11 +231,11 @@ func (m Media) wordCaptions(ctx context.Context, job Job, assetID, style string,
 	if err != nil {
 		return "", "", err
 	}
-	job.Log.Info(fmt.Sprintf("burning in %s captions: %d words in %d phrases (%s)", style, len(words), len(phrases), tr.Language))
+	job.Log.Info(fmt.Sprintf("burning in %s captions: %d words in %d phrases (%s)%s", style, len(words), len(phrases), tr.Language, describe(opts)))
 	return path, tr.Language, nil
 }
 
-func (m Media) lineCaptions(ctx context.Context, job Job, assetID string, clip domain.Clip, width, height int, dir string) (string, string, error) {
+func (m Media) lineCaptions(ctx context.Context, job Job, assetID string, clip domain.Clip, width, height int, dir string, opts captions.Options) (string, string, error) {
 	art, err := m.Store.LatestArtifact(ctx, assetID, domain.ArtifactSubtitles)
 	if errors.Is(err, store.ErrNotFound) {
 		job.Log.Warn("no subtitles for this video; exporting without captions")
@@ -232,12 +274,30 @@ func (m Media) lineCaptions(ctx context.Context, job Job, assetID string, clip d
 
 	assPath := filepath.Join(dir, "captions.ass")
 	if err := writeFile(assPath, func(f *os.File) error {
-		return captions.WriteASS(f, cues, captions.StyleFor(width, height))
+		return captions.WriteASS(f, cues, captions.StyleFor(width, height).With(opts, ""))
 	}); err != nil {
 		return "", "", err
 	}
-	job.Log.Info(fmt.Sprintf("burning in %d line captions (%s)", len(cues), meta.Language))
+	job.Log.Info(fmt.Sprintf("burning in %d line captions (%s)%s", len(cues), meta.Language, describe(opts)))
 	return assPath, meta.Language, nil
+}
+
+// describe lists the caption choices that differ from the plain look, for the log.
+func describe(o captions.Options) string {
+	var parts []string
+	if o.Position != "" && o.Position != "bottom" {
+		parts = append(parts, "at the "+o.Position)
+	}
+	if o.Color != "" {
+		parts = append(parts, o.Color)
+	}
+	if o.Caps {
+		parts = append(parts, "in capitals")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return ", " + strings.Join(parts, ", ")
 }
 
 func writeFile(path string, write func(*os.File) error) error {

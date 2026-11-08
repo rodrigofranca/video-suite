@@ -72,3 +72,17 @@ func TestTrackFacesInputLeavesOutAnEmptyClip(t *testing.T) {
 		t.Fatalf("all clips: %s; one clip: %s", all, one)
 	}
 }
+
+func TestExportClipInputLeavesOutUnchosenCaptionOptions(t *testing.T) {
+	plain, _ := json.Marshal(ExportClipInput{AssetID: "a", Format: "vertical", Captions: true})
+	for _, field := range []string{"caption_position", "caption_color", "caption_caps"} {
+		if strings.Contains(string(plain), field) {
+			t.Fatalf("%s in %s", field, plain)
+		}
+	}
+	off := false
+	chosen, _ := json.Marshal(ExportClipInput{CaptionPosition: "top", CaptionColor: "green", CaptionCaps: &off})
+	if !strings.Contains(string(chosen), `"caption_position":"top","caption_color":"green","caption_caps":false`) {
+		t.Fatalf("chosen options: %s", chosen)
+	}
+}

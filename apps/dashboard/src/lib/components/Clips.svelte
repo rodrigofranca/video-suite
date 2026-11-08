@@ -1,8 +1,14 @@
 <script lang="ts">
 	import {
+		captionColors,
+		captionPositions,
 		captionStyles,
 		clipFileUrl,
 		clipFormats,
+		styleColor,
+		type CaptionColor,
+		type CaptionOptions,
+		type CaptionPosition,
 		type CaptionStyle,
 		type Clip,
 		type ClipFormat,
@@ -37,7 +43,13 @@
 		/** The video's length in seconds, or 0 when unknown. */
 		duration?: number;
 		onpreview?: (start: number, end: number) => void;
-		onexport?: (clipId: string, format: ClipFormat, captions: boolean, style: CaptionStyle) => Promise<void>;
+		onexport?: (
+			clipId: string,
+			format: ClipFormat,
+			captions: boolean,
+			style: CaptionStyle,
+			options: CaptionOptions
+		) => Promise<void>;
 		onedit?: (clipId: string, changes: { start?: number; end?: number; title?: string }) => Promise<void>;
 	} = $props();
 
@@ -49,6 +61,24 @@
 	let fallback = $derived<Choice>(wordTimings ? 'highlight' : hasSubtitles ? 'lines' : 'off');
 	const available = (style: CaptionStyle) => (style === 'lines' ? hasSubtitles : wordTimings);
 	const captionsOf = (clip: Clip): Choice => choice[clip.id] ?? fallback;
+
+	// Position, accent color and capitals per clip; each style brings its own
+	// color and case until one is picked.
+	let positionChoice = $state<Record<string, CaptionPosition>>({});
+	let colorChoice = $state<Record<string, CaptionColor>>({});
+	let capsChoice = $state<Record<string, boolean>>({});
+	const positionOf = (clip: Clip) => positionChoice[clip.id] ?? 'bottom';
+	const colorOf = (clip: Clip): CaptionColor | undefined => {
+		const c = captionsOf(clip);
+		return c === 'off' || !styleColor[c] ? undefined : (colorChoice[clip.id] ?? styleColor[c]);
+	};
+	const capsOf = (clip: Clip) => capsChoice[clip.id] ?? captionsOf(clip) === 'one-word';
+	const optionsOf = (clip: Clip): CaptionOptions => ({
+		position: positionOf(clip),
+		color: colorOf(clip),
+		caps: capsOf(clip)
+	});
+	const capitalize = (p: string) => p[0].toUpperCase() + p.slice(1);
 	let starting = $state(''); // "clipId:format" being queued
 	let error = $state('');
 
@@ -58,7 +88,7 @@
 		error = '';
 		try {
 			const c = captionsOf(clip);
-			await onexport(clip.id, format, c !== 'off', c === 'off' ? 'highlight' : c);
+			await onexport(clip.id, format, c !== 'off', c === 'off' ? 'highlight' : c, optionsOf(clip));
 		} catch (e) {
 			error = (e as Error).message;
 		} finally {
@@ -125,6 +155,46 @@
 					</label>
 				{/if}
 			</div>
+			{#if (hasSubtitles || wordTimings) && captionsOf(clip) !== 'off'}
+				<div class="look" data-testid="caption-look">
+					<label>
+						Position
+						<select
+							value={positionOf(clip)}
+							onchange={(e) => (positionChoice[clip.id] = e.currentTarget.value as CaptionPosition)}
+							data-testid="caption-position"
+						>
+							{#each captionPositions as p (p)}<option value={p}>{capitalize(p)}</option>{/each}
+						</select>
+					</label>
+					{#if colorOf(clip)}
+						<div class="swatches" role="radiogroup" aria-label="Color" data-testid="caption-color">
+							{#each captionColors as c (c.name)}
+								<button
+									class="swatch"
+									class:on={colorOf(clip) === c.name}
+									style="--swatch: {c.hex}"
+									role="radio"
+									aria-checked={colorOf(clip) === c.name}
+									aria-label={capitalize(c.name)}
+									title={capitalize(c.name)}
+									onclick={() => (colorChoice[clip.id] = c.name)}
+									data-testid="color-{c.name}"
+								></button>
+							{/each}
+						</div>
+					{/if}
+					<label class="caps">
+						<input
+							type="checkbox"
+							checked={capsOf(clip)}
+							onchange={(e) => (capsChoice[clip.id] = e.currentTarget.checked)}
+							data-testid="caption-caps"
+						/>
+						CAPS
+					</label>
+				</div>
+			{/if}
 
 			<div class="formats">
 				{#each clipFormats as format (format)}
@@ -173,7 +243,10 @@
 							{/if}
 							<span class="status">
 								{ex.sizeBytes ? formatBytes(ex.sizeBytes) : ''}{ex.framing === 'center' ? ' · centred' : ''}{ex.captions
-									? ` · ${captionStyleLabel(ex.captionStyle ?? 'lines')}`
+									? ` · ${captionStyleLabel(ex.captionStyle ?? 'lines')}` +
+										(ex.captionPosition && ex.captionPosition !== 'bottom' ? `, ${ex.captionPosition}` : '') +
+										(ex.captionColor && ex.captionColor !== styleColor[ex.captionStyle ?? 'lines'] ? `, ${ex.captionColor}` : '') +
+										(ex.captionCaps && ex.captionStyle !== 'one-word' ? ', caps' : '')
 									: ''}
 							</span>
 						{/if}
@@ -254,6 +327,47 @@
 		border: 1px solid var(--border);
 		background: var(--surface);
 		color: inherit;
+	}
+	.look {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem 1rem;
+		flex-wrap: wrap;
+		font-size: 0.9rem;
+	}
+	.look label {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	.look select {
+		font: inherit;
+		padding: 0.2rem 0.3rem;
+		border-radius: 6px;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: inherit;
+	}
+	.swatches {
+		display: flex;
+		gap: 0.35rem;
+	}
+	.swatch {
+		width: 1.6rem;
+		height: 1.6rem;
+		border-radius: 50%;
+		border: 2px solid var(--border);
+		background: var(--swatch);
+		padding: 0;
+		cursor: pointer;
+	}
+	.swatch.on {
+		border-color: var(--text);
+		box-shadow: 0 0 0 2px var(--surface) inset;
+	}
+	.caps input {
+		width: 1.1rem;
+		height: 1.1rem;
 	}
 	.hint {
 		margin: 0 0 0.5rem;

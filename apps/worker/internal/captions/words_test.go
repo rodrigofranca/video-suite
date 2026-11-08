@@ -127,7 +127,7 @@ func TestWriteKaraoke(t *testing.T) {
 func TestWriteOneWord(t *testing.T) {
 	var b strings.Builder
 	words := []Word{{0, 0.3, "fast"}, {0.35, 0.8, "transcription,"}, {2, 2.2, "ok"}}
-	if err := WriteOneWord(&b, words, OneWordStyleFor(1080, 1920)); err != nil {
+	if err := WriteOneWord(&b, words, OneWordStyleFor(1080, 1920).With(Options{Caps: true}, "")); err != nil {
 		t.Fatal(err)
 	}
 	out := b.String()
@@ -143,5 +143,66 @@ func TestWriteOneWord(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("ASS missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestOptions(t *testing.T) {
+	words := []Word{{0, 0.3, "Hello"}, {0.4, 0.8, "world"}}
+	phrases := [][]Word{words}
+	write := func(fn func(*strings.Builder, Style) error, st Style) string {
+		t.Helper()
+		var b strings.Builder
+		if err := fn(&b, st); err != nil {
+			t.Fatal(err)
+		}
+		return b.String()
+	}
+	vertical := WordStyleFor(1080, 1920)
+
+	// Top: alignment 8, clear of the bars at the top of vertical video; middle: 5.
+	top := write(func(b *strings.Builder, st Style) error { return WriteHighlight(b, phrases, st) }, vertical.With(Options{Position: "top"}, "yellow"))
+	if !strings.Contains(top, ",1,6,3,8,64,64,268,1\n") {
+		t.Errorf("top:\n%s", top)
+	}
+	middle := write(func(b *strings.Builder, st Style) error { return WriteKaraoke(b, phrases, st) }, vertical.With(Options{Position: "middle"}, "yellow"))
+	if !strings.Contains(middle, "Style: Karaoke,DejaVu Sans,80,&H0000E6FF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,6,3,5,64,64,0,1") {
+		t.Errorf("middle karaoke:\n%s", middle)
+	}
+
+	// The accent colors the highlighted word, the karaoke fill and the box;
+	// on a light box the word is black, on a dark one white.
+	green := write(func(b *strings.Builder, st Style) error { return WriteHighlight(b, phrases, st) }, vertical.With(Options{Color: "green"}, "yellow"))
+	if !strings.Contains(green, `{\c&H5EE83C&}Hello{\r} world`) {
+		t.Errorf("green highlight:\n%s", green)
+	}
+	yellowBox := write(func(b *strings.Builder, st Style) error { return WriteBox(b, phrases, st) }, vertical.With(Options{Color: "yellow"}, "violet"))
+	if !strings.Contains(yellowBox, "Style: Box,DejaVu Sans,80,&H00000000,&H00000000,&H0000E6FF,&H0000E6FF,") {
+		t.Errorf("yellow box:\n%s", yellowBox)
+	}
+	pinkKaraoke := write(func(b *strings.Builder, st Style) error { return WriteKaraoke(b, phrases, st) }, vertical.With(Options{Color: "pink"}, "yellow"))
+	if !strings.Contains(pinkKaraoke, "Style: Karaoke,DejaVu Sans,80,&H00B84FFF,") {
+		t.Errorf("pink karaoke:\n%s", pinkKaraoke)
+	}
+	if st := vertical.With(Options{}, "violet"); st.ColorName() != "violet" || textOn(st.Accent) != white {
+		t.Errorf("default box color = %q, text %s", st.ColorName(), textOn(st.Accent))
+	}
+	if st := vertical.With(Options{Color: "nope"}, "yellow"); st.ColorName() != "yellow" {
+		t.Errorf("unknown color = %q, want the style's own", st.ColorName())
+	}
+
+	// Capitals for every style, lines included.
+	caps := write(func(b *strings.Builder, st Style) error { return WriteKaraoke(b, phrases, st) }, vertical.With(Options{Caps: true}, "yellow"))
+	if !strings.Contains(caps, `{\kf40}HELLO {\kf40}WORLD`) {
+		t.Errorf("karaoke in capitals:\n%s", caps)
+	}
+	var lines strings.Builder
+	WriteASS(&lines, []Cue{{0, 1, "Hello world"}}, StyleFor(1920, 1080).With(Options{Caps: true, Position: "top"}, ""))
+	if !strings.Contains(lines.String(), ",Default,,0,0,0,,HELLO WORLD\n") || !strings.Contains(lines.String(), ",8,115,115,64,1\n") {
+		t.Errorf("lines in capitals at the top:\n%s", lines.String())
+	}
+	var lower strings.Builder
+	WriteOneWord(&lower, words, OneWordStyleFor(1080, 1920))
+	if !strings.Contains(lower.String(), "}Hello\n") {
+		t.Errorf("one word without capitals:\n%s", lower.String())
 	}
 }
