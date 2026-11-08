@@ -13,6 +13,7 @@ from . import contracts
 from .analyze import Analyzer
 from .clips import ClipSuggester
 from .faces import FaceTracker
+from .speakers import SpeakerModel
 from .config import ConfigError, from_env
 from .llm import ChatClient
 from .queue import Consumer
@@ -65,11 +66,18 @@ def main() -> int:
         log.error("ai worker stopped: could not load the Whisper model: %s", e)
         return 1
 
-    faces = FaceTracker(cfg, storage, store, log)
+    from huggingface_hub import constants as hf
+
+    speaker_model = SpeakerModel(hf.HF_HOME)
+    faces = FaceTracker(cfg, storage, store, log, speaker_model)
     try:
         faces.load_model()  # not fatal: transcription works without it
     except Exception as e:  # noqa: BLE001
         log.warning("could not load the face detector yet (track-faces jobs will retry it): %s", e)
+    try:
+        speaker_model.load()
+    except Exception as e:  # noqa: BLE001
+        log.warning("could not load the speaker model yet (track-faces jobs will retry it): %s", e)
 
     llm = None
     if cfg.llm_base_url:

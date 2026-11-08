@@ -264,6 +264,31 @@ func TestCreateJobIfIdle(t *testing.T) {
 	}
 }
 
+func TestCreateJobIfIdleWithJobsAfterIt(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+	for _, j := range jobs {
+		s.StartJob(ctx, j.ID)
+		s.FinishJob(ctx, j.ID, nil)
+	}
+	job := func(typ string) domain.Job {
+		return domain.Job{ID: domain.NewID(), AssetID: asset.ID, Type: typ, InputJSON: []byte("{}"), CreatedAt: time.Now()}
+	}
+	clips, faces := job("suggest-clips"), job("track-faces")
+	if err := s.CreateJobIfIdle(ctx, clips, "", faces); err != nil {
+		t.Fatal(err)
+	}
+	for _, j := range []domain.Job{clips, faces} {
+		if got, err := s.GetJob(ctx, j.ID); err != nil || got.Status != domain.JobPending || got.Type != j.Type {
+			t.Fatalf("job %s = %+v, %v; want pending", j.Type, got, err)
+		}
+	}
+	if next, err := s.NextPendingJob(ctx, asset.ID, "track-faces"); err != nil || next.ID != faces.ID {
+		t.Fatalf("next track-faces = %+v, %v", next, err)
+	}
+}
+
 func TestTranscripts(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

@@ -53,7 +53,7 @@ Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbna
 - `transcribe-audio`: Whisper (AI worker) → Transcript and WebVTT subtitles.
 - `analyze-transcript`: a language model, through the LLM gateway (AI worker) → Analysis. Nothing to do when there is no speech.
 - `suggest-clips`: the language model picks Clips from the transcript (AI worker). Nothing to do under 30 seconds of speech.
-- `track-faces`: finds the main face through each Clip and stores its Face track (AI worker, ADR 0022). Nothing to do without Clips.
+- `track-faces`: finds who to keep in frame through each Clip, the face or, with several people, whoever speaks, and stores its Face track (AI worker, ADR 0022, 0023). Nothing to do without Clips. Re-running `suggest-clips` runs it again after it (`jobcontracts.RerunWith`).
 
 `export-clip` is not in the pipeline: it runs when someone asks for a Clip in a format, and, like a re-run, only when no other Job of the Asset is pending or running.
 
@@ -77,7 +77,7 @@ A moment of an Asset that works as a short standalone video, suggested by the `s
 
 ## Face track
 
-Where the main face is through a Clip, stored with it (`clips.face_track`) by the `track-faces` Job: the share of samples with a face (`coverage`) and a camera path, the centre of the 9:16 window over time as a share of the picture width, in seconds from the Clip start. Empty when a face is in less than 30% of the Clip or the picture is already narrower than 9:16 (ADR 0022). Suggesting Clips again leaves the new ones without it until `track-faces` runs again.
+Who to keep in frame through a Clip, stored with it (`clips.face_track`) by the `track-faces` Job: the share of samples with a face (`coverage`), what it follows (`follows`: `speaker` when several people are on screen together and the video has sound, `face` for the biggest face otherwise), how many people are on screen at once (`people`) and a camera path, the centre of the 9:16 window over time as a share of the picture width, in seconds from the Clip start. Empty when a face is in less than 30% of the Clip or the picture is already narrower than 9:16 (ADR 0022, 0023).
 
 ## LLM gateway
 
