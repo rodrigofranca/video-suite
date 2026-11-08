@@ -221,12 +221,26 @@ func TestPlaybackOnceReady(t *testing.T) {
 	e.store.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: created.AssetID, JobID: hls.ID, Type: domain.ArtifactHLS, StorageKey: storage.HLSManifestKey(created.AssetID)})
 	e.store.SetAssetStatus(ctx, created.AssetID, domain.AssetReady)
 
-	var pb struct{ Type, ManifestURL string }
+	var pb struct {
+		Type, ManifestURL string
+		Renditions        []struct {
+			Name          string
+			Width, Height int
+		}
+	}
 	if code := e.get("/assets/"+created.AssetID+"/playback", &pb); code != 200 {
 		t.Fatalf("playback: %d", code)
 	}
-	if pb.Type != "hls" || pb.ManifestURL != e.storage.PublicURL(storage.HLSManifestKey(created.AssetID)) {
-		t.Fatalf("playback = %+v", pb)
+	if pb.Type != "hls" || pb.ManifestURL != e.storage.PublicURL(storage.HLSManifestKey(created.AssetID)) || pb.Renditions == nil || len(pb.Renditions) != 0 {
+		t.Fatalf("playback of a single-quality encoding = %+v", pb)
+	}
+	// A newer encoding in several qualities.
+	time.Sleep(10 * time.Millisecond)
+	e.store.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: created.AssetID, JobID: hls.ID, Type: domain.ArtifactHLS, StorageKey: storage.HLSManifestKey(created.AssetID),
+		MetadataJSON: []byte(`{"segments":6,"renditions":[{"name":"720p","width":1280,"height":720,"maxKbps":2800},{"name":"360p","width":640,"height":360,"maxKbps":800}]}`)})
+	e.get("/assets/"+created.AssetID+"/playback", &pb)
+	if len(pb.Renditions) != 2 || pb.Renditions[0].Name != "720p" || pb.Renditions[1].Height != 360 {
+		t.Fatalf("renditions = %+v", pb.Renditions)
 	}
 
 	var job struct{ ID, Type string }

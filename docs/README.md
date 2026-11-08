@@ -28,7 +28,7 @@ These parts of the PRD v0.1 and the roadmap are superseded:
 | Local storage | MinIO | RustFS (S3 API) | ADR 0008 |
 | Storage variables | `S3_*` (roadmap) / `MINIO_*` (old `.env`) | `S3_*` | `.env.example` |
 | ADR numbering | ADR 001–004 inside the PRD | `docs/adr/0004`–`0007` | `docs/adr/` |
-| HLS playlist name | `master.m3u8` | `index.m3u8` (single rendition) | `storage.HLSManifestKey` |
+| HLS playlist name | `master.m3u8` | `index.m3u8` (the master playlist; one folder per quality, ADR 0028) | `storage.HLSManifestKey` |
 | Playback API | `GET /assets/:id/playback` only | also included in `GET /assets/:id` as `playback` | `asset-api` spec |
 
 ## Decisions taken in step 2
@@ -62,3 +62,4 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 - [0025](adr/0025-caption-position-color-and-case.md): burned-in captions can sit at the bottom, middle or top, take one of five accent colors and be all capitals, chosen per export; each style keeps its own look by default.
 - [0026](adr/0026-keep-edited-clips-when-suggesting-again.md): suggesting clips again keeps the clips edited by hand and leaves out new suggestions that repeat them; the dashboard asks first, saying what will change.
 - [0027](adr/0027-delete-videos-and-clips.md): videos and clips can be deleted from the API and the dashboard, with every stored file; database first, then storage; only while no job runs.
+- [0028](adr/0028-adaptive-hls.md): HLS in up to four qualities (1080p, 720p, 480p, 360p) from one FFmpeg run with aligned keyframes; the master playlist keeps the old address; stale HLS files are removed; the player has a quality menu.

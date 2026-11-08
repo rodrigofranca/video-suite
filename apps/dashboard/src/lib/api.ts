@@ -54,6 +54,8 @@ export interface Artifact {
 export interface Playback {
 	type: 'hls';
 	manifestUrl: string;
+	/** Qualities in the stream, best first; empty for older single-quality videos. */
+	renditions: { name: string; width: number; height: number }[];
 }
 
 export interface Subtitles {

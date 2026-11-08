@@ -143,7 +143,7 @@ All settings come from environment variables; see [`.env.example`](.env.example)
 Milestone 1 is a working core, not a production service:
 
 - **No authentication.** Anyone who can reach the API can upload. HLS output, thumbnails and subtitles are public to anyone with the URL; the demo uses fixed development credentials.
-- **One rendition.** HLS is a single H.264/AAC rendition in MPEG-TS segments, no adaptive bitrate ladder.
+- **H.264 in MPEG-TS only.** HLS comes in up to four qualities (1080p, 720p, 480p, 360p; [ADR 0028](docs/adr/0028-adaptive-hls.md)), all H.264/AAC in MPEG-TS segments: no HEVC/AV1 or fMP4. Videos encoded before keep their single quality until HLS runs again.
 - **MP4 only, up to 2 GB.** Files must start with an MP4 `ftyp` box; MP4s that begin with another box are rejected.
 - **One job at a time.** Each worker runs one job at a time, so a long encode or transcription delays the next upload. Jobs have a 30-minute limit.
 - **Transcription runs on the CPU.** The `base` model is much faster than real time on a laptop CPU but makes mistakes with names and technical terms; larger models are more accurate and slower. GPU support is not set up.
@@ -156,6 +156,5 @@ Milestone 1 is a working core, not a production service:
 - **No automatic retries.** A failed job stays failed until someone runs it again from the dashboard or the API. A re-run runs only that job, plus face tracking after a new clip suggestion.
 - **Crash recovery needs a stable worker name.** A restarted worker resumes its own unfinished job only if `WORKER_NAME` is unchanged.
 - **Progress starts after the download.** The encoding percentage stays at 0 while the worker downloads the source.
-- **Leftover segments.** Re-running HLS overwrites the playlist and segments, but if the new run produces fewer segments the extra old files stay in storage (the playlist does not reference them).
 - **Deleting cannot be undone.** There is no trash: deleting a video or a clip removes its files at once ([ADR 0027](docs/adr/0027-delete-videos-and-clips.md)).
 - **The dashboard image is built for one API address.** `PUBLIC_API_URL` is fixed when the image is built (`http://localhost:8080` in the demo).
