@@ -95,6 +95,30 @@ export type ClipFormat = 'original' | 'vertical' | 'vertical-face' | 'vertical-b
 /** Burned-in captions. All but 'lines' follow the transcript's word timings. */
 export type CaptionStyle = 'highlight' | 'box' | 'karaoke' | 'one-word' | 'lines';
 export const captionStyles: CaptionStyle[] = ['highlight', 'box', 'karaoke', 'one-word', 'lines'];
+export type CaptionPosition = 'bottom' | 'middle' | 'top';
+export const captionPositions: CaptionPosition[] = ['bottom', 'middle', 'top'];
+/** Accent colors of the highlighted word, the box and the karaoke fill. */
+export type CaptionColor = 'yellow' | 'green' | 'pink' | 'blue' | 'violet';
+export const captionColors: { name: CaptionColor; hex: string }[] = [
+	{ name: 'yellow', hex: '#FFE600' },
+	{ name: 'green', hex: '#3CE85E' },
+	{ name: 'pink', hex: '#FF4FB8' },
+	{ name: 'blue', hex: '#33B5FF' },
+	{ name: 'violet', hex: '#8B5CF6' }
+];
+/** Styles with an accent color, and their own. */
+export const styleColor: Partial<Record<CaptionStyle, CaptionColor>> = {
+	highlight: 'yellow',
+	karaoke: 'yellow',
+	box: 'violet'
+};
+
+/** How captions look besides their style. */
+export interface CaptionOptions {
+	position: CaptionPosition;
+	color?: CaptionColor;
+	caps: boolean;
+}
 export const clipFormats: ClipFormat[] = ['original', 'vertical', 'vertical-face', 'vertical-blur'];
 
 /** The newest export of a clip in one format. */
@@ -106,6 +130,9 @@ export interface ClipExport {
 	error: string | null;
 	captions: boolean;
 	captionStyle?: CaptionStyle;
+	captionPosition?: CaptionPosition;
+	captionColor?: CaptionColor;
+	captionCaps?: boolean;
 	/** How a 'vertical-face' file was framed. */
 	framing?: 'face' | 'center';
 	width?: number;
@@ -226,12 +253,16 @@ export const exportClip = (
 	clipId: string,
 	format: ClipFormat,
 	captions: boolean,
-	captionStyle: CaptionStyle
+	captionStyle: CaptionStyle,
+	options?: CaptionOptions
 ) =>
 	postJSON<Job>(`/assets/${encodeURIComponent(assetId)}/clips/${encodeURIComponent(clipId)}/exports`, {
 		format,
 		captions,
-		captionStyle
+		captionStyle,
+		captionPosition: options?.position,
+		captionColor: options?.color,
+		captionCaps: options?.caps
 	});
 
 /** Uploads a file, reporting progress from 0 to 1. Uses XHR because fetch has no upload progress. */

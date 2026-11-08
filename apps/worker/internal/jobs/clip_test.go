@@ -3,6 +3,7 @@ package jobs
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -290,6 +291,86 @@ func TestExportClipCaptionStyles(t *testing.T) {
 		if !ok {
 			t.Errorf("%q: yellow %d, violet %d, white %d; want at least %d, %d, %d (and none of the colors not used)",
 				tc.style, yellow, violet, white, tc.minYellow, tc.minViolet, tc.minWhite)
+		}
+	}
+}
+
+// count counts the pixels of rows [from, to) of the frame at second at,
+// scaled to 216x384, that match a color.
+func count(t *testing.T, path string, at float64, from, to int, match func(r, g, b byte) bool) int {
+	t.Helper()
+	var out bytes.Buffer
+	cmd := exec.Command("ffmpeg", "-v", "error", "-ss", strconv.FormatFloat(at, 'f', 2, 64), "-i", path, "-frames:v", "1",
+		"-vf", "scale=216:384", "-f", "rawvideo", "-pix_fmt", "rgb24", "-")
+	cmd.Stdout, cmd.Stderr = &out, os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	px, n := out.Bytes(), 0
+	for i := from * 216 * 3; i < to*216*3 && i+2 < len(px); i += 3 {
+		if match(px[i], px[i+1], px[i+2]) {
+			n++
+		}
+	}
+	return n
+}
+
+// Position, color and capitals: at 2.6 s "burned" is being said.
+func TestExportClipCaptionOptions(t *testing.T) {
+	f := newFixtureWith(t, func(path string) { grayVideo(t, path) })
+	f.jobs[jobcontracts.JobTypeExportClip] = f.jobs[jobcontracts.JobTypeSuggestClips]
+	clip := f.addClip(0, 5, clipVTT)
+	f.saveWords(`[{"start":1.0,"end":1.4,"word":"These"},{"start":1.5,"end":1.9,"word":"words"},{"start":2.0,"end":2.4,"word":"are"},` +
+		`{"start":2.5,"end":2.9,"word":"burned"},{"start":3.0,"end":3.3,"word":"into"},{"start":3.4,"end":3.6,"word":"the"},{"start":3.7,"end":4.4,"word":"picture."}]`)
+	key := storage.ClipKey(f.asset, clip.ID, jobcontracts.ClipFormatVertical)
+	f.t.Cleanup(func() { f.files.Delete(f.ctx, key) })
+	green := func(r, g, b byte) bool { return g > 180 && r < 120 && b < 150 }
+	pink := func(r, g, b byte) bool { return r > 200 && g < 130 && b > 140 }
+	white := func(r, g, b byte) bool { return r > 220 && g > 220 && b > 220 }
+	yes := true
+
+	for _, tc := range []struct {
+		name, style, position, color string
+		caps                         *bool
+		accent                       func(r, g, b byte) bool
+		rows                         [2]int // where the captions must be
+		meta                         string // position, color and capitals recorded
+		log                          string
+	}{
+		{"green at the top", jobcontracts.CaptionStyleHighlight, "top", "green", nil, green, [2]int{30, 120},
+			"top green false", "at the top, green"},
+		{"pink box in the middle, in capitals", jobcontracts.CaptionStyleBox, "middle", "pink", &yes, pink, [2]int{150, 235},
+			"middle pink true", "at the middle, pink, in capitals"},
+	} {
+		f.logs.Reset()
+		err := f.media.ExportClip(f.ctx, f.job(jobcontracts.JobTypeExportClip), jobcontracts.ExportClipInput{
+			AssetID: f.asset, ClipID: clip.ID, StorageKey: f.src, Format: jobcontracts.ClipFormatVertical, Captions: true,
+			CaptionStyle: tc.style, CaptionPosition: tc.position, CaptionColor: tc.color, CaptionCaps: tc.caps, OutputKey: key,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if !strings.Contains(f.logs.String(), tc.log) {
+			t.Errorf("%s: logs miss %q:\n%s", tc.name, tc.log, f.logs.String())
+		}
+		arts, _ := f.st.ListArtifacts(f.ctx, f.asset)
+		var meta struct {
+			CaptionPosition, CaptionColor string
+			CaptionCaps                   bool
+		}
+		json.Unmarshal(arts[len(arts)-1].MetadataJSON, &meta)
+		if got := fmt.Sprint(meta.CaptionPosition, " ", meta.CaptionColor, " ", meta.CaptionCaps); got != tc.meta {
+			t.Errorf("%s: recorded %q, want %q", tc.name, got, tc.meta)
+		}
+		local := filepath.Join(t.TempDir(), "clip.mp4")
+		if err := f.files.DownloadFile(f.ctx, key, local); err != nil {
+			t.Fatal(err)
+		}
+		inside := count(t, local, 2.6, tc.rows[0], tc.rows[1], tc.accent)
+		outside := count(t, local, 2.6, 0, tc.rows[0], tc.accent) + count(t, local, 2.6, tc.rows[1], 384, tc.accent) +
+			count(t, local, 2.6, 0, tc.rows[0], white) + count(t, local, 2.6, tc.rows[1], 384, white)
+		if inside < 40 || outside > 5 {
+			t.Errorf("%s: %d accent pixels where the captions should be, %d caption pixels elsewhere", tc.name, inside, outside)
 		}
 	}
 }

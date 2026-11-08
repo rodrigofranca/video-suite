@@ -52,6 +52,15 @@ const (
 // them; the first is the default.
 var CaptionStyles = []string{CaptionStyleHighlight, CaptionStyleBox, CaptionStyleKaraoke, CaptionStyleOneWord, CaptionStyleLines}
 
+// Where burned-in captions sit (ExportClipInput.CaptionPosition; empty means
+// the bottom), and the colors of the highlighted word, the box and the
+// karaoke fill (ExportClipInput.CaptionColor; empty means the style's own:
+// yellow, or violet for the box) (docs/adr/0025).
+var (
+	CaptionPositions = []string{"bottom", "middle", "top"}
+	CaptionColors    = []string{"yellow", "green", "pink", "blue", "violet"}
+)
+
 type ExtractMetadataInput struct {
 	AssetID    string `json:"asset_id"`
 	StorageKey string `json:"storage_key"`
@@ -111,15 +120,20 @@ type TrackFacesInput struct {
 // ExportClipInput asks the media worker to cut a clip out of the source as an
 // MP4 at OutputKey. The clip's start and end are read from the database when
 // the job runs. Captions burns the asset's speech into the picture, in
-// CaptionStyle (empty means CaptionStyleHighlight).
+// CaptionStyle (empty means CaptionStyleHighlight), at CaptionPosition, with
+// CaptionColor, and in capitals when CaptionCaps is true (nil means only the
+// one-word style).
 type ExportClipInput struct {
-	AssetID      string `json:"asset_id"`
-	ClipID       string `json:"clip_id"`
-	StorageKey   string `json:"storage_key"`
-	Format       string `json:"format"`
-	Captions     bool   `json:"captions"`
-	CaptionStyle string `json:"caption_style,omitempty"`
-	OutputKey    string `json:"output_key"`
+	AssetID         string `json:"asset_id"`
+	ClipID          string `json:"clip_id"`
+	StorageKey      string `json:"storage_key"`
+	Format          string `json:"format"`
+	Captions        bool   `json:"captions"`
+	CaptionStyle    string `json:"caption_style,omitempty"`
+	CaptionPosition string `json:"caption_position,omitempty"`
+	CaptionColor    string `json:"caption_color,omitempty"`
+	CaptionCaps     *bool  `json:"caption_caps,omitempty"`
+	OutputKey       string `json:"output_key"`
 }
 
 // Pipeline is the order in which an upload's jobs run. The API creates one

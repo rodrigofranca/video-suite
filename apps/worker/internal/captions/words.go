@@ -85,14 +85,34 @@ func WordStyleFor(width, height int) Style {
 	return Style{Width: width, Height: height, FontSize: max(height*64/1080, 18), MarginV: height * 8 / 100}
 }
 
-// Colors (ASS writes them as &HAABBGGRR): yellow for the highlighted or
-// sung word, violet for the box.
+// Text colors (ASS writes them as &HAABBGGRR). The accent comes from the
+// style: yellow by default, violet for the box (see Style.With).
 const (
-	yellow = "&H0000E6FF"
-	violet = "&H00F65C8B"
-	white  = "&H00FFFFFF"
-	black  = "&H00000000"
+	white = "&H00FFFFFF"
+	black = "&H00000000"
 )
+
+// accent is the style's accent, yellow when none was set.
+func (st Style) accent(fallback string) string {
+	if st.Accent != "" {
+		return st.Accent
+	}
+	return Colors[fallback]
+}
+
+// inline turns an ASS style color (&H00BBGGRR) into an override tag color (&HBBGGRR&).
+func inline(color string) string { return "&H" + strings.TrimPrefix(color, "&H00") + "&" }
+
+// textOn is the text color that reads on a box of the given color: black on
+// light colors, white on dark ones.
+func textOn(color string) string {
+	var b, g, r int
+	fmt.Sscanf(strings.TrimPrefix(color, "&H00"), "%02X%02X%02X", &b, &g, &r)
+	if 0.2126*float64(r)+0.7152*float64(g)+0.0722*float64(b) > 150 {
+		return black
+	}
+	return white
+}
 
 // lingerSeconds is how long a phrase stays after its last word when the
 // next one does not start sooner.
@@ -134,7 +154,7 @@ func dialogue(w io.Writer, layer int, from, to float64, style, text string) erro
 }
 
 // WriteHighlight writes the "highlight" style: the phrase in white, with the
-// word being said in yellow. One event per word.
+// word being said in the accent color (yellow by default). One event per word.
 func WriteHighlight(w io.Writer, phrases [][]Word, st Style) error {
 	if err := writeHeader(w, st); err != nil {
 		return err
@@ -143,9 +163,9 @@ func WriteHighlight(w io.Writer, phrases [][]Word, st Style) error {
 		err := wordWindows(phrase, phraseEnd(phrases, p), func(i int, from, to float64) error {
 			parts := make([]string, len(phrase))
 			for j, other := range phrase {
-				parts[j] = escape(other.Text)
+				parts[j] = st.text(other.Text)
 				if j == i {
-					parts[j] = `{\c&H00E6FF&}` + parts[j] + `{\r}` // yellow, as BGR
+					parts[j] = `{\c` + inline(st.accent("yellow")) + `}` + parts[j] + `{\r}`
 				}
 			}
 			return dialogue(w, 0, from, to, "Default", strings.Join(parts, " "))
@@ -157,14 +177,16 @@ func WriteHighlight(w io.Writer, phrases [][]Word, st Style) error {
 	return nil
 }
 
-// WriteBox writes the "box" style: the phrase in white, with a violet box
-// behind the word being said. The box is a second layer with the same text,
-// where every other word is transparent, in an opaque-box style.
+// WriteBox writes the "box" style: the phrase in white, with a box in the
+// accent color (violet by default) behind the word being said, the word in
+// black or white, whichever reads on it. The box is a second layer with the
+// same text, where every other word is transparent, in an opaque-box style.
 func WriteBox(w io.Writer, phrases [][]Word, st Style) error {
 	pad := max(st.FontSize/6, 4)
 	margin := st.Width * 6 / 100
-	box := fmt.Sprintf("Style: Box,DejaVu Sans,%d,%s,%s,%s,%s,-1,0,0,0,100,100,0,0,3,%d,0,2,%d,%d,%d,1",
-		st.FontSize, white, white, violet, violet, pad, margin, margin, st.MarginV)
+	color := st.accent("violet")
+	box := fmt.Sprintf("Style: Box,DejaVu Sans,%d,%s,%s,%s,%s,-1,0,0,0,100,100,0,0,3,%d,0,%d,%d,%d,%d,1",
+		st.FontSize, textOn(color), textOn(color), color, color, pad, st.align(), margin, margin, st.MarginV)
 	if err := writeHeader(w, st, box); err != nil {
 		return err
 	}
@@ -172,7 +194,7 @@ func WriteBox(w io.Writer, phrases [][]Word, st Style) error {
 		end := phraseEnd(phrases, p)
 		texts := make([]string, len(phrase))
 		for j, word := range phrase {
-			texts[j] = escape(word.Text)
+			texts[j] = st.text(word.Text)
 		}
 		if err := dialogue(w, 0, phrase[0].Start, end, "Default", strings.Join(texts, " ")); err != nil {
 			return err
@@ -199,14 +221,14 @@ func WriteBox(w io.Writer, phrases [][]Word, st Style) error {
 }
 
 // WriteKaraoke writes the "karaoke" style: the phrase appears in white and
-// each word fills with yellow, left to right, while it is said. It uses the
-// ASS karaoke tag \kf, one event per phrase.
+// each word fills with the accent color (yellow by default), left to right,
+// while it is said. It uses the ASS karaoke tag \kf, one event per phrase.
 func WriteKaraoke(w io.Writer, phrases [][]Word, st Style) error {
 	outline := max(st.FontSize/12, 2)
 	margin := st.Width * 6 / 100
 	// Karaoke fills from the secondary color (not yet said) to the primary.
-	kara := fmt.Sprintf("Style: Karaoke,DejaVu Sans,%d,%s,%s,%s,&H80000000,-1,0,0,0,100,100,0,0,1,%d,%d,2,%d,%d,%d,1",
-		st.FontSize, yellow, white, black, outline, outline/2, margin, margin, st.MarginV)
+	kara := fmt.Sprintf("Style: Karaoke,DejaVu Sans,%d,%s,%s,%s,&H80000000,-1,0,0,0,100,100,0,0,1,%d,%d,%d,%d,%d,%d,1",
+		st.FontSize, st.accent("yellow"), white, black, outline, outline/2, st.align(), margin, margin, st.MarginV)
 	if err := writeHeader(w, st, kara); err != nil {
 		return err
 	}
@@ -220,7 +242,7 @@ func WriteKaraoke(w io.Writer, phrases [][]Word, st Style) error {
 			if i > 0 {
 				b.WriteString(" ")
 			}
-			fmt.Fprintf(&b, `{\kf%d}%s`, max(int(math.Round((until-word.Start)*100)), 1), escape(word.Text))
+			fmt.Fprintf(&b, `{\kf%d}%s`, max(int(math.Round((until-word.Start)*100)), 1), st.text(word.Text))
 		}
 		if err := dialogue(w, 0, phrase[0].Start, phraseEnd(phrases, p), "Karaoke", b.String()); err != nil {
 			return err
@@ -242,8 +264,8 @@ func OneWordStyleFor(width, height int) Style {
 	return Style{Width: width, Height: height, FontSize: max(height*90/1080, 24), MarginV: height * 12 / 100}
 }
 
-// WriteOneWord writes the "one-word" style: only the word being said, in
-// capitals, with a short pop as it appears.
+// WriteOneWord writes the "one-word" style: only the word being said (in
+// capitals unless turned off), with a short pop as it appears.
 func WriteOneWord(w io.Writer, words []Word, st Style) error {
 	if err := writeHeader(w, st); err != nil {
 		return err
@@ -257,7 +279,7 @@ func WriteOneWord(w io.Writer, words []Word, st Style) error {
 		if to-word.Start < 0.01 {
 			continue
 		}
-		text := strings.ToUpper(escape(word.Text))
+		text := st.text(word.Text)
 		size := ""
 		if n := len([]rune(text)); n > oneWordMaxChars {
 			size = fmt.Sprintf(`\fs%d`, st.FontSize*oneWordMaxChars/n)

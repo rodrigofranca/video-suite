@@ -660,6 +660,11 @@ func TestClips(t *testing.T) {
 	if code := e.post(exportPath, `{"format": "vertical", "captionStyle": "comic-sans"}`, nil); code != http.StatusBadRequest {
 		t.Fatalf("bad caption style: %d", code)
 	}
+	for _, body := range []string{`{"format": "vertical", "captionPosition": "left"}`, `{"format": "vertical", "captionColor": "red"}`, `{"format": "vertical", "captionCaps": "yes"}`} {
+		if code := e.post(exportPath, body, nil); code != http.StatusBadRequest {
+			t.Fatalf("%s: %d, want 400", body, code)
+		}
+	}
 	if code := e.post("/assets/"+id+"/clips/"+domain.NewID()+"/exports", `{"format": "vertical"}`, nil); code != http.StatusNotFound {
 		t.Fatalf("unknown clip: %d", code)
 	}
@@ -676,6 +681,9 @@ func TestClips(t *testing.T) {
 	if err != nil || msg.Stream() != jobcontracts.StreamJobs || in.ClipID != best || in.Format != "vertical" || in.Captions || in.CaptionStyle != "highlight" ||
 		in.StorageKey != storage.SourceKey(id) || in.OutputKey != storage.ClipKey(id, best, "vertical") {
 		t.Fatalf("queued %+v (%v) on %s", in, err, msg.Stream())
+	}
+	if in.CaptionPosition != "" || in.CaptionColor != "" || in.CaptionCaps != nil {
+		t.Fatalf("caption options without being asked: %+v", in)
 	}
 	e.get("/assets/"+id+"/clips", &list)
 	if ex := list.Clips[0].Exports; len(ex) != 1 || ex[0].Format != "vertical" || ex[0].Status != "pending" || ex[0].Ready {
@@ -698,6 +706,35 @@ func TestClips(t *testing.T) {
 	}
 	if !list.WordTimings {
 		t.Fatal("wordTimings = false with a transcript that has words")
+	}
+
+	// Caption options go to the worker as asked, and come back from the file's metadata.
+	var withOptions struct{ ID string }
+	if code := e.post(exportPath, `{"format": "vertical-blur", "captionStyle": "box", "captionPosition": "top", "captionColor": "green", "captionCaps": true}`, &withOptions); code != http.StatusAccepted {
+		t.Fatalf("export with caption options: %d", code)
+	}
+	opts, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[len(e.enqueued)-1])
+	if opts.CaptionPosition != "top" || opts.CaptionColor != "green" || opts.CaptionCaps == nil || !*opts.CaptionCaps {
+		t.Fatalf("queued %+v", opts)
+	}
+	e.store.FinishJob(ctx, withOptions.ID, nil)
+	e.store.CreateArtifact(ctx, domain.Artifact{ID: domain.NewID(), AssetID: id, JobID: withOptions.ID, Type: domain.ArtifactClip,
+		StorageKey:   storage.ClipKey(id, best, "vertical-blur"),
+		MetadataJSON: []byte(`{"clipId":"` + best + `","format":"vertical-blur","captions":true,"captionStyle":"box","captionPosition":"top","captionColor":"green","captionCaps":true,"start":12,"end":47.5}`)})
+	var raw2 struct {
+		Clips []struct {
+			Exports []map[string]any
+		}
+	}
+	e.get("/assets/"+id+"/clips", &raw2)
+	var blur map[string]any
+	for _, ex := range raw2.Clips[0].Exports {
+		if ex["format"] == "vertical-blur" {
+			blur = ex
+		}
+	}
+	if blur["captionPosition"] != "top" || blur["captionColor"] != "green" || blur["captionCaps"] != true {
+		t.Fatalf("export with options = %v", blur)
 	}
 
 	rec = httptest.NewRecorder()

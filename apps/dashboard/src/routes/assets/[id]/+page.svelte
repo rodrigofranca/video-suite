@@ -11,6 +11,7 @@
 		rerunJob,
 		type Analysis,
 		type AssetDetail,
+		type CaptionOptions,
 		type CaptionStyle,
 		type Clip,
 		type ClipFormat,
@@ -131,8 +132,14 @@
 		await updates.refresh();
 	}
 
-	async function startExport(clipId: string, format: ClipFormat, captions: boolean, style: CaptionStyle) {
-		await exportClip(page.params.id!, clipId, format, captions, style);
+	async function startExport(
+		clipId: string,
+		format: ClipFormat,
+		captions: boolean,
+		style: CaptionStyle,
+		options: CaptionOptions
+	) {
+		await exportClip(page.params.id!, clipId, format, captions, style, options);
 		await updates.refresh();
 	}
 
