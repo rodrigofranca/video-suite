@@ -236,6 +236,15 @@ def test_tracks_a_face_moving_across_the_clip(cfg, storage, store, asset, tracke
         assert whole["points"][0]["t"] == 0 and 5.5 <= whole["points"][-1]["t"] <= 6.0
         # The second clip's times start at its own start, where the face is already on the right.
         assert second["points"][0]["t"] == 0 and second["points"][0]["x"] > 0.4
+
+        # After an edit, only that clip is tracked again.
+        whole_id, second_id = (c["id"] for c in store.clip_ranges(asset["id"]))
+        store.set_face_track(whole_id, None)
+        store.set_face_track(second_id, None)
+        caplog.clear()
+        tracker(ctx, f'{{"asset_id": "{asset["id"]}", "storage_key": "{key}", "clip_id": "{second_id}"}}')
+        assert store.get_face_track(whole_id) is None and store.get_face_track(second_id)["coverage"] > 0.8
+        assert "clip 1:" in caplog.text and "clip 2:" not in caplog.text
     finally:
         storage.delete(key)
 
@@ -335,5 +344,7 @@ def test_rejects_foreign_keys_and_skips_assets_without_clips(tracker, asset, sto
     )
     with pytest.raises(ValueError, match="invalid input"):
         tracker(ctx, f'{{"asset_id": "{asset["id"]}", "storage_key": "assets/other/source/input.mp4"}}')
+    with pytest.raises(ValueError, match="invalid input"):
+        tracker(ctx, f'{{"asset_id": "{asset["id"]}", "storage_key": "{contracts.source_key(asset["id"])}", "clip_id": "x"}}')
     tracker(ctx, f'{{"asset_id": "{asset["id"]}", "storage_key": "{contracts.source_key(asset["id"])}"}}')
     assert store.clip_ranges(asset["id"]) == []

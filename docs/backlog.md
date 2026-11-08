@@ -14,7 +14,7 @@ comes with a fixed position, colors and case.
 
 ## Clips
 
-- **Adjust a clip before exporting it**: change its start, end and title, with buttons to snap to the previous or next sentence.
+- **Warn before suggesting clips again**: a new suggestion replaces the list, including clips edited by hand; the dashboard could ask first, or keep the edited ones.
 
 ## Platform
 

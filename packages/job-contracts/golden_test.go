@@ -36,7 +36,7 @@ func contractsDoc() map[string]any {
 			JobTypeTranscribeAudio:   example(TranscribeAudioInput{AssetID: "11111111-1111-4111-8111-111111111111", AudioKey: "assets/11111111-1111-4111-8111-111111111111/audio/audio.flac", Language: "pt"}),
 			JobTypeAnalyzeTranscript: example(AnalyzeTranscriptInput{AssetID: "11111111-1111-4111-8111-111111111111"}),
 			JobTypeSuggestClips:      example(SuggestClipsInput{AssetID: "11111111-1111-4111-8111-111111111111"}),
-			JobTypeTrackFaces:        example(TrackFacesInput{AssetID: "11111111-1111-4111-8111-111111111111", StorageKey: "assets/11111111-1111-4111-8111-111111111111/source/input.mp4"}),
+			JobTypeTrackFaces:        example(TrackFacesInput{AssetID: "11111111-1111-4111-8111-111111111111", StorageKey: "assets/11111111-1111-4111-8111-111111111111/source/input.mp4", ClipID: "22222222-2222-4222-8222-222222222222"}),
 		},
 	}
 }

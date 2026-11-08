@@ -45,8 +45,10 @@ def test_suggest_clips_input_matches_go(golden):
 def test_track_faces_input_matches_go(golden):
     example = golden["examples"][contracts.JOB_TRACK_FACES]
     inp = contracts.TrackFacesInput.from_json(json.dumps(example))
-    assert (inp.asset_id, inp.storage_key) == (example["asset_id"], example["storage_key"])
+    assert (inp.asset_id, inp.storage_key, inp.clip_id) == (example["asset_id"], example["storage_key"], example["clip_id"])
     assert inp.storage_key == contracts.source_key(inp.asset_id)
+    assert set(example) == {"asset_id", "storage_key", "clip_id"}
+    assert contracts.TrackFacesInput.from_json('{"asset_id": "a", "storage_key": "b"}').clip_id == ""  # all clips
 
 
 def test_next_job_type():

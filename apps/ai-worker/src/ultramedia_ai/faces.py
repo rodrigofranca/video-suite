@@ -122,9 +122,19 @@ class FaceTracker:
 
     def __call__(self, ctx: JobContext, payload: str) -> None:
         inp = contracts.TrackFacesInput.from_json(payload)
-        if not contracts.is_id(inp.asset_id) or inp.storage_key != contracts.source_key(inp.asset_id):
-            raise ValueError(f"invalid input: asset_id {inp.asset_id!r}, storage_key {inp.storage_key!r}")
+        if (
+            not contracts.is_id(inp.asset_id)
+            or inp.storage_key != contracts.source_key(inp.asset_id)
+            or (inp.clip_id and not contracts.is_id(inp.clip_id))
+        ):
+            raise ValueError(f"invalid input: asset_id {inp.asset_id!r}, storage_key {inp.storage_key!r}, clip_id {inp.clip_id!r}")
         clips = self.store.clip_ranges(inp.asset_id)
+        if inp.clip_id:
+            # After an edit: only that clip.
+            clips = [c for c in clips if c["id"] == inp.clip_id]
+            if not clips:
+                ctx.log.info("nothing to track: the clip no longer exists (the clips were probably suggested again)")
+                return
         if not clips:
             ctx.log.info("nothing to track: the video has no clips")
             return

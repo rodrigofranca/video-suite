@@ -1,14 +1,27 @@
 <script lang="ts">
-	import { captionStyles, clipFileUrl, clipFormats, type CaptionStyle, type Clip, type ClipFormat } from '$lib/api';
+	import {
+		captionStyles,
+		clipFileUrl,
+		clipFormats,
+		type CaptionStyle,
+		type Clip,
+		type ClipFormat,
+		type TranscriptSegment
+	} from '$lib/api';
 	import { captionStyleLabel, clipFormatLabel, formatBytes, formatClock } from '$lib/format';
+	import ClipEditor from './ClipEditor.svelte';
 
 	let {
 		clips,
 		busy = false,
 		hasSubtitles = false,
 		wordTimings = false,
+		tracking = false,
+		segments = [],
+		duration = 0,
 		onpreview,
-		onexport
+		onexport,
+		onedit
 	}: {
 		clips: Clip[];
 		/** Another job of the video is pending or running: exports must wait. */
@@ -17,9 +30,18 @@
 		hasSubtitles?: boolean;
 		/** Word-by-word captions need the transcript's word timings. */
 		wordTimings?: boolean;
+		/** A face tracking job is pending or running. */
+		tracking?: boolean;
+		/** Transcript segments, for snapping an edited clip to sentences. */
+		segments?: TranscriptSegment[];
+		/** The video's length in seconds, or 0 when unknown. */
+		duration?: number;
 		onpreview?: (start: number, end: number) => void;
 		onexport?: (clipId: string, format: ClipFormat, captions: boolean, style: CaptionStyle) => Promise<void>;
+		onedit?: (clipId: string, changes: { start?: number; end?: number; title?: string }) => Promise<void>;
 	} = $props();
+
+	let editing = $state(''); // id of the clip being edited
 
 	type Choice = CaptionStyle | 'off';
 	// Captions per clip: highlighted words when possible, else lines, else none.
@@ -59,6 +81,7 @@
 			<div class="head">
 				<span class="rank">#{clip.rank}</span>
 				<h3>{clip.title}</h3>
+				{#if clip.editedAt}<span class="edited" title="Changed by hand">Edited</span>{/if}
 				<span class="score" title="How likely it is to hold attention, from the model">{clip.score}/10</span>
 			</div>
 			<p class="muted meta">
@@ -66,8 +89,26 @@
 			</p>
 			{#if clip.reason}<p class="reason">{clip.reason}</p>{/if}
 
+			{#if editing === clip.id && onedit}
+				<ClipEditor
+					{clip}
+					{segments}
+					{duration}
+					{busy}
+					{onpreview}
+					onsave={async (changes) => {
+						await onedit(clip.id, changes);
+						editing = '';
+					}}
+					oncancel={() => (editing = '')}
+				/>
+			{/if}
+
 			<div class="actions">
 				<button class="secondary" onclick={() => onpreview?.(clip.start, clip.end)}>▶ Preview</button>
+				{#if onedit && editing !== clip.id}
+					<button class="secondary" onclick={() => (editing = clip.id)} data-testid="edit-clip">✎ Edit</button>
+				{/if}
 				{#if hasSubtitles || wordTimings}
 					<label class="captions">
 						Captions
@@ -101,7 +142,9 @@
 						{#if format === 'vertical-face' && !ex}
 							<span class="status">
 								{clip.faceCoverage === null
-									? 'No face tracking yet: centred'
+									? tracking
+										? 'Finding faces…'
+										: 'No face tracking yet: centred'
 									: clip.faceCoverage < 0.3
 										? 'Few faces found: centred'
 										: clip.faceFollows === 'speaker'
@@ -125,6 +168,9 @@
 								preload="metadata"
 							></video>
 							<a href={clipFileUrl(clip.id, format)} data-testid="download">Download</a>
+							{#if ex.outdated}
+								<span class="status warn" data-testid="outdated">Made before the edit: export again</span>
+							{/if}
 							<span class="status">
 								{ex.sizeBytes ? formatBytes(ex.sizeBytes) : ''}{ex.framing === 'center' ? ' · centred' : ''}{ex.captions
 									? ` · ${captionStyleLabel(ex.captionStyle ?? 'lines')}`
@@ -166,6 +212,16 @@
 		color: var(--accent);
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
+	}
+	.edited {
+		font-size: 0.75rem;
+		color: var(--badge-busy-fg);
+		background: var(--badge-busy-bg);
+		border-radius: 999px;
+		padding: 0.1rem 0.45rem;
+	}
+	.status.warn {
+		color: var(--badge-busy-fg);
 	}
 	.score {
 		background: var(--badge-neutral-bg);

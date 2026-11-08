@@ -379,7 +379,7 @@ const clipColumns = `id, asset_id, job_id, start_seconds, end_seconds, title, re
 
 func scanClip(row pgx.Row) (domain.Clip, error) {
 	var c domain.Clip
-	err := row.Scan(&c.ID, &c.AssetID, &c.JobID, &c.Start, &c.End, &c.Title, &c.Reason, &c.Score, &c.Rank, &c.Model, &c.CreatedAt, &c.FaceTrack)
+	err := row.Scan(&c.ID, &c.AssetID, &c.JobID, &c.Start, &c.End, &c.Title, &c.Reason, &c.Score, &c.Rank, &c.Model, &c.CreatedAt, &c.FaceTrack, &c.EditedAt)
 	return c, notFound(err)
 }
 
@@ -403,7 +403,7 @@ func (s *Store) ReplaceClips(ctx context.Context, assetID string, clips []domain
 
 // ListClips returns an asset's clips, best first.
 func (s *Store) ListClips(ctx context.Context, assetID string) ([]domain.Clip, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+clipColumns+`, face_track FROM clips WHERE asset_id = $1 ORDER BY rank, start_seconds`, assetID)
+	rows, err := s.db.Query(ctx, `SELECT `+clipColumns+`, face_track, edited_at FROM clips WHERE asset_id = $1 ORDER BY rank, start_seconds`, assetID)
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +421,49 @@ func (s *Store) ListClips(ctx context.Context, assetID string) ([]domain.Clip, e
 
 // GetClip returns one clip.
 func (s *Store) GetClip(ctx context.Context, id string) (domain.Clip, error) {
-	return scanClip(s.db.QueryRow(ctx, `SELECT `+clipColumns+`, face_track FROM clips WHERE id = $1`, id))
+	return scanClip(s.db.QueryRow(ctx, `SELECT `+clipColumns+`, face_track, edited_at FROM clips WHERE id = $1`, id))
+}
+
+// EditClipIfIdle sets a clip's start, end and title, and marks it edited,
+// while none of its asset's jobs is pending or running. With retrack, the
+// clip's face track is cleared and retrack is added as a pending job in the
+// same transaction, to track the new range. It returns ErrNotFound for an
+// unknown clip and ErrBusy while the asset is busy.
+func (s *Store) EditClipIfIdle(ctx context.Context, c domain.Clip, retrack *domain.Job) error {
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		var assetID string
+		err := tx.QueryRow(ctx, `SELECT asset_id FROM clips WHERE id = $1`, c.ID).Scan(&assetID)
+		if err != nil {
+			return notFound(err)
+		}
+		// Lock the asset as CreateJobIfIdle does, so a job cannot start in between.
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM media_assets WHERE id = $1 FOR UPDATE`, assetID); err != nil {
+			return err
+		}
+		var busy bool
+		err = tx.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM processing_jobs WHERE asset_id = $1 AND status IN ($2, $3))`,
+			assetID, domain.JobPending, domain.JobRunning).Scan(&busy)
+		if err != nil {
+			return err
+		}
+		if busy {
+			return ErrBusy
+		}
+		_, err = tx.Exec(ctx,
+			`UPDATE clips SET start_seconds = $2, end_seconds = $3, title = $4, edited_at = NOW(),
+			 face_track = CASE WHEN $5 THEN NULL ELSE face_track END
+			 WHERE id = $1`,
+			c.ID, c.Start, c.End, c.Title, retrack != nil)
+		if err != nil || retrack == nil {
+			return err
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO processing_jobs (id, asset_id, type, input_json, status, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			retrack.ID, assetID, retrack.Type, retrack.InputJSON, domain.JobPending, retrack.CreatedAt)
+		return err
+	})
 }
 
 // SetFaceTrack stores where the main face is through a clip.

@@ -141,11 +141,16 @@ class TrackFacesInput:
 
     asset_id: str
     storage_key: str
+    clip_id: str = ""  # only this clip, after an edit; empty for all of them
 
     @classmethod
     def from_json(cls, payload: str | bytes) -> "TrackFacesInput":
         data = json.loads(payload)
-        return cls(asset_id=str(data.get("asset_id", "")), storage_key=str(data.get("storage_key", "")))
+        return cls(
+            asset_id=str(data.get("asset_id", "")),
+            storage_key=str(data.get("storage_key", "")),
+            clip_id=str(data.get("clip_id", "")),
+        )
 
 
 def source_key(asset_id: str) -> str:

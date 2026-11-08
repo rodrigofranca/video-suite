@@ -100,10 +100,12 @@ type SuggestClipsInput struct {
 
 // TrackFacesInput asks the AI worker to follow the main face through each
 // of the asset's clips, for vertical exports that keep it in frame
-// (docs/adr/0022). It reads the source through a signed URL.
+// (docs/adr/0022). It reads the source through a signed URL. With ClipID,
+// only that clip is tracked, after it was edited (docs/adr/0024).
 type TrackFacesInput struct {
 	AssetID    string `json:"asset_id"`
 	StorageKey string `json:"storage_key"`
+	ClipID     string `json:"clip_id,omitempty"`
 }
 
 // ExportClipInput asks the media worker to cut a clip out of the source as an

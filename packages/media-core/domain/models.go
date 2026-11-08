@@ -117,4 +117,15 @@ type Clip struct {
 	// FaceTrack is where to centre a vertical crop over time, from the
 	// track-faces job; nil until it has run (see migration 0013).
 	FaceTrack []byte
+	// EditedAt is when someone last changed the clip by hand; nil for a
+	// clip as suggested (see migration 0014).
+	EditedAt *time.Time
 }
+
+// Limits of a clip edited by hand, in seconds.
+const (
+	MinClipSeconds = 3.0
+	MaxClipSeconds = 180.0
+	// MaxClipTitle is the longest title, in characters.
+	MaxClipTitle = 120
+)
