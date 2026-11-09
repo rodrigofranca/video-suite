@@ -563,3 +563,56 @@ func TestVignettesAndPresets(t *testing.T) {
 		t.Fatalf("after delete: %v", err)
 	}
 }
+
+func TestWatermarks(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	w := domain.Watermark{ID: domain.NewID(), Name: "Logo", Filename: "logo.png", SizeBytes: 500, Width: 400, Height: 200}
+	w.StorageKey = "library/watermarks/" + w.ID + ".png"
+	if err := s.CreateWatermark(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.db.Exec(context.Background(), `DELETE FROM watermarks WHERE id = $1`, w.ID) })
+	if got, err := s.GetWatermark(ctx, w.ID); err != nil || got.Width != 400 || got.Height != 200 || got.StorageKey != w.StorageKey {
+		t.Fatalf("GetWatermark = %+v, %v", got, err)
+	}
+	if list, err := s.ListWatermarks(ctx); err != nil || len(list) == 0 {
+		t.Fatalf("ListWatermarks = %v, %v", list, err)
+	}
+
+	// Without watermark choices, a preset gets the defaults.
+	plain := domain.Preset{ID: domain.NewID(), Name: "Plain " + domain.NewID()[:8], CaptionStyle: "lines", CaptionPosition: "bottom"}
+	if err := s.CreatePreset(ctx, plain); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.DeletePreset(context.Background(), plain.ID) })
+	if got, _ := s.GetPreset(ctx, plain.ID); got.Watermark != "" || got.WatermarkPosition != "top-right" || got.WatermarkSize != 15 || got.WatermarkOpacity != 80 {
+		t.Fatalf("defaults = %+v", got)
+	}
+
+	p := domain.Preset{ID: domain.NewID(), Name: "Marked " + domain.NewID()[:8], CaptionStyle: "lines", CaptionPosition: "bottom",
+		Watermark: w.ID, WatermarkPosition: "bottom-left", WatermarkSize: 25, WatermarkOpacity: 60}
+	if err := s.CreatePreset(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.DeletePreset(context.Background(), p.ID) })
+	got, _ := s.GetPreset(ctx, p.ID)
+	if got.Watermark != w.ID || got.WatermarkPosition != "bottom-left" || got.WatermarkSize != 25 || got.WatermarkOpacity != 60 {
+		t.Fatalf("GetPreset = %+v", got)
+	}
+	var inUse *InUseError
+	if err := s.DeleteWatermark(ctx, w.ID); !errors.As(err, &inUse) || inUse.What != "watermark" || inUse.Presets[0] != p.Name ||
+		!strings.HasPrefix(err.Error(), "the watermark is used by") {
+		t.Fatalf("delete an image in use: %v", err)
+	}
+	p.Watermark = ""
+	if err := s.UpdatePreset(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteWatermark(ctx, w.ID); err != nil {
+		t.Fatalf("delete a free image: %v", err)
+	}
+	if err := s.DeleteWatermark(ctx, w.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete it again: %v", err)
+	}
+}

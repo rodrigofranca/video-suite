@@ -7,25 +7,32 @@
 		createPreset,
 		deletePreset,
 		deleteVignette,
+		deleteWatermark,
 		listPresets,
 		listVignettes,
+		listWatermarks,
 		updatePreset,
 		uploadVignette,
+		uploadWatermark,
 		vignetteFileUrl,
 		vignetteLimits,
+		watermarkFileUrl,
+		watermarkPositions,
 		type Preset,
 		type PresetInput,
-		type Vignette
+		type Vignette,
+		type Watermark
 	} from '$lib/api';
 	import { captionStyleLabel, describeCaptions, formatBytes, languageName } from '$lib/format';
 
 	let presets = $state<Preset[] | null>(null);
 	let vignettes = $state<Vignette[] | null>(null);
+	let watermarks = $state<Watermark[] | null>(null);
 	let error = $state('');
 
 	async function load() {
 		try {
-			[presets, vignettes] = await Promise.all([listPresets(), listVignettes()]);
+			[presets, vignettes, watermarks] = await Promise.all([listPresets(), listVignettes(), listWatermarks()]);
 			error = '';
 		} catch (e) {
 			error = (e as Error).message;
@@ -35,6 +42,28 @@
 
 	const vignetteName = (id: string | null) => vignettes?.find((v) => v.id === id)?.name ?? '';
 	const capitalize = (s: string) => s[0].toUpperCase() + s.slice(1);
+	const corner = (p: string) => capitalize(p.replace('-', ' '));
+	const sizes = [10, 15, 20, 25, 30];
+	const opacities = [100, 80, 60, 40];
+
+	/** "Logo, top right, 15%, 80% opacity", or "none". */
+	function describeWatermark(p: Preset): string {
+		const name = watermarks?.find((w) => w.id === p.watermarkId)?.name;
+		if (!p.watermarkId || !name) return 'none';
+		return `${name}, ${corner(p.watermarkPosition).toLowerCase()}, ${p.watermarkSize}%, ${p.watermarkOpacity}% opacity`;
+	}
+
+	/** Where the preview puts the image: the margin is 4% of the shorter side, the width a share of it. */
+	function previewStyle(vertical: boolean): string {
+		const ratio = 9 / 16; // the shorter side over the longer one
+		const across = vertical ? 1 : ratio; // the shorter side, as a share of the frame's width
+		const down = vertical ? ratio : 1; // ...and of its height
+		const [v, h] = form.watermarkPosition.split('-');
+		return (
+			`width: ${form.watermarkSize * across}%; opacity: ${form.watermarkOpacity / 100};` +
+			`${v}: ${4 * down}%; ${h}: ${4 * across}%;`
+		);
+	}
 
 	/** "Logo (horizontal) · Logo vertical (vertical)", or "none". */
 	function describeVignette(horizontal: string | null, vertical: string | null): string {
@@ -57,7 +86,11 @@
 		introHorizontalId: null,
 		introVerticalId: null,
 		outroHorizontalId: null,
-		outroVerticalId: null
+		outroVerticalId: null,
+		watermarkId: null,
+		watermarkPosition: 'top-right',
+		watermarkSize: 15,
+		watermarkOpacity: 80
 	});
 	let editing = $state<string | null>(null); // a preset's id, 'new', or null
 	let form = $state<PresetInput>(blank());
@@ -148,6 +181,47 @@
 			uploadError = (err as Error).message;
 		} finally {
 			progress = null;
+		}
+	}
+
+	// ---- Watermark images ----
+
+	let imageFile = $state<File | null>(null);
+	let imageName = $state('');
+	let imageError = $state('');
+	let imageUploading = $state(false);
+	function pickImage(e: Event) {
+		imageFile = (e.currentTarget as HTMLInputElement).files?.[0] ?? null;
+		imageError = '';
+		if (!imageFile) return;
+		if (!/\.(png|jpe?g)$/i.test(imageFile.name)) imageError = 'Only PNG and JPEG images are accepted.';
+		else if (imageFile.size > 5 * 1024 ** 2) imageError = 'An image can be up to 5 MB.';
+		if (!imageName) imageName = imageFile.name.replace(/\.(png|jpe?g)$/i, '');
+	}
+	async function addImage(e: SubmitEvent) {
+		e.preventDefault();
+		const formEl = e.currentTarget as HTMLFormElement;
+		if (!imageFile || imageError) return;
+		imageUploading = true;
+		try {
+			await uploadWatermark(imageName, imageFile, () => {});
+			imageFile = null;
+			imageName = '';
+			formEl.reset();
+			await load();
+		} catch (err) {
+			imageError = (err as Error).message;
+		} finally {
+			imageUploading = false;
+		}
+	}
+	async function removeImage(id: string) {
+		imageError = '';
+		try {
+			await deleteWatermark(id);
+			await load();
+		} catch (e) {
+			imageError = (e as Error).message;
 		}
 	}
 
@@ -266,6 +340,56 @@
 			<p class="muted small">
 				With only one version, clips in the other shape show it whole over a blurred copy of itself.
 			</p>
+			<fieldset>
+				<legend>Watermark</legend>
+				{#if !watermarks || watermarks.length === 0}
+					<p class="muted small">Upload an image below to use it here.</p>
+				{:else}
+					<div class="row">
+						<label>
+							Image
+							<select bind:value={form.watermarkId} data-testid="preset-watermark">
+								<option value={null}>None</option>
+								{#each watermarks as w (w.id)}<option value={w.id}>{w.name}</option>{/each}
+							</select>
+						</label>
+						{#if form.watermarkId}
+							<label>
+								Corner
+								<select bind:value={form.watermarkPosition} data-testid="preset-watermark-position">
+									{#each watermarkPositions as p (p)}<option value={p}>{corner(p)}</option>{/each}
+								</select>
+							</label>
+							<label>
+								Size
+								<select bind:value={form.watermarkSize} data-testid="preset-watermark-size">
+									{#each sizes as n (n)}<option value={n}>{n}%</option>{/each}
+								</select>
+							</label>
+							<label>
+								Opacity
+								<select bind:value={form.watermarkOpacity} data-testid="preset-watermark-opacity">
+									{#each opacities as n (n)}<option value={n}>{n}%</option>{/each}
+								</select>
+							</label>
+						{/if}
+					</div>
+					{#if form.watermarkId}
+						<div class="previews" data-testid="watermark-preview">
+							{#each [true, false] as vertical (vertical)}
+								<div class="frame" class:vertical>
+									<img src={watermarkFileUrl(form.watermarkId)} alt="" style={previewStyle(vertical)} />
+									<span>{vertical ? '9:16' : '16:9'}</span>
+								</div>
+							{/each}
+						</div>
+						<p class="muted small">
+							The size is a share of the clip's shorter side, so it looks the same in both shapes. It goes under the
+							captions and not on the opening or closing.
+						</p>
+					{/if}
+				{/if}
+			</fieldset>
 			{#if formError}<p class="error">{formError}</p>{/if}
 			<div class="buttons">
 				<button class="primary" disabled={saving} data-testid="preset-save">{saving ? 'Saving…' : 'Save preset'}</button>
@@ -291,6 +415,7 @@
 							p.outroVerticalId
 						)}
 					</p>
+					<p class="muted small">Watermark: {describeWatermark(p)}</p>
 					{#if confirming === p.id}
 						<div class="confirm">
 							<span>Delete {p.name}? Its vignettes stay in the library, and exported files are kept.</span>
@@ -359,7 +484,89 @@
 	{/if}
 </section>
 
+<section>
+	<h2>Watermarks</h2>
+	<p class="muted small">
+		A logo laid over the clip: a PNG (keeps its transparency) or JPEG, up to 5 MB and 4096 px a side.
+	</p>
+	<form class="card upload" onsubmit={addImage}>
+		<label>
+			Name
+			<input bind:value={imageName} maxlength="60" placeholder="e.g. Channel logo" data-testid="watermark-name" />
+		</label>
+		<label class="file">
+			File
+			<input type="file" accept="image/png,image/jpeg" onchange={pickImage} disabled={imageUploading} data-testid="watermark-file" />
+		</label>
+		<button class="primary" disabled={!imageFile || !!imageError || imageUploading} data-testid="watermark-upload">
+			{imageUploading ? 'Uploading…' : 'Upload'}
+		</button>
+		{#if imageError}<p class="error wide">{imageError}</p>{/if}
+	</form>
+	{#if watermarks && watermarks.length > 0}
+		<ul class="list" data-testid="watermarks">
+			{#each watermarks as w (w.id)}
+				<li class="card">
+					<div class="item-head">
+						<img class="thumb" src={watermarkFileUrl(w.id)} alt="" />
+						<strong>{w.name}</strong>
+						<span class="muted small">{w.width}x{w.height} · {formatBytes(w.sizeBytes)}</span>
+						<span class="spacer"></span>
+						<button
+							class="secondary"
+							disabled={w.usedBy.length > 0}
+							title={w.usedBy.length > 0 ? 'Used by a preset: take it out first' : 'Delete this image'}
+							onclick={() => removeImage(w.id)}>🗑 Delete</button
+						>
+					</div>
+					{#if w.usedBy.length > 0}<p class="muted small">Used by {w.usedBy.join(', ')}</p>{/if}
+				</li>
+			{/each}
+		</ul>
+	{:else if watermarks}
+		<p class="card muted">No watermark images yet.</p>
+	{/if}
+</section>
+
 <style>
+	/* A checkerboard shows the image's transparency. */
+	.thumb {
+		height: 32px;
+		max-width: 96px;
+		object-fit: contain;
+		border-radius: 4px;
+		background: repeating-conic-gradient(#c8ccd4 0% 25%, #f1f2f5 0% 50%) 50% / 12px 12px;
+	}
+	.previews {
+		display: flex;
+		align-items: end;
+		gap: 1rem;
+		margin-top: 0.6rem;
+	}
+	.frame {
+		position: relative;
+		width: 160px;
+		aspect-ratio: 16 / 9;
+		background: linear-gradient(135deg, #3b4252, #1f2430);
+		border-radius: 6px;
+		overflow: hidden;
+	}
+	.frame.vertical {
+		width: 90px;
+		aspect-ratio: 9 / 16;
+	}
+	.frame img {
+		position: absolute;
+		height: auto;
+	}
+	.frame span {
+		position: absolute;
+		left: 50%;
+		bottom: 4px;
+		transform: translateX(-50%);
+		font-size: 0.7rem;
+		color: #c8ccd4;
+	}
 	.intro {
 		margin: 0.25rem 0 1.25rem;
 	}

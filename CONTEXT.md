@@ -69,9 +69,13 @@ What was said in an Asset, written by the `transcribe-audio` Job: language (dete
 
 An opening or closing in the library: a short MP4 uploaded once (up to 100 MB and 30 s), private in storage under `library/vignettes/`, joined before or after exported Clips by a Preset (ADR 0030). One in use by a Preset cannot be deleted.
 
+### Watermark
+
+An image in the library (PNG or JPEG, up to 5 MB and 4096 px a side), private in storage under `library/watermarks/`, laid by a Preset over exported Clips: in a corner, below the captions and not over the Vignettes (ADR 0031). One in use by a Preset cannot be deleted.
+
 ### Preset
 
-A named set of export choices: whether to burn captions, their style, position, color, case and language, and an opening and a closing, each with a Vignette for horizontal Clips and one for vertical Clips. An export uses the version in its own shape, else the other one fitted over a blurred copy of itself. The export copies the Preset's Vignette keys and name, so changing the Preset later does not change it.
+A named set of export choices: whether to burn captions, their style, position, color, case and language; an opening and a closing, each with a Vignette for horizontal Clips and one for vertical Clips; and a Watermark with its corner, size (a percentage of the Clip's shorter side) and opacity (ADR 0031). An export uses the version in its own shape, else the other one fitted over a blurred copy of itself. The export copies the Preset's Vignette keys and name, so changing the Preset later does not change it.
 
 ### Translation
 

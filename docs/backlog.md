@@ -5,7 +5,6 @@ becomes an OpenSpec change and leaves this list.
 
 ## Clips
 
-- **Watermark in presets**: a logo image over the exported clip, with its corner and size, kept in the preset next to the vignettes (docs/adr/0030).
 - **Transitions for vignettes**: a short fade between a vignette and the clip, as a preset choice.
 
 ## Platform

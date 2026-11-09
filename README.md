@@ -2,7 +2,7 @@
 
 An open source, modular video operations platform. It turns raw video files into structured, playable and observable media assets: upload, metadata extraction, thumbnails, HLS encoding, transcription and subtitles, AI summaries, tags and chapters, AI-suggested clips exported for social media, job logs and playback preview.
 
-> **Status:** Milestone 1 (video processing core) is complete. Milestone 2 (AI metadata) is under way: speech transcription and subtitles (local Whisper), and summaries, tags and chapters written by a language model through a LiteLLM gateway, are done. Phase 3 (AI clipping) has started: the model suggests clips and the worker exports them as MP4, horizontal or vertical (following the face of whoever is speaking), with burned-in captions in five styles: highlighted word, word box, karaoke, one word at a time, or lines, in the spoken language or translated by the model into English, Spanish, Portuguese, French, German or Italian, and with an opening and closing vignette from a preset. See the [roadmap](docs/ultramedia-platform-roadmap-milestone-1.md) and the [known limitations](#known-limitations).
+> **Status:** Milestone 1 (video processing core) is complete. Milestone 2 (AI metadata) is under way: speech transcription and subtitles (local Whisper), and summaries, tags and chapters written by a language model through a LiteLLM gateway, are done. Phase 3 (AI clipping) has started: the model suggests clips and the worker exports them as MP4, horizontal or vertical (following the face of whoever is speaking), with burned-in captions in five styles: highlighted word, word box, karaoke, one word at a time, or lines, in the spoken language or translated by the model into English, Spanish, Portuguese, French, German or Italian, and with an opening and closing vignette and a watermark from a preset. See the [roadmap](docs/ultramedia-platform-roadmap-milestone-1.md) and the [known limitations](#known-limitations).
 
 ## Architecture
 
@@ -95,7 +95,11 @@ Open http://localhost:5173, click **Upload**, pick an MP4 and watch the jobs run
 | `GET` | `/vignettes` | The library, newest first, each with `usedBy` (the presets that use it) |
 | `GET` | `/vignettes/{id}/file` | `302` to a signed link that plays the vignette |
 | `DELETE` | `/vignettes/{id}` | `204`; `409` while a preset uses it |
-| `GET` / `POST` | `/presets` | List presets by name / create one: `{"name", "captions", "captionStyle", "captionPosition", "captionColor", "captionCaps", "captionLanguage", "introHorizontalId", "introVerticalId", "outroHorizontalId", "outroVerticalId"}` (all but the name optional) → `201`; `409` when the name is taken |
+| `POST` | `/watermarks/upload` | Add a watermark image: multipart `name` (optional, before the file) and `file` (PNG or JPEG, up to 5 MB and 4096 px a side) → `201` ([ADR 0031](docs/adr/0031-watermark.md)) |
+| `GET` | `/watermarks` | The images, newest first, each with its size and `usedBy` |
+| `GET` | `/watermarks/{id}/file` | `302` to a signed link that shows the image |
+| `DELETE` | `/watermarks/{id}` | `204`; `409` while a preset uses it |
+| `GET` / `POST` | `/presets` | List presets by name / create one: `{"name", "captions", "captionStyle", "captionPosition", "captionColor", "captionCaps", "captionLanguage", "introHorizontalId", "introVerticalId", "outroHorizontalId", "outroVerticalId", "watermarkId", "watermarkPosition": "top-right" \| "top-left" \| "bottom-right" \| "bottom-left", "watermarkSize": 5–40, "watermarkOpacity": 10–100}` (all but the name optional; the size is a percentage of the clip's shorter side) → `201`; `409` when the name is taken |
 | `GET` / `PUT` / `DELETE` | `/presets/{id}` | One preset / replace its choices / delete it (`204`) |
 | `POST` | `/assets/{id}/jobs` | Run one job again: `{"type": "generate-thumbnail"}` → `202` with the new job; `409` while any job of the asset is pending or running |
 | `GET` | `/jobs/{id}` | One job |
@@ -162,6 +166,6 @@ Milestone 1 is a working core, not a production service:
 - **No automatic retries.** A failed job stays failed until someone runs it again from the dashboard or the API. A re-run runs only that job, plus face tracking after a new clip suggestion.
 - **Crash recovery needs a stable worker name.** A restarted worker resumes its own unfinished job only if `WORKER_NAME` is unchanged.
 - **Progress starts after the download.** The encoding percentage stays at 0 while the worker downloads the source.
-- **Vignettes are joined with a hard cut.** No transition between a vignette and the clip (put it in the vignette); vignettes get no captions or face framing, and everyone shares the same presets and library until there is sign-in ([ADR 0030](docs/adr/0030-vignettes-and-presets.md)).
+- **Vignettes are joined with a hard cut.** No transition between a vignette and the clip (put it in the vignette); vignettes get no captions, face framing or watermark, and the watermark stays still in its corner ([ADR 0031](docs/adr/0031-watermark.md)); and everyone shares the same presets and library until there is sign-in ([ADR 0030](docs/adr/0030-vignettes-and-presets.md)).
 - **Deleting cannot be undone.** There is no trash: deleting a video or a clip removes its files at once ([ADR 0027](docs/adr/0027-delete-videos-and-clips.md)).
 - **The dashboard image is built for one API address.** `PUBLIC_API_URL` is fixed when the image is built (`http://localhost:8080` in the demo).

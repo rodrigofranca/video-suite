@@ -38,20 +38,26 @@ type vignetteDTO struct {
 }
 
 type presetDTO struct {
-	ID              string    `json:"id"`
-	Name            string    `json:"name"`
-	Captions        bool      `json:"captions"`
-	CaptionStyle    string    `json:"captionStyle"`
-	CaptionPosition string    `json:"captionPosition"`
-	CaptionColor    string    `json:"captionColor"`
-	CaptionCaps     *bool     `json:"captionCaps"`
-	CaptionLanguage string    `json:"captionLanguage"`
-	IntroHorizontal *string   `json:"introHorizontalId"`
-	IntroVertical   *string   `json:"introVerticalId"`
-	OutroHorizontal *string   `json:"outroHorizontalId"`
-	OutroVertical   *string   `json:"outroVerticalId"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	Captions        bool    `json:"captions"`
+	CaptionStyle    string  `json:"captionStyle"`
+	CaptionPosition string  `json:"captionPosition"`
+	CaptionColor    string  `json:"captionColor"`
+	CaptionCaps     *bool   `json:"captionCaps"`
+	CaptionLanguage string  `json:"captionLanguage"`
+	IntroHorizontal *string `json:"introHorizontalId"`
+	IntroVertical   *string `json:"introVerticalId"`
+	OutroHorizontal *string `json:"outroHorizontalId"`
+	OutroVertical   *string `json:"outroVerticalId"`
+	// The watermark image (or null), its corner, its width as a percentage
+	// of the clip's shorter side, and its opacity in percent (docs/adr/0031).
+	WatermarkID       *string   `json:"watermarkId"`
+	WatermarkPosition string    `json:"watermarkPosition"`
+	WatermarkSize     int       `json:"watermarkSize"`
+	WatermarkOpacity  int       `json:"watermarkOpacity"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
 }
 
 func idOrNull(id string) *string {
@@ -67,7 +73,8 @@ func toPreset(p domain.Preset) presetDTO {
 		CaptionColor: p.CaptionColor, CaptionCaps: p.CaptionCaps, CaptionLanguage: p.CaptionLanguage,
 		IntroHorizontal: idOrNull(p.IntroHorizontal), IntroVertical: idOrNull(p.IntroVertical),
 		OutroHorizontal: idOrNull(p.OutroHorizontal), OutroVertical: idOrNull(p.OutroVertical),
-		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+		WatermarkID: idOrNull(p.Watermark), WatermarkPosition: p.WatermarkPosition, WatermarkSize: p.WatermarkSize,
+		WatermarkOpacity: p.WatermarkOpacity, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 	}
 }
 
@@ -290,6 +297,11 @@ type presetBody struct {
 	IntroVertical   *string `json:"introVerticalId"`
 	OutroHorizontal *string `json:"outroHorizontalId"`
 	OutroVertical   *string `json:"outroVerticalId"`
+	// Omitted watermark choices get the defaults: top right, 15%, 80%.
+	WatermarkID       *string `json:"watermarkId"`
+	WatermarkPosition string  `json:"watermarkPosition"`
+	WatermarkSize     *int    `json:"watermarkSize"`
+	WatermarkOpacity  *int    `json:"watermarkOpacity"`
 }
 
 // readPreset decodes and checks a preset body. It returns the message for a
@@ -335,6 +347,35 @@ func (a *api) readPreset(r *http.Request) (domain.Preset, string, error) {
 			return domain.Preset{}, "", err
 		}
 		*s.out = *s.in
+	}
+	p.WatermarkPosition, p.WatermarkSize, p.WatermarkOpacity = b.WatermarkPosition, 15, 80
+	if p.WatermarkPosition == "" {
+		p.WatermarkPosition = jobcontracts.WatermarkPositions[0]
+	}
+	if b.WatermarkSize != nil {
+		p.WatermarkSize = *b.WatermarkSize
+	}
+	if b.WatermarkOpacity != nil {
+		p.WatermarkOpacity = *b.WatermarkOpacity
+	}
+	if !slices.Contains(jobcontracts.WatermarkPositions, p.WatermarkPosition) ||
+		p.WatermarkSize < jobcontracts.MinWatermarkSize || p.WatermarkSize > jobcontracts.MaxWatermarkSize ||
+		p.WatermarkOpacity < jobcontracts.MinWatermarkOpacity || p.WatermarkOpacity > jobcontracts.MaxWatermarkOpacity {
+		return domain.Preset{}, fmt.Sprintf("watermark positions: %s; size: %d to %d (%% of the shorter side); opacity: %d to %d (%%)",
+			strings.Join(jobcontracts.WatermarkPositions, ", "), jobcontracts.MinWatermarkSize, jobcontracts.MaxWatermarkSize,
+			jobcontracts.MinWatermarkOpacity, jobcontracts.MaxWatermarkOpacity), nil
+	}
+	if b.WatermarkID != nil && *b.WatermarkID != "" {
+		id := *b.WatermarkID
+		if !domain.IsID(id) {
+			return domain.Preset{}, fmt.Sprintf("unknown watermark %q", id), nil
+		}
+		if _, err := a.Store.GetWatermark(r.Context(), id); errors.Is(err, store.ErrNotFound) {
+			return domain.Preset{}, fmt.Sprintf("unknown watermark %q", id), nil
+		} else if err != nil {
+			return domain.Preset{}, "", err
+		}
+		p.Watermark = id
 	}
 	return p, "", nil
 }
@@ -455,6 +496,19 @@ func (a *api) deletePreset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// exportWatermark resolves a preset's watermark into what an export lays
+// over the clip: nil when it has none.
+func (a *api) exportWatermark(ctx context.Context, p domain.Preset) (*jobcontracts.Watermark, error) {
+	if p.Watermark == "" {
+		return nil, nil
+	}
+	img, err := a.Store.GetWatermark(ctx, p.Watermark)
+	if err != nil {
+		return nil, err
+	}
+	return &jobcontracts.Watermark{Key: img.StorageKey, Position: p.WatermarkPosition, Size: p.WatermarkSize, Opacity: p.WatermarkOpacity}, nil
 }
 
 // exportVignettes resolves a preset's openings and closings into the

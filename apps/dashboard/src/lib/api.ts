@@ -159,9 +159,28 @@ export interface Preset {
 	introVerticalId: string | null;
 	outroHorizontalId: string | null;
 	outroVerticalId: string | null;
+	/** The watermark image, its corner, width (% of the clip's shorter side) and opacity (%). */
+	watermarkId: string | null;
+	watermarkPosition: WatermarkPosition;
+	watermarkSize: number;
+	watermarkOpacity: number;
 	createdAt: string;
 	updatedAt: string;
 }
+
+/** A watermark image in the library (docs/adr/0031). */
+export interface Watermark {
+	id: string;
+	name: string;
+	filename: string;
+	sizeBytes: number;
+	width: number;
+	height: number;
+	createdAt: string;
+	usedBy: string[];
+}
+export type WatermarkPosition = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left';
+export const watermarkPositions: WatermarkPosition[] = ['top-right', 'top-left', 'bottom-right', 'bottom-left'];
 export type PresetInput = Omit<Preset, 'id' | 'createdAt' | 'updatedAt'>;
 
 /** The longest vignette accepted, in bytes and seconds (as the API and the worker check them). */
@@ -188,6 +207,7 @@ export interface ClipExport {
 	preset?: string;
 	intro?: boolean;
 	outro?: boolean;
+	watermark?: boolean;
 	/** How a 'vertical-face' file was framed. */
 	framing?: 'face' | 'center';
 	width?: number;
@@ -341,6 +361,15 @@ export const listPresets = () => getJSON<{ presets: Preset[] }>('/presets').then
 export const createPreset = (p: PresetInput) => postJSON<Preset>('/presets', p);
 export const updatePreset = (id: string, p: PresetInput) => sendJSON<Preset>('PUT', `/presets/${encodeURIComponent(id)}`, p);
 export const deletePreset = (id: string) => sendJSON<void>('DELETE', `/presets/${encodeURIComponent(id)}`);
+
+export const listWatermarks = () => getJSON<{ watermarks: Watermark[] }>('/watermarks').then((r) => r.watermarks);
+/** Link that shows a watermark image (a short-lived signed link behind a redirect). */
+export const watermarkFileUrl = (id: string) => `${API_URL}/watermarks/${encodeURIComponent(id)}/file`;
+export const deleteWatermark = (id: string) => sendJSON<void>('DELETE', `/watermarks/${encodeURIComponent(id)}`);
+/** Uploads a PNG or JPEG watermark image, reporting progress from 0 to 1. */
+export function uploadWatermark(name: string, file: File, onProgress: (fraction: number) => void): Promise<Watermark> {
+	return sendForm<Watermark>('/watermarks/upload', [['name', name], ['file', file]], 201, onProgress);
+}
 
 /** Uploads a vignette to the library, reporting progress from 0 to 1. */
 export function uploadVignette(name: string, file: File, onProgress: (fraction: number) => void): Promise<Vignette> {

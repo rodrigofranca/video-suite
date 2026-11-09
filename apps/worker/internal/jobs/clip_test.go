@@ -645,3 +645,50 @@ func TestExportClipWithVignettes(t *testing.T) {
 		}
 	}
 }
+
+// The watermark image is checked, laid over the clip and recorded on the file.
+func TestExportClipWithWatermark(t *testing.T) {
+	f := newFixture(t, 4, "640x360")
+	f.jobs[jobcontracts.JobTypeExportClip] = f.jobs[jobcontracts.JobTypeSuggestClips]
+	clip := f.addClip(0, 3, "")
+	path := filepath.Join(t.TempDir(), "logo.png")
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=200x100", "-frames:v", "1", path).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	logo := storage.WatermarkKey(domain.NewID(), ".png")
+	if err := f.files.UploadFile(f.ctx, logo, path, "image/png"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.files.Delete(context.Background(), logo) })
+	key := storage.ClipKey(f.asset, clip.ID, jobcontracts.ClipFormatOriginal)
+	t.Cleanup(func() { f.files.Delete(context.Background(), key) })
+	in := jobcontracts.ExportClipInput{AssetID: f.asset, ClipID: clip.ID, StorageKey: f.src, Format: jobcontracts.ClipFormatOriginal, OutputKey: key,
+		Watermark: &jobcontracts.Watermark{Key: logo, Position: "bottom-left", Size: 20, Opacity: 70}}
+	if err := f.media.ExportClip(f.ctx, f.job(jobcontracts.JobTypeExportClip), in); err != nil {
+		t.Fatalf("%v\nlogs:\n%s", err, f.logs.String())
+	}
+	if want := "laying the watermark: 200x100 image, bottom-left, 20% of the shorter side, 70% opacity"; !strings.Contains(f.logs.String(), want) {
+		t.Errorf("logs miss %q:\n%s", want, f.logs.String())
+	}
+	arts, _ := f.st.ListArtifacts(f.ctx, f.asset)
+	var meta struct{ Watermark bool }
+	json.Unmarshal(arts[len(arts)-1].MetadataJSON, &meta)
+	if !meta.Watermark {
+		t.Error("the file does not record the watermark")
+	}
+
+	for name, tc := range map[string]struct {
+		wm   jobcontracts.Watermark
+		want string
+	}{
+		"outside the library": {jobcontracts.Watermark{Key: f.src, Position: "top-right", Size: 15, Opacity: 80}, "invalid input: watermark"},
+		"too big":             {jobcontracts.Watermark{Key: logo, Position: "top-right", Size: 60, Opacity: 80}, "invalid input: watermark"},
+		"in the middle":       {jobcontracts.Watermark{Key: logo, Position: "center", Size: 15, Opacity: 80}, "invalid input: watermark"},
+		"deleted":             {jobcontracts.Watermark{Key: storage.WatermarkKey(domain.NewID(), ".png"), Position: "top-right", Size: 15, Opacity: 80}, "could not get the watermark image"},
+	} {
+		in.Watermark = &tc.wm
+		if err := f.media.ExportClip(f.ctx, f.job(jobcontracts.JobTypeExportClip), in); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
+		}
+	}
+}

@@ -45,7 +45,7 @@ def cfg():
 def store(cfg):
     try:
         s = Store.connect(cfg.database_url)
-        s.conn.execute("SELECT name FROM presets LIMIT 1")  # the newest table: all migrations applied
+        s.conn.execute("SELECT name FROM watermarks LIMIT 1")  # the newest table: all migrations applied
     except Exception as e:  # noqa: BLE001
         pytest.skip(f"database not available or not migrated: {e}")
     yield s

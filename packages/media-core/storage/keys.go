@@ -57,6 +57,15 @@ func SubtitlesKey(assetID, language string) string {
 // (docs/adr/0030): openings and closings joined to exported clips.
 const VignettePrefix = "library/vignettes/"
 
+// WatermarkPrefix is the private folder of the watermark images (docs/adr/0031).
+const WatermarkPrefix = "library/watermarks/"
+
+// WatermarkKey is where an uploaded watermark image is stored, with its
+// extension (".png" or ".jpg").
+func WatermarkKey(watermarkID, ext string) string {
+	return WatermarkPrefix + watermarkID + ext
+}
+
 // VignetteKey is where an uploaded vignette is stored.
 func VignetteKey(vignetteID string) string {
 	return VignettePrefix + vignetteID + ".mp4"
