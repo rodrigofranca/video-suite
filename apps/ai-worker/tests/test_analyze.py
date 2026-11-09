@@ -196,6 +196,17 @@ def test_asks_again_once_when_the_answer_is_not_json(cfg, store, asset, fake):
     assert "could not be used: the answer has no JSON object" in repair[-1]["content"]
 
 
+def test_every_answer_is_recorded_even_an_unusable_one(cfg, store, asset, fake):
+    save_transcript(store, asset)
+    fake.answer("Sure! Here is a summary of the video.", cost="0.00002")
+    fake.answer({"summary": "Agora sim.", "tags": [], "chapters": []}, cost="0.00003")
+    used = []
+    ctx = make_ctx(asset["jobs"][contracts.JOB_ANALYZE_TRANSCRIPT])
+    ctx._usage = used.append
+    analyzer(cfg, store, fake)(ctx, f'{{"asset_id": "{asset["id"]}"}}')
+    assert [(c.prompt_tokens, c.completion_tokens, c.cost_usd) for c in used] == [(100, 50, 0.00002), (100, 50, 0.00003)]
+
+
 def test_fails_after_two_unusable_answers(cfg, store, asset, fake):
     save_transcript(store, asset)
     fake.answer("nope")

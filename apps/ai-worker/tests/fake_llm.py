@@ -73,12 +73,19 @@ class FakeLLM:
         self.server.server_close()
 
     def answer(
-        self, content: str | dict, *, finish_reason: str = "stop", model: str | None = None, litellm_model: str = ""
+        self, content: str | dict, *, finish_reason: str = "stop", model: str | None = None, litellm_model: str = "",
+        cost: str = "",
     ) -> None:
         """Queue a successful completion. A dict is sent as its JSON text.
-        litellm_model adds the header LiteLLM uses to name the real model."""
+        litellm_model and cost add the headers LiteLLM uses to name the real
+        model and to say what the call cost."""
         text = json.dumps(content, ensure_ascii=False) if isinstance(content, dict) else content
-        headers = {"x-litellm-model-name": litellm_model} if litellm_model else None
+        headers = {}
+        if litellm_model:
+            headers["x-litellm-model-name"] = litellm_model
+        if cost:
+            headers["x-litellm-response-cost"] = cost
+        headers = headers or None
         self._answers.append((200, completion(text, model or self.model, finish_reason), headers))
 
     def fail(self, status: int, message: str, headers: dict | None = None) -> None:

@@ -43,9 +43,15 @@ class JobContext:
     stop: threading.Event
     timeout_seconds: float
     _report: Callable[[int], None] = field(repr=False, default=lambda p: None)
+    _usage: Callable[[object], None] = field(repr=False, default=lambda c: None)
 
     def progress(self, percent: int) -> None:
         self._report(percent)
+
+    def record_usage(self, completion) -> None:
+        """Keep what a call to the language model used (llm.Completion),
+        for the AI usage totals (docs/adr/0032)."""
+        self._usage(completion)
 
     def check(self) -> None:
         """Call between steps of long work: stops on shutdown or timeout."""
@@ -102,6 +108,7 @@ class Runner:
             stop=self.stop,
             timeout_seconds=self.timeout_seconds,
             _report=self._progress_reporter(job.id),
+            _usage=self._usage_recorder(job, joblog),
         )
         error: Exception | None = None
         try:
@@ -147,6 +154,17 @@ class Runner:
             self.store.set_asset_status(job.asset_id, ASSET_FAILED)
             return
         joblog.info("queued next job next_type=%s next_job_id=%s", nxt.type, nxt.id)
+
+    def _usage_recorder(self, job: Job, joblog: logging.Logger) -> Callable[[object], None]:
+        def record(completion) -> None:
+            try:
+                self.store.add_llm_usage(
+                    job.asset_id, job.id, job.type, completion.model,
+                    completion.prompt_tokens or 0, completion.completion_tokens or 0, completion.cost_usd,
+                )
+            except Exception as e:  # the job's result matters more than its bill
+                joblog.warning("could not record the model usage: %s", e)
+        return record
 
     def _progress_reporter(self, job_id: str) -> Callable[[int], None]:
         last = {"value": -1, "at": 0.0}

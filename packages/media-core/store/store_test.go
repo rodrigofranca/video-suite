@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -614,5 +615,69 @@ func TestWatermarks(t *testing.T) {
 	}
 	if err := s.DeleteWatermark(ctx, w.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("delete it again: %v", err)
+	}
+}
+
+func TestUsage(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+	// Far in the future, so the totals since then hold only these rows.
+	day1 := time.Date(2090, 1, 1, 10, 0, 0, 0, time.UTC)
+	day2 := day1.Add(24 * time.Hour)
+	cost := func(v float64) *float64 { return &v }
+	var ids []string
+	for _, r := range []struct {
+		asset, jobType, model string
+		in, out               int
+		cost                  *float64
+		at                    time.Time
+	}{
+		{asset.ID, "analyze-transcript", "claude-haiku-5-5", 1000, 200, cost(0.0002), day1},
+		{asset.ID, "analyze-transcript", "claude-haiku-5-5", 1100, 250, cost(0.000235), day1}, // a repair
+		{asset.ID, "suggest-clips", "claude-haiku-5-5", 3000, 500, nil, day2},                 // no price
+		{"", "translate-transcript", "gpt-6-luna", 400, 400, cost(0.001), day2},               // a deleted video
+		{asset.ID, "suggest-clips", "claude-haiku-5-5", 9, 9, cost(1), day1.Add(-48 * time.Hour)},
+	} {
+		id := domain.NewID()
+		ids = append(ids, id)
+		job := jobs[0].ID
+		if r.asset == "" {
+			job = ""
+		}
+		if err := s.AddUsage(ctx, id, r.asset, job, r.jobType, r.model, r.in, r.out, r.cost, r.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, id := range ids {
+			s.db.Exec(context.Background(), `DELETE FROM llm_usage WHERE id = $1`, id)
+		}
+	})
+
+	total, byAction, err := s.AssetUsage(ctx, asset.ID)
+	if err != nil || total.Calls != 4 || total.PromptTokens != 5109 || total.CompletionTokens != 959 || total.UnpricedCalls != 1 ||
+		math.Abs(total.CostUSD-1.000435) > 1e-9 || len(byAction) != 2 || byAction[0].Key != "analyze-transcript" || byAction[0].Calls != 2 {
+		t.Fatalf("AssetUsage = %+v %+v, %v", total, byAction, err)
+	}
+
+	sum, err := s.UsageSince(ctx, day1.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Total.Calls != 4 || sum.Total.PromptTokens != 5500 || math.Abs(sum.Total.CostUSD-0.001435) > 1e-9 {
+		t.Fatalf("total = %+v", sum.Total)
+	}
+	if len(sum.ByDay) != 2 || sum.ByDay[0].Key != "2090-01-01" || sum.ByDay[0].Calls != 2 || sum.ByDay[1].Key != "2090-01-02" {
+		t.Fatalf("by day = %+v", sum.ByDay)
+	}
+	if len(sum.ByModel) != 2 || sum.ByModel[0].Key != "claude-haiku-5-5" || sum.ByModel[1].Key != "gpt-6-luna" {
+		t.Fatalf("by model = %+v", sum.ByModel)
+	}
+	if len(sum.ByAction) != 3 || sum.ByAction[0].Key != "suggest-clips" {
+		t.Fatalf("by action = %+v", sum.ByAction)
+	}
+	if len(sum.ByAsset) != 2 || sum.ByAsset[0].Key != asset.ID || sum.ByAsset[0].Label != "clip.mp4" || sum.ByAsset[1].Key != "" {
+		t.Fatalf("by video = %+v", sum.ByAsset)
 	}
 }

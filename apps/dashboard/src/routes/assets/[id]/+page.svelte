@@ -26,7 +26,16 @@
 		type Vignette,
 		type Watermark
 	} from '$lib/api';
-	import { formatBitrate, formatBytes, formatClock, formatDate, formatResolution } from '$lib/format';
+	import {
+		formatBitrate,
+		formatBytes,
+		formatClock,
+		formatDate,
+		formatResolution,
+		formatTokens,
+		formatUsd,
+		jobLabel
+	} from '$lib/format';
 	import { poll } from '$lib/poll.svelte';
 	import AnalysisPanel from '$lib/components/Analysis.svelte';
 	import ClipList from '$lib/components/Clips.svelte';
@@ -369,6 +378,22 @@
 				{/if}
 				<dt>Uploaded</dt>
 				<dd>{formatDate(asset.createdAt)}</dd>
+				<dt>AI usage</dt>
+				<dd data-testid="ai-usage">
+					{#if asset.aiUsage.calls === 0}
+						<span class="muted">None yet</span>
+					{:else}
+						{formatTokens(asset.aiUsage.promptTokens + asset.aiUsage.completionTokens)} tokens · {formatUsd(
+							asset.aiUsage.costUsd
+						)}{asset.aiUsage.unpricedCalls > 0 ? ' + unpriced' : ''}
+						<span class="muted usage-detail">
+							{asset.aiUsage.byAction
+								.map((a) => `${jobLabel(a.key)} ${formatTokens(a.promptTokens + a.completionTokens)}`)
+								.join(' · ')} · {asset.aiUsage.calls}
+							{asset.aiUsage.calls === 1 ? 'call' : 'calls'}
+						</span>
+					{/if}
+				</dd>
 				{#if asset.source}
 					<dt>SHA-256</dt>
 					<dd class="mono">{asset.source.checksum.slice(0, 16)}…</dd>
@@ -519,6 +544,10 @@
 	dd {
 		margin: 0;
 		overflow-wrap: anywhere;
+	}
+	.usage-detail {
+		display: block;
+		font-size: 0.85rem;
 	}
 	.links {
 		display: flex;

@@ -32,6 +32,8 @@ type assetDetailDTO struct {
 	Artifacts []artifactDTO  `json:"artifacts"`
 	Playback  *playbackDTO   `json:"playback"`
 	Subtitles []subtitlesDTO `json:"subtitles"`
+	// AIUsage is what the language model used for this video (docs/adr/0032).
+	AIUsage assetUsageDTO `json:"aiUsage"`
 }
 
 type subtitlesDTO struct {
@@ -219,6 +221,12 @@ func (a *api) getAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detail.Subtitles = a.subtitlesOf(arts, translations)
+	usage, byAction, err := a.Store.AssetUsage(ctx, asset.ID)
+	if err != nil {
+		a.internalError(w, r, err)
+		return
+	}
+	detail.AIUsage = assetUsageDTO{usageDTO: toUsage(usage), ByAction: toUsageGroups(byAction)}
 
 	meta, err := a.Store.GetTechnicalMetadata(ctx, asset.ID)
 	switch {

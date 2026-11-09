@@ -10,6 +10,7 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"ultramedia/media-core/db"
 	"ultramedia/media-core/domain"
@@ -32,6 +35,7 @@ import (
 
 type env struct {
 	t       *testing.T
+	db      *pgxpool.Pool
 	store   *store.Store
 	storage *storage.Client
 	handler http.Handler
@@ -65,7 +69,7 @@ func newEnv(t *testing.T, maxUpload int64) *env {
 		t.Skipf("storage not available: %v", err)
 	}
 
-	e := &env{t: t, store: store.New(pool), storage: st}
+	e := &env{t: t, db: pool, store: store.New(pool), storage: st}
 	e.handler = NewRouter(Deps{
 		DB: pool, Store: e.store, Storage: st, MaxUploadBytes: maxUpload,
 		Enqueue: func(_ context.Context, m jobcontracts.Message) error {
@@ -1393,5 +1397,104 @@ func TestWatermarksAndPresets(t *testing.T) {
 	}
 	if code := e.send(http.MethodDelete, "/watermarks/"+photo.ID, "", nil); code != http.StatusNoContent {
 		t.Fatalf("delete a free image: %d", code)
+	}
+}
+
+// What the language model used, per video and in total (docs/adr/0032).
+func TestAIUsage(t *testing.T) {
+	e := newEnv(t, 0)
+	rec := e.upload("talk.mp4", fakeMP4(1024))
+	var created struct{ AssetID string }
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	e.cleanupAsset(created.AssetID)
+	id := created.AssetID
+	ctx := context.Background()
+
+	var detail struct {
+		AIUsage struct {
+			Calls                          int
+			PromptTokens, CompletionTokens int64
+			CostUSD                        float64
+			UnpricedCalls                  int
+			ByAction                       []struct {
+				Key   string
+				Calls int
+			}
+		}
+	}
+	e.get("/assets/"+id, &detail)
+	if detail.AIUsage.Calls != 0 || detail.AIUsage.ByAction == nil {
+		t.Fatalf("before any call: %+v", detail.AIUsage)
+	}
+	cost := 0.00035
+	analyze := e.jobOfType(id, jobcontracts.JobTypeAnalyzeTranscript)
+	var ids []string
+	for _, c := range []struct {
+		jobType string
+		cost    *float64
+	}{{"analyze-transcript", &cost}, {"suggest-clips", &cost}, {"suggest-clips", nil}} {
+		rowID := domain.NewID()
+		ids = append(ids, rowID)
+		if err := e.store.AddUsage(ctx, rowID, id, analyze.ID, c.jobType, "claude-haiku-5-5", 1000, 500, c.cost, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, rowID := range ids {
+			e.db.Exec(context.Background(), `DELETE FROM llm_usage WHERE id = $1`, rowID)
+		}
+	})
+	e.get("/assets/"+id, &detail)
+	u := detail.AIUsage
+	if u.Calls != 3 || u.PromptTokens != 3000 || u.CompletionTokens != 1500 || math.Abs(u.CostUSD-0.0007) > 1e-9 || u.UnpricedCalls != 1 ||
+		len(u.ByAction) != 2 || u.ByAction[1].Key != "suggest-clips" || u.ByAction[1].Calls != 2 {
+		t.Fatalf("video usage = %+v", u)
+	}
+
+	var sum struct {
+		Days  int
+		Since *time.Time
+		Total struct{ Calls int }
+		ByDay []struct {
+			Key   string
+			Calls int
+		}
+		ByVideo []struct {
+			Key, Label   string
+			PromptTokens int64
+		}
+	}
+	if code := e.get("/usage?days=1", &sum); code != 200 || sum.Days != 1 || sum.Since == nil || sum.Total.Calls < 3 || len(sum.ByDay) == 0 {
+		t.Fatalf("GET /usage: %d %+v", code, sum)
+	}
+	found := false
+	for _, v := range sum.ByVideo {
+		if v.Key == id && v.Label == "talk.mp4" && v.PromptTokens == 3000 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the video is missing from byVideo: %+v", sum.ByVideo)
+	}
+	if code := e.get("/usage?days=0", &sum); code != 200 || sum.Since != nil {
+		t.Fatalf("everything: %d since %v", code, sum.Since)
+	}
+	if code := e.get("/usage?days=5", nil); code != http.StatusBadRequest {
+		t.Fatalf("days=5: %d, want 400", code)
+	}
+
+	// Deleting the video keeps its usage in the totals, without the video.
+	jobs, _ := e.store.ListJobs(ctx, id)
+	for _, j := range jobs {
+		e.store.FinishJob(ctx, j.ID, nil)
+	}
+	if code := e.send(http.MethodDelete, "/assets/"+id, "", nil); code != http.StatusNoContent {
+		t.Fatalf("delete: %d", code)
+	}
+	e.get("/usage?days=1", &sum)
+	for _, v := range sum.ByVideo {
+		if v.Key == id {
+			t.Fatal("a deleted video still listed by its ID")
+		}
 	}
 }
