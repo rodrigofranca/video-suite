@@ -33,8 +33,7 @@
 		formatDate,
 		formatResolution,
 		formatTokens,
-		formatUsd,
-		jobLabel
+		formatUsd
 	} from '$lib/format';
 	import { poll } from '$lib/poll.svelte';
 	import AnalysisPanel from '$lib/components/Analysis.svelte';
@@ -388,7 +387,7 @@
 						)}{asset.aiUsage.unpricedCalls > 0 ? ' + unpriced' : ''}
 						<span class="muted usage-detail">
 							{asset.aiUsage.byAction
-								.map((a) => `${jobLabel(a.key)} ${formatTokens(a.promptTokens + a.completionTokens)}`)
+								.map((a) => `${a.label || a.key} ${formatTokens(a.promptTokens + a.completionTokens)}`)
 								.join(' · ')} · {asset.aiUsage.calls}
 							{asset.aiUsage.calls === 1 ? 'call' : 'calls'}
 						</span>

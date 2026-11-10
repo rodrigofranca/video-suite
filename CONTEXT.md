@@ -145,7 +145,7 @@ Process that picks pending Jobs and executes them. Separate from the API process
 - **Media worker** (Go, `apps/worker`): stream `jobs`, group `workers`; FFmpeg jobs, including `export-clip`.
 - **AI worker** (Python, `apps/ai-worker`): stream `jobs:ai`, group `ai-workers`; `transcribe-audio`, `analyze-transcript`, `suggest-clips`, `track-faces` and `translate-transcript`. It mirrors the media worker's lifecycle, and its contracts are checked against `packages/job-contracts/testdata/contracts.json`.
 
-`jobcontracts.StreamFor` decides which stream a Job goes to.
+`jobcontracts.StreamFor` decides which stream a Job goes to, from the **job type table** (`jobcontracts.JobTypes`, ADR 0036): each type's name, the label people see, the worker that runs it and whether it can run again by hand. The API, the dashboard and both workers read it, and tests check that each worker handles exactly its types. The AI worker's jobs that ask the language model follow one template (`LLMTask`): check the input, plan the requests, check every prompt's length, ask, save.
 
 Queue: Redis Streams (XADD/XREADGROUP) for at-least-once delivery and job re-claim on worker crash. Only the Outbox relay writes to it. NATS is a future upgrade path.
 

@@ -44,6 +44,8 @@ O HTTP ficou só com o que é HTTP: ler o multipart e o JSON, o limite do corpo 
 
 **O passo 3 terminou** (ADR 0035). A exportação no worker é uma lista de estágios (enquadramento, marca d'água, legenda, vinhetas) sobre um builder do grafo do FFmpeg. O job escolhe a ordem, e cada estágio só conhece o corte que recebe.
 
+**O passo 4 terminou** (ADR 0036). Uma tabela de tipos de job é a fonte do stream, do rótulo, de quem pode rodar de novo e dos handlers de cada worker, conferidos em teste. Os jobs de LLM seguem um Template Method (`LLMTask`).
+
 **A migração é gradual,** um comando por vez, com os testes de integração garantindo que nada muda para quem usa:
 
 1. Os outros comandos da API: editar e apagar corte, apagar vídeo, rodar de novo, upload, presets e biblioteca. As bibliotecas de vinhetas e de marcas d'água viram uma só, genérica.

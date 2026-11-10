@@ -18,10 +18,10 @@ import logging
 import re
 
 from . import contracts, subtitles
-from .answers import InvalidAnswer, NotConfigured, ask, count, extract_json
-from .analyze import check_length
+from .answers import InvalidAnswer, extract_json
 from .config import Config
 from .llm import ChatClient
+from .llmtask import LLMTask, Plan, Request, Usage
 from .runner import JobContext
 from .storage import Storage
 from .store import ARTIFACT_SUBTITLES, Store
@@ -65,17 +65,20 @@ def language_name(code: str) -> str:
     return LANGUAGE_NAMES.get(code, f'the language with ISO 639-1 code "{code or "unknown"}"')
 
 
-class Translator:
-    def __init__(self, cfg: Config, storage: Storage, store: Store, client: ChatClient | None, log: logging.Logger):
-        self.cfg, self.storage, self.store, self.client, self.log = cfg, storage, store, client, log
+class Translator(LLMTask):
+    input_type = contracts.TranslateTranscriptInput
+    system_prompt = SYSTEM_PROMPT
+    what = "a translation"
 
-    def __call__(self, ctx: JobContext, payload: str) -> None:
-        inp = contracts.TranslateTranscriptInput.from_json(payload)
+    def __init__(self, cfg: Config, storage: Storage, store: Store, client: ChatClient | None, log: logging.Logger):
+        super().__init__(cfg, store, client, log)
+        self.storage = storage
+
+    def check_input(self, inp) -> None:
         if not contracts.is_id(inp.asset_id) or inp.language not in contracts.CAPTION_LANGUAGES:
             raise ValueError(f"invalid input: asset_id {inp.asset_id!r}, language {inp.language!r}")
-        if self.client is None:
-            raise NotConfigured("no language model is configured: set LLM_BASE_URL (see .env.example)")
 
+    def plan(self, ctx: JobContext, inp) -> Plan:
         transcript = self.store.get_transcript(inp.asset_id)
         if transcript is None:
             raise ValueError("nothing to translate: the video has no transcript (no audio track, or transcription failed)")
@@ -90,31 +93,24 @@ class Translator:
         if not segments:
             raise ValueError("nothing to translate: no speech was found")
 
+        requests = []
         batches = make_batches(segments)
-        ctx.log.info(
-            "translating %d lines from %s into %s with model %s at %s, in %d request(s)",
-            len(segments), source, target, self.client.model, self.client.host, len(batches),
-        )
-        lines: list[str] = []
-        model, tokens_in, tokens_out = "", 0, 0
-        for i, (first, batch) in enumerate(batches):
-            ctx.check()
+        for first, batch in batches:
             context = [s["text"] for s in segments[max(0, first - CONTEXT_LINES) : first]]
             prompt = build_prompt(source, target, [s["text"] for s in batch], context)
-            check_length(prompt, self.cfg)
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
-            translated, completion = ask(
-                self.client, ctx, messages, lambda text, n=len(batch): parse_answer(text, n), max_tokens=MAX_TOKENS
-            )
-            lines += translated
-            model = completion.model
-            tokens_in += completion.prompt_tokens or 0
-            tokens_out += completion.completion_tokens or 0
-            ctx.progress(min(95, (i + 1) * 95 // len(batches)))
+            requests.append(Request(prompt, lambda text, n=len(batch): parse_answer(text, n), MAX_TOKENS))
+        return Plan(
+            requests,
+            f"{len(segments)} lines from {source} into {target}, in {len(batches)} request(s)",
+            {"segments": segments, "source": source, "words": transcript.get("words") or []},
+        )
 
+    def save(self, ctx: JobContext, inp, plan: Plan, answers: list, usage: Usage) -> str:
+        segments, source, target = plan.state["segments"], plan.state["source"], inp.language
+        lines = [line for batch in answers for line in batch]
         out = [{"start": round(s["start"], 3), "end": round(s["end"], 3), "text": t} for s, t in zip(segments, lines)]
-        words = place_all(out, transcript.get("words") or [])
-        self.store.save_translation(inp.asset_id, ctx.job.id, target, source, out, words, model)
+        words = place_all(out, plan.state["words"])
+        self.store.save_translation(inp.asset_id, ctx.job.id, target, source, out, words, usage.model)
 
         cues = subtitles.build_cues(as_subtitle_segments(out, words))
         key = contracts.subtitles_key(inp.asset_id, target)
@@ -123,11 +119,7 @@ class Translator:
             inp.asset_id, ctx.job.id, ARTIFACT_SUBTITLES, key,
             {"language": target, "translatedFrom": source, "cues": len(cues)},
         )
-        ctx.log.info(
-            "translated %d lines into %s, %d words; subtitles key=%s cues=%d; model %s, %s tokens in, %s out",
-            len(out), target, len(words), key, len(cues), model,
-            count(tokens_in or None), count(tokens_out or None),
-        )
+        return f"translated {len(out)} lines into {target}, {len(words)} words; subtitles key={key} cues={len(cues)}"
 
 
 # ---- Prompt ----

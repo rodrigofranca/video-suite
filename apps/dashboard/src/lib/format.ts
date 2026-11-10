@@ -25,19 +25,6 @@ export function formatDuration(start: string | null, end: string | null): string
 	return s < 60 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`;
 }
 
-const jobLabels: Record<string, string> = {
-	'extract-metadata': 'Metadata',
-	'generate-thumbnail': 'Thumbnail',
-	'transcode-hls': 'HLS encoding',
-	'extract-audio': 'Audio',
-	'transcribe-audio': 'Transcription',
-	'analyze-transcript': 'Summary',
-	'suggest-clips': 'Clips',
-	'track-faces': 'Face tracking',
-	'export-clip': 'Clip export',
-	'translate-transcript': 'Translation'
-};
-
 const clipFormatLabels: Record<string, string> = {
 	original: 'Original',
 	vertical: '9:16 crop',
@@ -68,7 +55,6 @@ export function languageName(code: string): string {
 	}
 }
 
-export const jobLabel = (type: string) => jobLabels[type] ?? type;
 
 /** Media length as m:ss or h:mm:ss. */
 export function formatClock(seconds: number): string {

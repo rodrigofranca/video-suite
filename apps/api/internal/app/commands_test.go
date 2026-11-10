@@ -223,6 +223,10 @@ func TestRerunJob(t *testing.T) {
 	if _, err := uc.Run(context.Background(), assetID, "make-coffee"); kindOf(err) != Invalid || !errors.Is(err, ErrUnknownJobType) {
 		t.Fatalf("unknown type: %v", err)
 	}
+	if _, err := uc.Run(context.Background(), assetID, jobcontracts.JobTypeExportClip); kindOf(err) != Invalid ||
+		!errors.Is(err, ErrNotRerunnable) || err.(*Error).Msg != "Clip export jobs cannot be run again by hand: they run when a clip is exported" {
+		t.Fatalf("an export: %v", err)
+	}
 	job, err := uc.Run(context.Background(), assetID, jobcontracts.JobTypeSuggestClips)
 	if err != nil || job.Type != jobcontracts.JobTypeSuggestClips || len(f.queued) != 1 || f.queued[0].ID != job.ID {
 		t.Fatalf("job %+v, err %v, queued %+v", job, err, f.queued)

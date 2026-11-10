@@ -51,6 +51,68 @@
     "payload": "payload",
     "type": "type"
   },
+  "jobs": [
+    {
+      "label": "Metadata",
+      "name": "extract-metadata",
+      "rerun": true,
+      "worker": "media"
+    },
+    {
+      "label": "Thumbnail",
+      "name": "generate-thumbnail",
+      "rerun": true,
+      "worker": "media"
+    },
+    {
+      "label": "HLS encoding",
+      "name": "transcode-hls",
+      "rerun": true,
+      "worker": "media"
+    },
+    {
+      "label": "Audio",
+      "name": "extract-audio",
+      "rerun": true,
+      "worker": "media"
+    },
+    {
+      "label": "Transcription",
+      "name": "transcribe-audio",
+      "rerun": true,
+      "worker": "ai"
+    },
+    {
+      "label": "Summary",
+      "name": "analyze-transcript",
+      "rerun": true,
+      "worker": "ai"
+    },
+    {
+      "label": "Clips",
+      "name": "suggest-clips",
+      "rerun": true,
+      "worker": "ai"
+    },
+    {
+      "label": "Face tracking",
+      "name": "track-faces",
+      "rerun": true,
+      "worker": "ai"
+    },
+    {
+      "label": "Clip export",
+      "name": "export-clip",
+      "rerun": false,
+      "worker": "media"
+    },
+    {
+      "label": "Translation",
+      "name": "translate-transcript",
+      "rerun": false,
+      "worker": "ai"
+    }
+  ],
   "pipeline": [
     "extract-metadata",
     "generate-thumbnail",

@@ -9,15 +9,10 @@ too short, too long or mostly the same moment as a better one are dropped.
 
 from __future__ import annotations
 
-import logging
-
 from . import contracts
-from .analyze import check_length
-from .answers import InvalidAnswer, NotConfigured, ask, count, extract_json, one_line, parse_time
-from .config import Config
-from .llm import ChatClient
+from .answers import InvalidAnswer, extract_json, one_line, parse_time
+from .llmtask import LLMTask, Plan, Request, Usage
 from .runner import JobContext
-from .store import Store
 
 MAX_CLIPS = 5
 MIN_SECONDS, MAX_SECONDS = 10.0, 90.0  # the prompt asks for 15 to 60
@@ -49,39 +44,28 @@ Transcript, one segment per line as [start-end] in seconds:
 {segments}"""
 
 
-class ClipSuggester:
-    def __init__(self, cfg: Config, store: Store, client: ChatClient | None, log: logging.Logger):
-        self.cfg, self.store, self.client, self.log = cfg, store, client, log
+class ClipSuggester(LLMTask):
+    input_type = contracts.SuggestClipsInput
+    system_prompt = SYSTEM_PROMPT
+    what = "clips"
 
-    def __call__(self, ctx: JobContext, payload: str) -> None:
-        inp = contracts.SuggestClipsInput.from_json(payload)
-        if not contracts.is_id(inp.asset_id):
-            raise ValueError(f"invalid input: asset_id {inp.asset_id!r}")
-        if self.client is None:
-            raise NotConfigured("no language model is configured: set LLM_BASE_URL (see .env.example)")
-
+    def plan(self, ctx: JobContext, inp) -> Plan | None:
         transcript = self.store.get_transcript(inp.asset_id)
         segments = speech_segments(transcript["segments"]) if transcript else []
         if not segments:
             ctx.log.info("nothing to clip: there is no speech")
-            self.save(ctx, inp.asset_id, [], "")
-            return
+            self.replace(ctx, inp.asset_id, [], "")
+            return None
         speech = segments[-1]["end"] - segments[0]["start"]
         if speech < MIN_SPEECH_SECONDS:
             ctx.log.info("nothing to clip: the speech lasts %.0f seconds, under %.0f", speech, MIN_SPEECH_SECONDS)
-            self.save(ctx, inp.asset_id, [], "")
-            return
-
+            self.replace(ctx, inp.asset_id, [], "")
+            return None
         prompt = build_prompt(transcript["language"], segments)
-        check_length(prompt, self.cfg)
-        ctx.log.info(
-            "asking model %s at %s for clips (%d segments, %d characters)",
-            self.client.model, self.client.host, len(segments), len(prompt),
-        )
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
-        clips, completion = ask(self.client, ctx, messages, lambda text: parse_answer(text, segments))
+        return Plan([Request(prompt, lambda text: parse_answer(text, segments))], f"{len(segments)} segments, {len(prompt)} characters")
 
-        clips = self.save(ctx, inp.asset_id, clips, completion.model)
+    def save(self, ctx: JobContext, inp, plan: Plan, answers: list, usage: Usage) -> str:
+        clips = self.replace(ctx, inp.asset_id, answers[0], usage.model)
         if not clips:
             ctx.log.info("no moment works as a standalone clip")
         for c in clips:
@@ -89,13 +73,9 @@ class ClipSuggester:
                 "clip %d: %.1fs-%.1fs (%.0fs), score %d: %s", c["rank"], c["start"], c["end"],
                 c["end"] - c["start"], c["score"], c["title"],
             )
-        ctx.log.info(
-            "%d clips; model %s, %s tokens in, %s out", len(clips), completion.model,
-            count(completion.prompt_tokens), count(completion.completion_tokens),
-        )
+        return f"{len(clips)} clips"
 
-
-    def save(self, ctx: JobContext, asset_id: str, clips: list[dict], model: str) -> list[dict]:
+    def replace(self, ctx: JobContext, asset_id: str, clips: list[dict], model: str) -> list[dict]:
         """Replaces the asset's suggestions with clips, keeping the clips
         edited by hand (docs/adr/0026); returns the new clips stored."""
         edited = self.store.edited_clips(asset_id)

@@ -200,7 +200,10 @@ func TestUploadCreatesAssetJobsAndEnqueuesFirst(t *testing.T) {
 			SizeBytes  int64
 			Checksum   string
 		}
-		Jobs     []struct{ ID, Type, Status string }
+		Jobs []struct {
+			ID, Type, Status, Label string
+			CanRerun                bool
+		}
 		Playback *struct{ ManifestURL string }
 	}
 	if code := e.get("/assets/"+created.AssetID, &detail); code != 200 {
@@ -224,9 +227,12 @@ func TestUploadCreatesAssetJobsAndEnqueuesFirst(t *testing.T) {
 		t.Fatalf("jobs = %+v", detail.Jobs)
 	}
 	for i, typ := range jobcontracts.Pipeline {
-		if detail.Jobs[i].Type != typ || detail.Jobs[i].Status != "pending" {
-			t.Fatalf("job %d = %+v, want pending %s", i, detail.Jobs[i], typ)
+		if detail.Jobs[i].Type != typ || detail.Jobs[i].Status != "pending" || detail.Jobs[i].Label != jobcontracts.Label(typ) || !detail.Jobs[i].CanRerun {
+			t.Fatalf("job %d = %+v, want pending %s, named and rerunnable", i, detail.Jobs[i], typ)
 		}
+	}
+	if detail.Jobs[2].Label != "HLS encoding" {
+		t.Fatalf("HLS job named %q", detail.Jobs[2].Label)
 	}
 
 	if len(e.queued()) != 1 || e.queued()[0].JobID != detail.Jobs[0].ID || e.queued()[0].Type != jobcontracts.JobTypeExtractMetadata {

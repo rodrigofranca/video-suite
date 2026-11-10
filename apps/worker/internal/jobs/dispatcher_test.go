@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -45,5 +46,17 @@ func TestDispatchPropagatesErrors(t *testing.T) {
 	}
 	if err := d.Dispatch(context.Background(), Job{Type: "fails", Payload: []byte(`"not an object"`)}); err == nil {
 		t.Fatal("want decode error for bad payload")
+	}
+}
+
+// The media worker handles exactly the job types the table gives it
+// (docs/adr/0036): a new media job type without a handler fails here.
+func TestMediaHandlesItsJobTypes(t *testing.T) {
+	d := NewDispatcher()
+	Media{}.Register(d)
+	want := jobcontracts.TypesOf(jobcontracts.WorkerMedia)
+	slices.Sort(want)
+	if got := d.Types(); !slices.Equal(got, want) {
+		t.Fatalf("handlers for %v, want %v", got, want)
 	}
 }

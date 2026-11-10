@@ -87,13 +87,7 @@ def main() -> int:
     else:
         log.warning("no language model configured (LLM_BASE_URL): analysis, clip and translation jobs will fail")
 
-    handlers = {
-        contracts.JOB_TRANSCRIBE_AUDIO: transcriber,
-        contracts.JOB_ANALYZE_TRANSCRIPT: Analyzer(cfg, store, llm, log),
-        contracts.JOB_SUGGEST_CLIPS: ClipSuggester(cfg, store, llm, log),
-        contracts.JOB_TRACK_FACES: faces,
-        contracts.JOB_TRANSLATE_TRANSCRIPT: Translator(cfg, storage, store, llm, log),
-    }
+    handlers = build_handlers(cfg, store, storage, llm, log, transcriber, faces)
     # Finishing a job records it in the outbox; the Go relays send the next
     # job to Redis (docs/adr/0034), so this worker only reads its stream.
     runner = Runner(store, handlers, log, stop, cfg.job_timeout_seconds)
@@ -106,6 +100,20 @@ def main() -> int:
     store.close()
     log.info("ai worker shut down")
     return 0
+
+
+def build_handlers(cfg, store, storage, llm, log, transcriber, faces) -> dict:
+    """One handler for each job type this worker runs (docs/adr/0036)."""
+    handlers = {
+        contracts.JOB_TRANSCRIBE_AUDIO: transcriber,
+        contracts.JOB_ANALYZE_TRANSCRIPT: Analyzer(cfg, store, llm, log),
+        contracts.JOB_SUGGEST_CLIPS: ClipSuggester(cfg, store, llm, log),
+        contracts.JOB_TRACK_FACES: faces,
+        contracts.JOB_TRANSLATE_TRANSCRIPT: Translator(cfg, storage, store, llm, log),
+    }
+    if set(handlers) != contracts.AI_JOB_TYPES:
+        raise RuntimeError(f"handlers {sorted(handlers)} do not match the AI job types {sorted(contracts.AI_JOB_TYPES)}")
+    return handlers
 
 
 def check_gateway(llm: ChatClient, log: logging.Logger) -> None:

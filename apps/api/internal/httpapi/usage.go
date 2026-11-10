@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"ultramedia/media-core/store"
+
+	jobcontracts "ultramedia/job-contracts"
 )
 
 // Language model usage (docs/adr/0032).
@@ -37,6 +39,15 @@ func toUsageGroups(groups []store.UsageGroup) []usageGroupDTO {
 	out := make([]usageGroupDTO, 0, len(groups))
 	for _, g := range groups {
 		out = append(out, usageGroupDTO{Key: g.Key, Label: g.Label, usageDTO: toUsage(g.Usage)})
+	}
+	return out
+}
+
+// actionGroups are usage groups by job type, named as the job table names them.
+func actionGroups(groups []store.UsageGroup) []usageGroupDTO {
+	out := toUsageGroups(groups)
+	for i := range out {
+		out[i].Label = jobcontracts.Label(out[i].Key)
 	}
 	return out
 }
@@ -80,6 +91,6 @@ func (a *api) getUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"days": days, "since": sinceOut, "total": toUsage(sum.Total),
 		"byDay": toUsageGroups(sum.ByDay), "byModel": toUsageGroups(sum.ByModel),
-		"byAction": toUsageGroups(sum.ByAction), "byVideo": toUsageGroups(sum.ByAsset),
+		"byAction": actionGroups(sum.ByAction), "byVideo": toUsageGroups(sum.ByAsset),
 	})
 }

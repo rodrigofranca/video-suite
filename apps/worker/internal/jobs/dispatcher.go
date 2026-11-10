@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 )
 
 // ErrUnsupported is returned when no handler is registered for a job type.
@@ -40,6 +42,11 @@ func NewDispatcher() *Dispatcher {
 // Register sets the handler for a job type, replacing any previous one.
 func (d *Dispatcher) Register(jobType string, h HandlerFunc) {
 	d.handlers[jobType] = h
+}
+
+// Types lists the job types with a handler, sorted.
+func (d *Dispatcher) Types() []string {
+	return slices.Sorted(maps.Keys(d.handlers))
 }
 
 // Handle registers a handler that receives the payload already decoded into

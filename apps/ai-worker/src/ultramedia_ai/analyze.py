@@ -9,25 +9,20 @@ spaced, so a sloppy answer cannot produce a chapter that seeks nowhere.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 
 from . import contracts
 from .answers import (  # noqa: F401 - re-exported for callers and tests
     InvalidAnswer,
     NotConfigured,
-    ask,
     clock,
-    count,
     extract_json,
     one_line,
     parse_time,
     shorten,
 )
-from .config import Config
-from .llm import ChatClient
+from .llmtask import LLMTask, Plan, Request, Usage, check_length  # noqa: F401 - check_length re-exported
 from .runner import JobContext
-from .store import Store
 
 PASSAGE_SECONDS = 20.0  # segments are merged into passages of about this length
 PASSAGE_CHARS = 400
@@ -69,55 +64,36 @@ class Analysis:
     chapters: list[dict]  # [{"start": 0.0, "title": "..."}]
 
 
-class Analyzer:
-    def __init__(self, cfg: Config, store: Store, client: ChatClient | None, log: logging.Logger):
-        self.cfg, self.store, self.client, self.log = cfg, store, client, log
+class Analyzer(LLMTask):
+    input_type = contracts.AnalyzeTranscriptInput
+    system_prompt = SYSTEM_PROMPT
+    what = "a summary, tags and chapters"
 
-    def __call__(self, ctx: JobContext, payload: str) -> None:
-        inp = contracts.AnalyzeTranscriptInput.from_json(payload)
-        if not contracts.is_id(inp.asset_id):
-            raise ValueError(f"invalid input: asset_id {inp.asset_id!r}")
-        if self.client is None:
-            raise NotConfigured("no language model is configured: set LLM_BASE_URL (see .env.example)")
-
+    def plan(self, ctx: JobContext, inp) -> Plan | None:
         transcript = self.store.get_transcript(inp.asset_id)
         if transcript is None:
             ctx.log.info("nothing to analyze: there is no transcript (no audio track, or transcription failed)")
-            return
+            return None
         passages = merge_passages(transcript["segments"])
         if not passages:
             ctx.log.info("nothing to analyze: no speech was found")
-            return
-
+            return None
         language = transcript["language"]
         end = max(float(s.get("end") or 0) for s in transcript["segments"])
         prompt = build_prompt(language, end, passages)
-        check_length(prompt, self.cfg)
-
-        ctx.log.info(
-            "asking model %s at %s for a summary, tags and chapters (%d passages, %d characters)",
-            self.client.model, self.client.host, len(passages), len(prompt),
-        )
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}]
         starts = [p.start for p in passages]
-        result, completion = ask(self.client, ctx, messages, lambda text: parse_answer(text, starts, end))
+        return Plan(
+            [Request(prompt, lambda text: parse_answer(text, starts, end))],
+            f"{len(passages)} passages, {len(prompt)} characters",
+            {"language": language},
+        )
 
+    def save(self, ctx: JobContext, inp, plan: Plan, answers: list, usage: Usage) -> str:
+        result: Analysis = answers[0]
         self.store.save_analysis(
-            inp.asset_id, ctx.job.id, language, result.summary, result.tags, result.chapters, completion.model
+            inp.asset_id, ctx.job.id, plan.state["language"], result.summary, result.tags, result.chapters, usage.model
         )
-        ctx.log.info(
-            "summary of %d characters, %d tags, %d chapters; model %s, %s tokens in, %s out",
-            len(result.summary), len(result.tags), len(result.chapters), completion.model,
-            count(completion.prompt_tokens), count(completion.completion_tokens),
-        )
-
-
-def check_length(prompt: str, cfg: Config) -> None:
-    if len(prompt) > cfg.llm_max_input_chars:
-        raise ValueError(
-            f"the transcript is too long for one request ({len(prompt)} characters, "
-            f"limit {cfg.llm_max_input_chars}, set by LLM_MAX_INPUT_CHARS)"
-        )
+        return f"summary of {len(result.summary)} characters, {len(result.tags)} tags, {len(result.chapters)} chapters"
 
 
 # ---- Prompt ----

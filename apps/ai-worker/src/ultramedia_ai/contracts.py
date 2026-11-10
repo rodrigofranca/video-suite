@@ -56,6 +56,8 @@ EVENT_JOB_QUEUED = "job.queued"
 EVENT_JOB_FINISHED = "job.finished"
 OUTBOX_CHANNEL = "outbox_events"
 
+# The job types this worker runs: those of worker "ai" in the job table of
+# packages/job-contracts (docs/adr/0036), which the tests compare.
 AI_JOB_TYPES = {JOB_TRANSCRIBE_AUDIO, JOB_ANALYZE_TRANSCRIPT, JOB_SUGGEST_CLIPS, JOB_TRACK_FACES, JOB_TRANSLATE_TRANSCRIPT}
 
 _UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")

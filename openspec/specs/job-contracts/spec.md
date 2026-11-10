@@ -74,7 +74,7 @@ O pacote SHALL definir `extract-audio` (`ExtractAudioInput`: `asset_id`, `storag
 - **THEN** ela SHALL ir para o stream `jobs:ai`
 
 ### Requirement: Arquivo de contratos compartilhado
-O pacote SHALL manter `testdata/contracts.json` com tipos, ordem do pipeline, rotas, streams, consumer groups, campos e exemplos de entrada, e um teste SHALL falhar quando o arquivo não corresponder ao código.
+O pacote SHALL manter `testdata/contracts.json` com tipos, a tabela de tipos de job (`jobs`: nome, rótulo, worker e se pode rodar de novo à mão), ordem do pipeline, rotas, streams, consumer groups, campos e exemplos de entrada, e um teste SHALL falhar quando o arquivo não corresponder ao código.
 
 #### Scenario: Arquivo desatualizado
 - **WHEN** o código muda sem regenerar o arquivo
@@ -146,3 +146,10 @@ O pacote SHALL definir os nomes dos eventos `job.queued` e `job.finished` e o ca
 #### Scenario: Nomes conferidos
 - **WHEN** os testes do worker de IA leem o arquivo de contratos
 - **THEN** os nomes dos eventos e do canal SHALL ser os mesmos do Go
+
+### Requirement: Tabela de tipos de job
+O pacote SHALL definir `JobTypes`, uma entrada por tipo de job com nome, rótulo, worker (`media` ou `ai`) e se pode rodar de novo à mão, primeiro os passos do `Pipeline`, na ordem. `StreamFor` SHALL usar o worker da tabela. Todo tipo citado em `Pipeline`, `RerunWith` e `After` SHALL estar na tabela, e cada worker SHALL ter um handler para cada tipo seu, conferido em teste.
+
+#### Scenario: Tipo novo sem handler
+- **WHEN** um tipo de job do worker de mídia é posto na tabela sem handler no worker
+- **THEN** o teste do worker de mídia SHALL falhar
