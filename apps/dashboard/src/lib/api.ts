@@ -321,10 +321,13 @@ export const getTranscript = (id: string) => getJSON<Transcript>(`/assets/${enco
 export const getAnalysis = (id: string) => getJSON<Analysis>(`/assets/${encodeURIComponent(id)}/analysis`);
 /** The clips; whether the transcript has word timings (for word-by-word
  * captions); its language; and the languages it has been translated into. */
-export const getClips = (id: string) =>
-	getJSON<{ clips: Clip[]; wordTimings: boolean; transcriptLanguage: string; translations: string[] }>(
-		`/assets/${encodeURIComponent(id)}/clips`
-	);
+export interface ClipList {
+	clips: Clip[];
+	wordTimings: boolean;
+	transcriptLanguage: string;
+	translations: string[];
+}
+export const getClips = (id: string) => getJSON<ClipList>(`/assets/${encodeURIComponent(id)}/clips`);
 /** Link to an exported clip file; inline plays it instead of downloading it. */
 export const clipFileUrl = (clipId: string, format: ClipFormat, inline = false) =>
 	`${API_URL}/clips/${encodeURIComponent(clipId)}/download?format=${format}${inline ? '&inline=1' : ''}`;

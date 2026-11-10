@@ -1,4 +1,4 @@
-.PHONY: help up down demo demo-logs sample sample-speech llm-check migrate migrate-down dev-api dev-worker dev-ai-worker dev-dashboard build test test-go test-ai env-check
+.PHONY: help up down demo demo-logs sample sample-speech llm-check migrate migrate-down dev-api dev-worker dev-ai-worker dev-dashboard build test test-go test-ai test-dashboard env-check
 
 # Load local settings (copy .env.example to .env first).
 -include .env
@@ -74,7 +74,7 @@ dev-dashboard: ## Start SvelteKit dashboard dev server on port 5173
 build: ## Build all Go modules
 	go build $(GO_PACKAGES)
 
-test: test-go test-ai ## Run all tests (Go and Python)
+test: test-go test-ai test-dashboard ## Run all tests (Go, Python and the dashboard)
 
 test-go: ## Run Go vet and tests
 	go vet $(GO_PACKAGES)
@@ -82,6 +82,9 @@ test-go: ## Run Go vet and tests
 
 test-ai: ## Run the AI worker tests (Python, needs uv; transcription tests download the tiny model)
 	cd apps/ai-worker && uv run pytest -q
+
+test-dashboard: ## Run the dashboard's type check and unit tests (needs npm ci in apps/dashboard)
+	cd apps/dashboard && npm run check && npm test
 
 env-check:
 	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is not set. Run: cp .env.example .env" && exit 1)

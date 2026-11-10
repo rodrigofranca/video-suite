@@ -24,7 +24,7 @@ An upload creates an asset and eight jobs: `extract-metadata` → `generate-thum
 | `apps/api` | HTTP API (Go) and database migrations: use cases in `internal/app`, HTTP adapters in `internal/httpapi` ([ADR 0033](docs/adr/0033-use-cases-ports-and-adapters.md)) |
 | `apps/worker` | Media worker (Go): reads the `jobs` stream, runs FFmpeg (clip exports as a list of stages over a filter graph builder, [ADR 0035](docs/adr/0035-export-stages-and-filter-graph.md)), runs an outbox relay |
 | `apps/ai-worker` | AI worker (Python, faster-whisper, OpenCV, ONNX Runtime): reads the `jobs:ai` stream, transcribes speech, asks the gateway for summaries, tags, chapters and clips, and finds who to keep in frame in each clip (the face, or whoever speaks) |
-| `apps/dashboard` | Web dashboard (SvelteKit): upload, video list, job logs, player |
+| `apps/dashboard` | Web dashboard (SvelteKit): upload, video list, job logs, player, clips, presets; small components, with state and rules in tested modules ([ADR 0037](docs/adr/0037-dashboard-components-and-state.md)) |
 | `packages/job-contracts` | The job type table (name, label, worker, can run again; [ADR 0036](docs/adr/0036-job-type-table-and-llm-task-template.md)), typed inputs, pipeline order, stream routing and queue message format (shared with Python through `testdata/contracts.json`) |
 | `packages/media-core` | Domain entities, SQL (`store`), the outbox relay that queues and chains jobs (`outbox`), S3 client (`storage`), DB pool |
 | `infra/` | Local infrastructure config (bucket CORS and public-read policy, LiteLLM models) |
@@ -112,7 +112,7 @@ Open http://localhost:5173, click **Upload**, pick an MP4 and watch the jobs run
 | Command | What it does |
 |---|---|
 | `make help` | List all targets |
-| `make test` | Go and Python tests (`make test-go`, `make test-ai`). Tests that need PostgreSQL, Redis, storage or FFmpeg are skipped when those are missing |
+| `make test` | Go, Python and dashboard tests (`make test-go`, `make test-ai`, `make test-dashboard`). Tests that need PostgreSQL, Redis, storage or FFmpeg are skipped when those are missing |
 | `make build` | Build all Go modules |
 | `make migrate-down` | Revert all migrations |
 | `make demo` / `make demo-logs` | Run everything in Docker / follow its API and worker logs |
