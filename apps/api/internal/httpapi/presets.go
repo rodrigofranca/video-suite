@@ -1,30 +1,20 @@
 package httpapi
 
 import (
-	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"slices"
-	"strings"
 	"time"
-	"unicode/utf8"
+	"ultramedia/api/internal/app"
 
 	"ultramedia/media-core/domain"
-	"ultramedia/media-core/storage"
 	"ultramedia/media-core/store"
-
-	jobcontracts "ultramedia/job-contracts"
 )
 
-// The vignette library and export presets (docs/adr/0030).
-
-// maxName is the longest preset or vignette name, in characters.
-const maxName = 60
+// The vignette library and export presets (docs/adr/0030); app.SavePreset
+// and app.Library do the work (docs/adr/0033).
 
 type vignetteDTO struct {
 	ID        string    `json:"id"`
@@ -89,114 +79,7 @@ func presetVignettes(p domain.Preset) []string {
 	return ids
 }
 
-// cleanName trims a name and checks its length.
-func cleanName(name string) (string, bool) {
-	name = strings.Join(strings.Fields(name), " ")
-	return name, name != "" && utf8.RuneCountInString(name) <= maxName
-}
-
 // ---- Vignettes ----
-
-// uploadVignette handles POST /vignettes/upload (multipart/form-data: an
-// optional "name" field, then the "file" field with an MP4 of up to
-// domain.MaxVignetteBytes). The file is streamed to the private library.
-func (a *api) uploadVignette(w http.ResponseWriter, r *http.Request) {
-	const limit = domain.MaxVignetteBytes
-	tooLarge := func() {
-		writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("a vignette can be up to %d MB", limit>>20))
-	}
-	if r.ContentLength > limit+multipartOverhead {
-		tooLarge()
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, limit+multipartOverhead)
-	mr, err := r.MultipartReader()
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "expected multipart/form-data with a file field")
-		return
-	}
-	name := ""
-	for {
-		part, err := mr.NextPart()
-		if err != nil {
-			var maxErr *http.MaxBytesError
-			if errors.As(err, &maxErr) {
-				tooLarge()
-				return
-			}
-			writeError(w, http.StatusBadRequest, "missing file field")
-			return
-		}
-		switch part.FormName() {
-		case "name":
-			b, _ := io.ReadAll(io.LimitReader(part, 1024))
-			name = string(b)
-			continue
-		case "file":
-		default:
-			continue
-		}
-		filename := cleanFilename(part.FileName())
-		if name == "" {
-			name = strings.TrimSuffix(filename, filepath.Ext(filename))
-		}
-		clean, ok := cleanName(name)
-		if !ok {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("the name must have 1 to %d characters", maxName))
-			return
-		}
-		head := make([]byte, 12)
-		if !strings.EqualFold(filepath.Ext(filename), ".mp4") {
-			writeError(w, http.StatusUnsupportedMediaType, "only .mp4 files are accepted")
-			return
-		}
-		if _, err := io.ReadFull(part, head); err != nil || !isMP4(head) {
-			writeError(w, http.StatusUnsupportedMediaType, "the file is not an MP4 video")
-			return
-		}
-		v := domain.Vignette{ID: domain.NewID(), Name: clean, Filename: filename}
-		v.StorageKey = storage.VignetteKey(v.ID)
-		ctx := r.Context()
-		body := &countingReader{r: io.MultiReader(strings.NewReader(string(head)), part), hash: sha256.New(), limit: limit}
-		err = a.Storage.Upload(ctx, v.StorageKey, body, "video/mp4")
-		if err == nil && body.err != nil {
-			err = body.err
-		}
-		if err == nil {
-			v.SizeBytes = body.n
-			err = a.Store.CreateVignette(ctx, v)
-		}
-		if err != nil {
-			a.removeFile(ctx, v.StorageKey)
-			var maxErr *http.MaxBytesError
-			if errors.Is(body.err, errTooLarge) || errors.As(body.err, &maxErr) {
-				tooLarge()
-				return
-			}
-			a.internalError(w, r, err)
-			return
-		}
-		saved, err := a.Store.GetVignette(ctx, v.ID)
-		if err != nil {
-			a.internalError(w, r, err)
-			return
-		}
-		a.Log.Info("vignette uploaded", "vignette_id", v.ID, "bytes", v.SizeBytes)
-		writeJSON(w, http.StatusCreated, vignetteDTO{ID: saved.ID, Name: saved.Name, Filename: saved.Filename,
-			SizeBytes: saved.SizeBytes, CreatedAt: saved.CreatedAt, UsedBy: []string{}})
-		return
-	}
-}
-
-// removeFile deletes a stored file, even if the client went away; a failure
-// only leaves an orphan file, so it is logged.
-func (a *api) removeFile(ctx context.Context, key string) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
-	if err := a.Storage.Delete(ctx, key); err != nil {
-		a.Log.Warn("could not delete a stored file", "key", key, "error", err)
-	}
-}
 
 // listVignettes handles GET /vignettes: the library, newest first, each
 // with the presets that use it.
@@ -251,36 +134,6 @@ func (a *api) vignetteFile(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
-// deleteVignette handles DELETE /vignettes/{id}: 204, or 409 while a preset
-// uses it. Exports made with it keep their files.
-func (a *api) deleteVignette(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !domain.IsID(id) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	ctx := r.Context()
-	v, err := a.Store.GetVignette(ctx, id)
-	if err == nil {
-		err = a.Store.DeleteVignette(ctx, id)
-	}
-	var inUse *store.InUseError
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	case errors.As(err, &inUse):
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	case err != nil:
-		a.internalError(w, r, err)
-		return
-	}
-	a.removeFile(ctx, v.StorageKey)
-	a.Log.Info("vignette deleted", "vignette_id", id)
-	w.WriteHeader(http.StatusNoContent)
-}
-
 // ---- Presets ----
 
 // presetBody is what POST and PUT /presets take. Omitted caption fields get
@@ -304,80 +157,21 @@ type presetBody struct {
 	WatermarkOpacity  *int    `json:"watermarkOpacity"`
 }
 
-// readPreset decodes and checks a preset body. It returns the message for a
-// 400 when the body is wrong.
-func (a *api) readPreset(r *http.Request) (domain.Preset, string, error) {
+var presetUsage = `expected a JSON body like {"name": "My channel", "captionStyle": "highlight", "introVerticalId": "<vignette id>"}`
+
+// readPreset decodes a preset body; app.SavePreset checks it.
+func readPreset(w http.ResponseWriter, r *http.Request) (app.PresetInput, bool) {
 	var b presetBody
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&b); err != nil {
-		return domain.Preset{}, `expected a JSON body like {"name": "My channel", "captionStyle": "highlight", "introVerticalId": "<vignette id>"}`, nil
+		writeError(w, http.StatusBadRequest, presetUsage)
+		return app.PresetInput{}, false
 	}
-	name, ok := cleanName(b.Name)
-	if !ok {
-		return domain.Preset{}, fmt.Sprintf("the name must have 1 to %d characters", maxName), nil
-	}
-	p := domain.Preset{Name: name, Captions: b.Captions == nil || *b.Captions, CaptionStyle: b.CaptionStyle,
-		CaptionPosition: b.CaptionPosition, CaptionColor: b.CaptionColor, CaptionCaps: b.CaptionCaps, CaptionLanguage: b.CaptionLanguage}
-	if p.CaptionStyle == "" {
-		p.CaptionStyle = jobcontracts.CaptionStyles[0]
-	}
-	if p.CaptionPosition == "" {
-		p.CaptionPosition = jobcontracts.CaptionPositions[0]
-	}
-	if !slices.Contains(jobcontracts.CaptionStyles, p.CaptionStyle) || !slices.Contains(jobcontracts.CaptionPositions, p.CaptionPosition) ||
-		(p.CaptionColor != "" && !slices.Contains(jobcontracts.CaptionColors, p.CaptionColor)) ||
-		(p.CaptionLanguage != "" && !slices.Contains(jobcontracts.CaptionLanguages, p.CaptionLanguage)) {
-		return domain.Preset{}, "caption styles: " + strings.Join(jobcontracts.CaptionStyles, ", ") +
-			"; positions: " + strings.Join(jobcontracts.CaptionPositions, ", ") + "; colors (or empty): " + strings.Join(jobcontracts.CaptionColors, ", ") +
-			"; languages (or empty): " + strings.Join(jobcontracts.CaptionLanguages, ", "), nil
-	}
-	slots := []struct {
-		in  *string
-		out *string
-	}{{b.IntroHorizontal, &p.IntroHorizontal}, {b.IntroVertical, &p.IntroVertical}, {b.OutroHorizontal, &p.OutroHorizontal}, {b.OutroVertical, &p.OutroVertical}}
-	for _, s := range slots {
-		if s.in == nil || *s.in == "" {
-			continue
-		}
-		if !domain.IsID(*s.in) {
-			return domain.Preset{}, fmt.Sprintf("unknown vignette %q", *s.in), nil
-		}
-		if _, err := a.Store.GetVignette(r.Context(), *s.in); errors.Is(err, store.ErrNotFound) {
-			return domain.Preset{}, fmt.Sprintf("unknown vignette %q", *s.in), nil
-		} else if err != nil {
-			return domain.Preset{}, "", err
-		}
-		*s.out = *s.in
-	}
-	p.WatermarkPosition, p.WatermarkSize, p.WatermarkOpacity = b.WatermarkPosition, 15, 80
-	if p.WatermarkPosition == "" {
-		p.WatermarkPosition = jobcontracts.WatermarkPositions[0]
-	}
-	if b.WatermarkSize != nil {
-		p.WatermarkSize = *b.WatermarkSize
-	}
-	if b.WatermarkOpacity != nil {
-		p.WatermarkOpacity = *b.WatermarkOpacity
-	}
-	if !slices.Contains(jobcontracts.WatermarkPositions, p.WatermarkPosition) ||
-		p.WatermarkSize < jobcontracts.MinWatermarkSize || p.WatermarkSize > jobcontracts.MaxWatermarkSize ||
-		p.WatermarkOpacity < jobcontracts.MinWatermarkOpacity || p.WatermarkOpacity > jobcontracts.MaxWatermarkOpacity {
-		return domain.Preset{}, fmt.Sprintf("watermark positions: %s; size: %d to %d (%% of the shorter side); opacity: %d to %d (%%)",
-			strings.Join(jobcontracts.WatermarkPositions, ", "), jobcontracts.MinWatermarkSize, jobcontracts.MaxWatermarkSize,
-			jobcontracts.MinWatermarkOpacity, jobcontracts.MaxWatermarkOpacity), nil
-	}
-	if b.WatermarkID != nil && *b.WatermarkID != "" {
-		id := *b.WatermarkID
-		if !domain.IsID(id) {
-			return domain.Preset{}, fmt.Sprintf("unknown watermark %q", id), nil
-		}
-		if _, err := a.Store.GetWatermark(r.Context(), id); errors.Is(err, store.ErrNotFound) {
-			return domain.Preset{}, fmt.Sprintf("unknown watermark %q", id), nil
-		} else if err != nil {
-			return domain.Preset{}, "", err
-		}
-		p.Watermark = id
-	}
-	return p, "", nil
+	return app.PresetInput{
+		Name: b.Name, Captions: b.Captions, CaptionStyle: b.CaptionStyle, CaptionPosition: b.CaptionPosition,
+		CaptionColor: b.CaptionColor, CaptionCaps: b.CaptionCaps, CaptionLanguage: b.CaptionLanguage,
+		IntroHorizontal: b.IntroHorizontal, IntroVertical: b.IntroVertical, OutroHorizontal: b.OutroHorizontal, OutroVertical: b.OutroVertical,
+		WatermarkID: b.WatermarkID, WatermarkPosition: b.WatermarkPosition, WatermarkSize: b.WatermarkSize, WatermarkOpacity: b.WatermarkOpacity,
+	}, true
 }
 
 // listPresets handles GET /presets, by name.
@@ -422,78 +216,35 @@ func (a *api) loadPreset(w http.ResponseWriter, r *http.Request) (domain.Preset,
 // createPreset handles POST /presets: 201 with the preset, 409 when another
 // preset has the name.
 func (a *api) createPreset(w http.ResponseWriter, r *http.Request) {
-	p, problem, err := a.readPreset(r)
-	if a.presetProblem(w, r, problem, err) {
+	in, ok := readPreset(w, r)
+	if !ok {
 		return
 	}
-	p.ID = domain.NewID()
-	a.savePreset(w, r, p, a.Store.CreatePreset, http.StatusCreated)
+	p, err := a.presets.Create(r.Context(), in)
+	a.writePreset(w, r, p, err, http.StatusCreated)
 }
 
 // updatePreset handles PUT /presets/{id}, which replaces the preset's
 // choices. Exports made before keep their files.
 func (a *api) updatePreset(w http.ResponseWriter, r *http.Request) {
-	old, ok := a.loadPreset(w, r)
+	in, ok := readPreset(w, r)
 	if !ok {
 		return
 	}
-	p, problem, err := a.readPreset(r)
-	if a.presetProblem(w, r, problem, err) {
-		return
-	}
-	p.ID = old.ID
-	a.savePreset(w, r, p, a.Store.UpdatePreset, http.StatusOK)
+	p, err := a.presets.Update(r.Context(), r.PathValue("id"), in)
+	a.writePreset(w, r, p, err, http.StatusOK)
 }
 
-func (a *api) presetProblem(w http.ResponseWriter, r *http.Request, problem string, err error) bool {
-	switch {
-	case err != nil:
-		a.internalError(w, r, err)
-	case problem != "":
-		writeError(w, http.StatusBadRequest, problem)
-	default:
-		return false
-	}
-	return true
-}
-
-func (a *api) savePreset(w http.ResponseWriter, r *http.Request, p domain.Preset, save func(context.Context, domain.Preset) error, status int) {
-	err := save(r.Context(), p)
-	switch {
-	case errors.Is(err, store.ErrNameTaken):
-		writeError(w, http.StatusConflict, fmt.Sprintf("another preset is called %q", p.Name))
-		return
-	case errors.Is(err, store.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	case err != nil:
-		a.internalError(w, r, err)
-		return
-	}
-	saved, err := a.Store.GetPreset(r.Context(), p.ID)
+func (a *api) writePreset(w http.ResponseWriter, r *http.Request, p domain.Preset, err error, status int) {
 	if err != nil {
-		a.internalError(w, r, err)
+		a.useCaseError(w, r, err)
 		return
 	}
-	writeJSON(w, status, toPreset(saved))
+	writeJSON(w, status, toPreset(p))
 }
 
-// deletePreset handles DELETE /presets/{id}: 204. Its vignettes stay in
-// the library, and exports made with it keep their files.
+// deletePreset handles DELETE /presets/{id}: 204. Its files stay in the
+// library, and exports made with it keep their files.
 func (a *api) deletePreset(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if !domain.IsID(id) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	err := a.Store.DeletePreset(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	if err != nil {
-		a.internalError(w, r, err)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	a.noContent(w, r, a.presetDeletes.Run(r.Context(), r.PathValue("id")))
 }

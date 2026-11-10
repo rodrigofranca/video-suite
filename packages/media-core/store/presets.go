@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -12,18 +11,11 @@ import (
 )
 
 // ErrNameTaken is returned when another preset has the name (in any case).
-var ErrNameTaken = errors.New("another preset has this name")
+var ErrNameTaken = domain.ErrNameTaken
 
 // InUseError is returned when a vignette or watermark image cannot be
 // deleted because presets use it.
-type InUseError struct {
-	What    string // "vignette" or "watermark"
-	Presets []string
-}
-
-func (e *InUseError) Error() string {
-	return "the " + e.What + " is used by the preset(s) " + strings.Join(e.Presets, ", ") + "; take it out of them first"
-}
+type InUseError = domain.InUseError
 
 // ---- Vignettes ----
 
