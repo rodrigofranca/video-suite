@@ -1,30 +1,25 @@
 <script lang="ts">
 	import {
-		captionColors,
-		captionLanguages,
-		captionPositions,
-		captionStyles,
 		createPreset,
 		deletePreset,
-		deleteVignette,
-		deleteWatermark,
 		listPresets,
 		listVignettes,
 		listWatermarks,
 		updatePreset,
-		uploadVignette,
-		uploadWatermark,
-		vignetteFileUrl,
 		vignetteLimits,
-		watermarkFileUrl,
-		watermarkPositions,
 		type Preset,
 		type PresetInput,
 		type Vignette,
 		type Watermark
 	} from '$lib/api';
-	import { captionStyleLabel, describeCaptions, formatBytes, languageName } from '$lib/format';
+	import Library from '$lib/components/Library.svelte';
+	import PresetForm from '$lib/components/PresetForm.svelte';
+	import { describeCaptions } from '$lib/format';
+	import { vignettes as vignetteKind, watermarks as watermarkKind } from '$lib/library';
+	import { blankPreset, describeVignettes, describeWatermark, inputOf } from '$lib/presets';
 
+	// Presets and the brand library (docs/adr/0030, 0031). The form and each
+	// library are components; this page loads and lists.
 	let presets = $state<Preset[] | null>(null);
 	let vignettes = $state<Vignette[] | null>(null);
 	let watermarks = $state<Watermark[] | null>(null);
@@ -40,91 +35,20 @@
 	}
 	load();
 
-	const vignetteName = (id: string | null) => vignettes?.find((v) => v.id === id)?.name ?? '';
-	const capitalize = (s: string) => s[0].toUpperCase() + s.slice(1);
-	const corner = (p: string) => capitalize(p.replace('-', ' '));
-	const sizes = [10, 15, 20, 25, 30];
-	const opacities = [100, 80, 60, 40];
-
-	/** "Logo, top right, 15%, 80% opacity", or "none". */
-	function describeWatermark(p: Preset): string {
-		const name = watermarks?.find((w) => w.id === p.watermarkId)?.name;
-		if (!p.watermarkId || !name) return 'none';
-		return `${name}, ${corner(p.watermarkPosition).toLowerCase()}, ${p.watermarkSize}%, ${p.watermarkOpacity}% opacity`;
-	}
-
-	/** Where the preview puts the image: the margin is 4% of the shorter side, the width a share of it. */
-	function previewStyle(vertical: boolean): string {
-		const ratio = 9 / 16; // the shorter side over the longer one
-		const across = vertical ? 1 : ratio; // the shorter side, as a share of the frame's width
-		const down = vertical ? ratio : 1; // ...and of its height
-		const [v, h] = form.watermarkPosition.split('-');
-		return (
-			`width: ${form.watermarkSize * across}%; opacity: ${form.watermarkOpacity / 100};` +
-			`${v}: ${4 * down}%; ${h}: ${4 * across}%;`
-		);
-	}
-
-	/** "Logo (horizontal) · Logo vertical (vertical)", or "none". */
-	function describeVignette(horizontal: string | null, vertical: string | null): string {
-		const parts = [];
-		if (horizontal) parts.push(`${vignetteName(horizontal)} (16:9)`);
-		if (vertical) parts.push(`${vignetteName(vertical)} (9:16)`);
-		return parts.join(' · ') || 'none';
-	}
-
-	// ---- Preset form ----
-
-	const blank = (): PresetInput => ({
-		name: '',
-		captions: true,
-		captionStyle: 'highlight',
-		captionPosition: 'bottom',
-		captionColor: '',
-		captionCaps: null,
-		captionLanguage: '',
-		introHorizontalId: null,
-		introVerticalId: null,
-		outroHorizontalId: null,
-		outroVerticalId: null,
-		watermarkId: null,
-		watermarkPosition: 'top-right',
-		watermarkSize: 15,
-		watermarkOpacity: 80
-	});
 	let editing = $state<string | null>(null); // a preset's id, 'new', or null
-	let form = $state<PresetInput>(blank());
-	let saving = $state(false);
-	let formError = $state('');
+	let initial = $state<PresetInput>(blankPreset());
 	let confirming = $state(''); // id of the preset asking "delete?"
 
 	function edit(p: Preset | null) {
-		formError = '';
-		if (p) {
-			const { id, createdAt, updatedAt, ...input } = p;
-			void id, createdAt, updatedAt;
-			form = { ...input };
-			editing = p.id;
-		} else {
-			form = blank();
-			editing = 'new';
-		}
+		initial = p ? inputOf(p) : blankPreset();
+		editing = p ? p.id : 'new';
 	}
 
-	async function save(e: SubmitEvent) {
-		e.preventDefault();
-		saving = true;
-		formError = '';
-		try {
-			if (editing === 'new') await createPreset(form);
-			else if (editing) await updatePreset(editing, form);
-			editing = null;
-			await load();
-		} catch (err) {
-			formError = (err as Error).message;
-		} finally {
-			saving = false;
-		}
+	async function save(input: PresetInput) {
+		if (editing === 'new') await createPreset(input);
+		else if (editing) await updatePreset(editing, input);
+		editing = null;
+		await load();
 	}
 
 	async function remove(id: string) {
@@ -134,106 +58,6 @@
 			await load();
 		} catch (e) {
 			error = (e as Error).message;
-		}
-	}
-
-	// ---- Vignette upload ----
-
-	let file = $state<File | null>(null);
-	let vignetteNameInput = $state('');
-	let fileNote = $state('');
-	let progress = $state<number | null>(null);
-	let uploadError = $state('');
-
-	function pick(e: Event) {
-		file = (e.currentTarget as HTMLInputElement).files?.[0] ?? null;
-		uploadError = fileNote = '';
-		if (!file) return;
-		if (!file.name.toLowerCase().endsWith('.mp4')) uploadError = 'Only .mp4 files are accepted.';
-		else if (file.size > vignetteLimits.maxBytes) uploadError = 'A vignette can be up to 100 MB.';
-		if (!vignetteNameInput) vignetteNameInput = file.name.replace(/\.mp4$/i, '');
-		// Read its size and length in the browser, to warn early.
-		const probe = document.createElement('video');
-		const url = URL.createObjectURL(file);
-		probe.preload = 'metadata';
-		probe.onloadedmetadata = () => {
-			fileNote = `${probe.videoWidth}x${probe.videoHeight} · ${probe.duration.toFixed(1)} s`;
-			if (probe.duration > vignetteLimits.maxSeconds)
-				uploadError = `It lasts ${probe.duration.toFixed(1)} s; vignettes can last up to ${vignetteLimits.maxSeconds} s.`;
-			URL.revokeObjectURL(url);
-		};
-		probe.onerror = () => URL.revokeObjectURL(url);
-		probe.src = url;
-	}
-
-	async function upload(e: SubmitEvent) {
-		e.preventDefault();
-		const form = e.currentTarget as HTMLFormElement; // gone from the event after the first await
-		if (!file || uploadError) return;
-		progress = 0;
-		try {
-			await uploadVignette(vignetteNameInput, file, (p) => (progress = p));
-			file = null;
-			vignetteNameInput = fileNote = '';
-			form.reset();
-			await load();
-		} catch (err) {
-			uploadError = (err as Error).message;
-		} finally {
-			progress = null;
-		}
-	}
-
-	// ---- Watermark images ----
-
-	let imageFile = $state<File | null>(null);
-	let imageName = $state('');
-	let imageError = $state('');
-	let imageUploading = $state(false);
-	function pickImage(e: Event) {
-		imageFile = (e.currentTarget as HTMLInputElement).files?.[0] ?? null;
-		imageError = '';
-		if (!imageFile) return;
-		if (!/\.(png|jpe?g)$/i.test(imageFile.name)) imageError = 'Only PNG and JPEG images are accepted.';
-		else if (imageFile.size > 5 * 1024 ** 2) imageError = 'An image can be up to 5 MB.';
-		if (!imageName) imageName = imageFile.name.replace(/\.(png|jpe?g)$/i, '');
-	}
-	async function addImage(e: SubmitEvent) {
-		e.preventDefault();
-		const formEl = e.currentTarget as HTMLFormElement;
-		if (!imageFile || imageError) return;
-		imageUploading = true;
-		try {
-			await uploadWatermark(imageName, imageFile, () => {});
-			imageFile = null;
-			imageName = '';
-			formEl.reset();
-			await load();
-		} catch (err) {
-			imageError = (err as Error).message;
-		} finally {
-			imageUploading = false;
-		}
-	}
-	async function removeImage(id: string) {
-		imageError = '';
-		try {
-			await deleteWatermark(id);
-			await load();
-		} catch (e) {
-			imageError = (e as Error).message;
-		}
-	}
-
-	let previewing = $state(''); // id of the vignette playing
-	let vignetteError = $state('');
-	async function removeVignette(id: string) {
-		vignetteError = '';
-		try {
-			await deleteVignette(id);
-			await load();
-		} catch (e) {
-			vignetteError = (e as Error).message;
 		}
 	}
 </script>
@@ -257,145 +81,9 @@
 	</div>
 
 	{#if editing !== null && vignettes}
-		<form class="card preset-form" onsubmit={save} data-testid="preset-form">
-			<label class="wide">
-				Name
-				<input bind:value={form.name} maxlength="60" required placeholder="e.g. My channel" data-testid="preset-name" />
-			</label>
-			<fieldset>
-				<legend>Captions</legend>
-				<label class="check">
-					<input type="checkbox" bind:checked={form.captions} data-testid="preset-captions" /> Burn captions in
-				</label>
-				{#if form.captions}
-					<div class="row">
-						<label>
-							Style
-							<select bind:value={form.captionStyle} data-testid="preset-style">
-								{#each captionStyles as s (s)}<option value={s}>{captionStyleLabel(s)}</option>{/each}
-							</select>
-						</label>
-						<label>
-							Position
-							<select bind:value={form.captionPosition}>
-								{#each captionPositions as p (p)}<option value={p}>{capitalize(p)}</option>{/each}
-							</select>
-						</label>
-						<label>
-							Color
-							<select bind:value={form.captionColor} data-testid="preset-color">
-								<option value="">The style's own</option>
-								{#each captionColors as c (c.name)}<option value={c.name}>{capitalize(c.name)}</option>{/each}
-							</select>
-						</label>
-						<label>
-							Capitals
-							<select
-								value={form.captionCaps === null ? '' : String(form.captionCaps)}
-								onchange={(e) => {
-									const v = e.currentTarget.value;
-									form.captionCaps = v === '' ? null : v === 'true';
-								}}
-							>
-								<option value="">The style's own</option>
-								<option value="true">CAPS</option>
-								<option value="false">Normal</option>
-							</select>
-						</label>
-						<label>
-							Language
-							<select bind:value={form.captionLanguage} data-testid="preset-language">
-								<option value="">Spoken language</option>
-								{#each captionLanguages as l (l)}<option value={l}>{languageName(l)}</option>{/each}
-							</select>
-						</label>
-					</div>
-				{/if}
-			</fieldset>
-			{#each [{ legend: 'Opening', h: 'introHorizontalId', v: 'introVerticalId' }, { legend: 'Closing', h: 'outroHorizontalId', v: 'outroVerticalId' }] as const as slot (slot.legend)}
-				<fieldset>
-					<legend>{slot.legend}</legend>
-					{#if vignettes.length === 0}
-						<p class="muted small">Upload a vignette below to use it here.</p>
-					{:else}
-						<div class="row">
-							<label>
-								For 16:9 clips
-								<select bind:value={form[slot.h]} data-testid="preset-{slot.legend.toLowerCase()}-horizontal">
-									<option value={null}>None</option>
-									{#each vignettes as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
-								</select>
-							</label>
-							<label>
-								For 9:16 clips
-								<select bind:value={form[slot.v]} data-testid="preset-{slot.legend.toLowerCase()}-vertical">
-									<option value={null}>None</option>
-									{#each vignettes as v (v.id)}<option value={v.id}>{v.name}</option>{/each}
-								</select>
-							</label>
-						</div>
-					{/if}
-				</fieldset>
-			{/each}
-			<p class="muted small">
-				With only one version, clips in the other shape show it whole over a blurred copy of itself.
-			</p>
-			<fieldset>
-				<legend>Watermark</legend>
-				{#if !watermarks || watermarks.length === 0}
-					<p class="muted small">Upload an image below to use it here.</p>
-				{:else}
-					<div class="row">
-						<label>
-							Image
-							<select bind:value={form.watermarkId} data-testid="preset-watermark">
-								<option value={null}>None</option>
-								{#each watermarks as w (w.id)}<option value={w.id}>{w.name}</option>{/each}
-							</select>
-						</label>
-						{#if form.watermarkId}
-							<label>
-								Corner
-								<select bind:value={form.watermarkPosition} data-testid="preset-watermark-position">
-									{#each watermarkPositions as p (p)}<option value={p}>{corner(p)}</option>{/each}
-								</select>
-							</label>
-							<label>
-								Size
-								<select bind:value={form.watermarkSize} data-testid="preset-watermark-size">
-									{#each sizes as n (n)}<option value={n}>{n}%</option>{/each}
-								</select>
-							</label>
-							<label>
-								Opacity
-								<select bind:value={form.watermarkOpacity} data-testid="preset-watermark-opacity">
-									{#each opacities as n (n)}<option value={n}>{n}%</option>{/each}
-								</select>
-							</label>
-						{/if}
-					</div>
-					{#if form.watermarkId}
-						<div class="previews" data-testid="watermark-preview">
-							{#each [true, false] as vertical (vertical)}
-								<div class="frame" class:vertical>
-									<img src={watermarkFileUrl(form.watermarkId)} alt="" style={previewStyle(vertical)} />
-									<span>{vertical ? '9:16' : '16:9'}</span>
-								</div>
-							{/each}
-						</div>
-						<p class="muted small">
-							The size is a share of the clip's shorter side, so it looks the same in both shapes. It goes under the
-							captions and not on the opening or closing.
-						</p>
-					{/if}
-				{/if}
-			</fieldset>
-			{#if formError}<p class="error">{formError}</p>{/if}
-			<div class="buttons">
-				<button class="primary" disabled={saving} data-testid="preset-save">{saving ? 'Saving…' : 'Save preset'}</button>
-				<button type="button" class="secondary" onclick={() => (editing = null)}>Cancel</button>
-			</div>
-		</form>
+		{#key editing}
+			<PresetForm {initial} {vignettes} watermarks={watermarks ?? []} onsave={save} oncancel={() => (editing = null)} />
+		{/key}
 	{/if}
 
 	{#if presets && presets.length > 0}
@@ -410,12 +98,13 @@
 					</div>
 					<p class="muted small">{describeCaptions(p)}</p>
 					<p class="muted small">
-						Opening: {describeVignette(p.introHorizontalId, p.introVerticalId)} · Closing: {describeVignette(
+						Opening: {describeVignettes(p.introHorizontalId, p.introVerticalId, vignettes ?? [])} · Closing: {describeVignettes(
 							p.outroHorizontalId,
-							p.outroVerticalId
+							p.outroVerticalId,
+							vignettes ?? []
 						)}
 					</p>
-					<p class="muted small">Watermark: {describeWatermark(p)}</p>
+					<p class="muted small">Watermark: {describeWatermark(p, watermarks ?? [])}</p>
 					{#if confirming === p.id}
 						<div class="confirm">
 							<span>Delete {p.name}? Its vignettes stay in the library, and exported files are kept.</span>
@@ -436,52 +125,7 @@
 	<p class="muted small">
 		Openings and closings: short MP4 files, up to 100 MB and {vignetteLimits.maxSeconds} s, with or without sound.
 	</p>
-	<form class="card upload" onsubmit={upload}>
-		<label>
-			Name
-			<input bind:value={vignetteNameInput} maxlength="60" placeholder="e.g. Logo opening" data-testid="vignette-name" />
-		</label>
-		<label class="file">
-			File
-			<input type="file" accept="video/mp4,.mp4" onchange={pick} disabled={progress !== null} data-testid="vignette-file" />
-		</label>
-		{#if fileNote}<span class="muted small">{fileNote}</span>{/if}
-		<button class="primary" disabled={!file || !!uploadError || progress !== null} data-testid="vignette-upload">
-			{progress === null ? 'Upload' : `Uploading… ${Math.round(progress * 100)}%`}
-		</button>
-		{#if uploadError}<p class="error wide">{uploadError}</p>{/if}
-	</form>
-
-	{#if vignetteError}<p class="error">{vignetteError}</p>{/if}
-	{#if vignettes && vignettes.length > 0}
-		<ul class="list" data-testid="vignettes">
-			{#each vignettes as v (v.id)}
-				<li class="card">
-					<div class="item-head">
-						<strong>{v.name}</strong>
-						<span class="muted small">{formatBytes(v.sizeBytes)}</span>
-						<span class="spacer"></span>
-						<button class="secondary" onclick={() => (previewing = previewing === v.id ? '' : v.id)}>
-							{previewing === v.id ? 'Hide' : '▶ Play'}
-						</button>
-						<button
-							class="secondary"
-							disabled={v.usedBy.length > 0}
-							title={v.usedBy.length > 0 ? 'Used by a preset: take it out first' : 'Delete this vignette'}
-							onclick={() => removeVignette(v.id)}>🗑 Delete</button
-						>
-					</div>
-					{#if v.usedBy.length > 0}<p class="muted small">Used by {v.usedBy.join(', ')}</p>{/if}
-					{#if previewing === v.id}
-						<!-- svelte-ignore a11y_media_has_caption -->
-						<video src={vignetteFileUrl(v.id)} controls playsinline autoplay></video>
-					{/if}
-				</li>
-			{/each}
-		</ul>
-	{:else if vignettes}
-		<p class="card muted">No vignettes yet.</p>
-	{/if}
+	<Library kind={vignetteKind} items={vignettes} emptyText="No vignettes yet." onchange={load} />
 </section>
 
 <section>
@@ -489,84 +133,10 @@
 	<p class="muted small">
 		A logo laid over the clip: a PNG (keeps its transparency) or JPEG, up to 5 MB and 4096 px a side.
 	</p>
-	<form class="card upload" onsubmit={addImage}>
-		<label>
-			Name
-			<input bind:value={imageName} maxlength="60" placeholder="e.g. Channel logo" data-testid="watermark-name" />
-		</label>
-		<label class="file">
-			File
-			<input type="file" accept="image/png,image/jpeg" onchange={pickImage} disabled={imageUploading} data-testid="watermark-file" />
-		</label>
-		<button class="primary" disabled={!imageFile || !!imageError || imageUploading} data-testid="watermark-upload">
-			{imageUploading ? 'Uploading…' : 'Upload'}
-		</button>
-		{#if imageError}<p class="error wide">{imageError}</p>{/if}
-	</form>
-	{#if watermarks && watermarks.length > 0}
-		<ul class="list" data-testid="watermarks">
-			{#each watermarks as w (w.id)}
-				<li class="card">
-					<div class="item-head">
-						<img class="thumb" src={watermarkFileUrl(w.id)} alt="" />
-						<strong>{w.name}</strong>
-						<span class="muted small">{w.width}x{w.height} · {formatBytes(w.sizeBytes)}</span>
-						<span class="spacer"></span>
-						<button
-							class="secondary"
-							disabled={w.usedBy.length > 0}
-							title={w.usedBy.length > 0 ? 'Used by a preset: take it out first' : 'Delete this image'}
-							onclick={() => removeImage(w.id)}>🗑 Delete</button
-						>
-					</div>
-					{#if w.usedBy.length > 0}<p class="muted small">Used by {w.usedBy.join(', ')}</p>{/if}
-				</li>
-			{/each}
-		</ul>
-	{:else if watermarks}
-		<p class="card muted">No watermark images yet.</p>
-	{/if}
+	<Library kind={watermarkKind} items={watermarks} emptyText="No watermark images yet." onchange={load} />
 </section>
 
 <style>
-	/* A checkerboard shows the image's transparency. */
-	.thumb {
-		height: 32px;
-		max-width: 96px;
-		object-fit: contain;
-		border-radius: 4px;
-		background: repeating-conic-gradient(#c8ccd4 0% 25%, #f1f2f5 0% 50%) 50% / 12px 12px;
-	}
-	.previews {
-		display: flex;
-		align-items: end;
-		gap: 1rem;
-		margin-top: 0.6rem;
-	}
-	.frame {
-		position: relative;
-		width: 160px;
-		aspect-ratio: 16 / 9;
-		background: linear-gradient(135deg, #3b4252, #1f2430);
-		border-radius: 6px;
-		overflow: hidden;
-	}
-	.frame.vertical {
-		width: 90px;
-		aspect-ratio: 9 / 16;
-	}
-	.frame img {
-		position: absolute;
-		height: auto;
-	}
-	.frame span {
-		position: absolute;
-		left: 50%;
-		bottom: 4px;
-		transform: translateX(-50%);
-		font-size: 0.7rem;
-		color: #c8ccd4;
-	}
 	.intro {
 		margin: 0.25rem 0 1.25rem;
 	}
@@ -599,69 +169,6 @@
 		font-size: 0.85rem;
 		margin: 0.25rem 0 0;
 	}
-	.preset-form {
-		display: grid;
-		gap: 0.75rem;
-		margin-bottom: 0.75rem;
-	}
-	fieldset {
-		border: 1px solid var(--border);
-		border-radius: 8px;
-		padding: 0.5rem 0.75rem 0.75rem;
-		margin: 0;
-		min-width: 0;
-	}
-	legend {
-		font-weight: 600;
-		padding: 0 0.25rem;
-	}
-	.row {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.6rem 1rem;
-		margin-top: 0.4rem;
-	}
-	label {
-		display: grid;
-		gap: 0.2rem;
-		font-size: 0.9rem;
-		min-width: 0;
-	}
-	label.check {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-	}
-	input:not([type='checkbox']):not([type='file']),
-	select {
-		font: inherit;
-		padding: 0.35rem 0.5rem;
-		border-radius: 6px;
-		border: 1px solid var(--border);
-		background: var(--surface);
-		color: inherit;
-		max-width: 100%;
-	}
-	input[type='file'] {
-		max-width: 100%;
-		font-size: 0.85rem;
-	}
-	.buttons {
-		display: flex;
-		gap: 0.5rem;
-		align-items: center;
-	}
-	.upload {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: end;
-		gap: 0.75rem;
-		margin: 0.5rem 0 0.75rem;
-	}
-	.wide {
-		flex-basis: 100%;
-		margin: 0;
-	}
 	.confirm {
 		display: flex;
 		flex-wrap: wrap;
@@ -669,13 +176,5 @@
 		gap: 0.5rem;
 		margin-top: 0.5rem;
 		font-size: 0.9rem;
-	}
-	video {
-		display: block;
-		width: 100%;
-		max-height: 360px;
-		margin-top: 0.5rem;
-		border-radius: 8px;
-		background: #000;
 	}
 </style>
