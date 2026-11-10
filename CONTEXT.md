@@ -113,6 +113,10 @@ MVP enforces: upload max **2GB**, job processing timeout **30 minutes**. API rej
 
 Directory structure follows monorepo conventions (`apps/`, `packages/`) but no Turborepo/Nx in MVP. Makefile orchestrates builds and dev tasks. Turborepo added when JS packages multiply. Go modules handle `job-contracts` package sharing natively.
 
+## Use case
+
+A command the platform carries out when someone asks for it, apart from how they asked: it checks the request, applies the rules and drives the ports (the store, the queue, the storage), and answers with a kind of problem (invalid, not found, conflict, unavailable) instead of an HTTP status. Use cases live in `apps/api/internal/app`; the HTTP handlers translate to and from them, and reads that only show data stay in the HTTP layer (ADR 0033). Clip export is the first; the other commands follow.
+
 ## Player
 
 UltraMedia is the intended primary player in the dashboard, with `hls.js` as the fallback. Until UltraMedia is packaged, the dashboard uses `hls.js` (native HLS where MSE is missing), isolated in `HlsPlayer.svelte` (ADR 0012). No other player dependency in MVP.
@@ -124,7 +128,7 @@ The player reads HLS straight from storage: only `assets/*/hls/*`, `assets/*/thu
 Process that picks pending Jobs and executes them. Separate from the API process. Two kinds, each reading its own stream (ADR 0016):
 
 - **Media worker** (Go, `apps/worker`): stream `jobs`, group `workers`; FFmpeg jobs, including `export-clip`.
-- **AI worker** (Python, `apps/ai-worker`): stream `jobs:ai`, group `ai-workers`; `transcribe-audio`, `analyze-transcript`, `suggest-clips` and `track-faces`. It mirrors the media worker's lifecycle, and its contracts are checked against `packages/job-contracts/testdata/contracts.json`.
+- **AI worker** (Python, `apps/ai-worker`): stream `jobs:ai`, group `ai-workers`; `transcribe-audio`, `analyze-transcript`, `suggest-clips`, `track-faces` and `translate-transcript`. It mirrors the media worker's lifecycle, and its contracts are checked against `packages/job-contracts/testdata/contracts.json`.
 
 `jobcontracts.StreamFor` decides which stream a Job goes to.
 

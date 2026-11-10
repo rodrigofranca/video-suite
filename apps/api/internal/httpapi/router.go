@@ -4,9 +4,11 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
+	"ultramedia/api/internal/app"
 	"ultramedia/media-core/domain"
 	"ultramedia/media-core/storage"
 	"ultramedia/media-core/store"
@@ -36,6 +38,8 @@ type Deps struct {
 
 type api struct {
 	Deps
+	// Use cases (docs/adr/0033): the handlers translate HTTP to them.
+	exports app.ExportClip
 }
 
 // NewRouter returns the API routes.
@@ -46,7 +50,13 @@ func NewRouter(deps Deps) http.Handler {
 	if deps.Log == nil {
 		deps.Log = slog.New(slog.DiscardHandler)
 	}
-	a := &api{deps}
+	a := &api{Deps: deps}
+	if deps.Store != nil {
+		a.exports = app.ExportClip{
+			Assets: deps.Store, Clips: deps.Store, Speech: deps.Store, Brand: deps.Store, Jobs: deps.Store,
+			Queue: app.QueueFunc(deps.Enqueue), Log: deps.Log,
+		}
+	}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", a.health)
@@ -116,6 +126,24 @@ func cors(allowedOrigin string, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// useCaseError answers a use case's error with its HTTP status; anything
+// else is an internal error.
+func (a *api) useCaseError(w http.ResponseWriter, r *http.Request, err error) {
+	var e *app.Error
+	if !errors.As(err, &e) {
+		a.internalError(w, r, err)
+		return
+	}
+	status := map[app.Kind]int{
+		app.Invalid: http.StatusBadRequest, app.NotFound: http.StatusNotFound,
+		app.Conflict: http.StatusConflict, app.Unavailable: http.StatusInternalServerError,
+	}[e.Kind]
+	if status == 0 {
+		status = http.StatusInternalServerError
+	}
+	writeError(w, status, e.Msg)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

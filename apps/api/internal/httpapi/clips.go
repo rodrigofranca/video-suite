@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"ultramedia/api/internal/app"
 	"ultramedia/media-core/domain"
 	"ultramedia/media-core/storage"
 	"ultramedia/media-core/store"
@@ -399,147 +400,34 @@ func (a *api) writeClip(w http.ResponseWriter, r *http.Request, c domain.Clip) {
 // into yet first queue a translate-transcript job, which the export waits
 // for (docs/adr/0029).
 func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
-	asset, ok := a.loadAsset(w, r)
-	if !ok {
-		return
-	}
-	ctx := r.Context()
-	clipID := r.PathValue("clipId")
-	if !domain.IsID(clipID) {
-		writeError(w, http.StatusNotFound, "clip not found")
-		return
-	}
-	clip, err := a.Store.GetClip(ctx, clipID)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && clip.AssetID != asset.ID) {
-		writeError(w, http.StatusNotFound, "clip not found")
-		return
-	}
-	if err != nil {
-		a.internalError(w, r, err)
-		return
-	}
-	var choice exportBody
-	err = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&choice)
-	if err != nil {
+	var body exportBody
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, exportUsage)
 		return
 	}
-	var preset domain.Preset
-	var intro, outro *jobcontracts.Vignette
-	var watermark *jobcontracts.Watermark
-	if choice.PresetID != "" {
-		if domain.IsID(choice.PresetID) {
-			preset, err = a.Store.GetPreset(ctx, choice.PresetID)
-		}
-		if !domain.IsID(choice.PresetID) || errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusBadRequest, "unknown preset")
-			return
-		}
-		if err == nil {
-			intro, outro, err = a.exportVignettes(ctx, preset)
-		}
-		if err == nil {
-			watermark, err = a.exportWatermark(ctx, preset)
-		}
-		if err != nil {
-			a.internalError(w, r, err)
-			return
-		}
-	}
-	body := choice.resolve(preset)
-	if !slices.Contains(jobcontracts.ClipFormats, body.Format) || !slices.Contains(jobcontracts.CaptionStyles, body.CaptionStyle) ||
-		(body.CaptionPosition != "" && !slices.Contains(jobcontracts.CaptionPositions, body.CaptionPosition)) ||
-		(body.CaptionColor != "" && !slices.Contains(jobcontracts.CaptionColors, body.CaptionColor)) ||
-		(body.CaptionLanguage != "" && !slices.Contains(jobcontracts.CaptionLanguages, body.CaptionLanguage)) {
-		writeError(w, http.StatusBadRequest, exportUsage)
-		return
-	}
-	captions := body.Captions
-	language, translate, err := a.captionLanguage(ctx, asset.ID, captions, body.CaptionLanguage)
-	if errors.Is(err, errNothingToTranslate) {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	if err != nil {
-		a.internalError(w, r, err)
-		return
-	}
-	src, err := a.Store.GetSource(ctx, asset.ID)
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusConflict, "the asset has no source file")
-		return
-	}
-	if err != nil {
-		a.internalError(w, r, err)
-		return
-	}
-	input, err := json.Marshal(jobcontracts.ExportClipInput{
-		AssetID: asset.ID, ClipID: clip.ID, StorageKey: src.StorageKey, Format: body.Format,
-		Captions: captions, CaptionStyle: body.CaptionStyle,
-		CaptionPosition: body.CaptionPosition, CaptionColor: body.CaptionColor, CaptionCaps: body.CaptionCaps,
-		CaptionLanguage: language, Intro: intro, Outro: outro, Watermark: watermark, Preset: preset.Name,
-		OutputKey: storage.ClipKey(asset.ID, clip.ID, body.Format),
+	res, err := a.exports.Run(r.Context(), app.ExportRequest{
+		AssetID: r.PathValue("id"), ClipID: r.PathValue("clipId"), Format: body.Format,
+		Captions: body.Captions, CaptionStyle: body.CaptionStyle, CaptionPosition: body.CaptionPosition,
+		CaptionColor: body.CaptionColor, CaptionCaps: body.CaptionCaps, CaptionLanguage: body.CaptionLanguage,
+		PresetID: body.PresetID,
 	})
-	if err != nil {
-		a.internalError(w, r, err)
-		return
-	}
-	now := time.Now()
-	job := domain.Job{
-		ID: domain.NewID(), AssetID: asset.ID, Type: jobcontracts.JobTypeExportClip, InputJSON: input,
-		Status: domain.JobPending, CreatedAt: now,
-	}
-	first, then := job, []domain.Job(nil)
-	if translate {
-		in, _ := json.Marshal(jobcontracts.TranslateTranscriptInput{AssetID: asset.ID, Language: language})
-		first = domain.Job{ID: domain.NewID(), AssetID: asset.ID, Type: jobcontracts.JobTypeTranslateTranscript, InputJSON: in,
-			Status: domain.JobPending, CreatedAt: now}
-		job.CreatedAt = now.Add(time.Millisecond) // listed after the translation it waits for
-		then = []domain.Job{job}
-	}
-	err = a.Store.CreateJobIfIdle(ctx, first, "", then...)
-	if errors.Is(err, store.ErrBusy) {
-		writeError(w, http.StatusConflict, err.Error())
+	if errors.Is(err, app.ErrInvalidChoice) {
+		writeError(w, http.StatusBadRequest, exportUsage)
 		return
 	}
 	if err != nil {
-		a.internalError(w, r, err)
+		a.useCaseError(w, r, err)
 		return
 	}
-	if err := a.Enqueue(ctx, jobcontracts.Message{JobID: first.ID, Type: first.Type, Payload: first.InputJSON}); err != nil {
-		bg := context.WithoutCancel(ctx)
-		a.Store.FinishJob(bg, first.ID, fmt.Errorf("could not enqueue job: %w", err))
-		if translate {
-			a.Store.FinishJob(bg, job.ID, errors.New("not run: the translation before it could not be queued"))
-		}
-		a.Log.Error("enqueue failed", "asset_id", asset.ID, "job_id", first.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "the job could not be queued")
-		return
-	}
-	saved, err := a.Store.GetJob(ctx, job.ID)
-	if err != nil {
-		a.internalError(w, r, err)
-		return
-	}
-	if translate {
-		a.Log.Info("clip export queued after a translation", "asset_id", asset.ID, "clip_id", clip.ID, "format", body.Format,
-			"language", language, "job_id", job.ID, "translate_job_id", first.ID)
-	} else {
-		a.Log.Info("clip export queued", "asset_id", asset.ID, "clip_id", clip.ID, "format", body.Format, "job_id", job.ID)
-	}
-	writeJSON(w, http.StatusAccepted, toJob(saved))
+	writeJSON(w, http.StatusAccepted, toJob(res.Job))
 }
 
-var errNothingToTranslate = errors.New("this video has no transcript to translate the captions from")
+var exportUsage = `expected a JSON body like {"format": "vertical", "captions": true, "captionStyle": "highlight", "captionPosition": "bottom", "captionColor": "yellow", "captionCaps": false, "captionLanguage": "en", "presetId": "<id>"}; ` +
+	app.ChoicesOnOffer
 
-var exportUsage = `expected a JSON body like {"format": "vertical", "captions": true, "captionStyle": "highlight", "captionPosition": "bottom", "captionColor": "yellow", "captionCaps": false, "captionLanguage": "en", "presetId": "<id>"}; formats: ` +
-	strings.Join(jobcontracts.ClipFormats, ", ") + "; caption styles: " + strings.Join(jobcontracts.CaptionStyles, ", ") +
-	"; positions: " + strings.Join(jobcontracts.CaptionPositions, ", ") + "; colors: " + strings.Join(jobcontracts.CaptionColors, ", ") +
-	"; languages (empty for the transcript's own): " + strings.Join(jobcontracts.CaptionLanguages, ", ")
-
-// exportBody is what POST .../exports takes. With presetId, the preset
-// gives its openings and closings, and the caption choices the body leaves
-// out (docs/adr/0030).
+// exportBody is what POST .../exports takes; app.ExportClip does the rest
+// (docs/adr/0033). With presetId, the preset gives its openings and closings,
+// and the caption choices the body leaves out (docs/adr/0030).
 type exportBody struct {
 	Format          string  `json:"format"`
 	Captions        *bool   `json:"captions"`
@@ -549,70 +437,6 @@ type exportBody struct {
 	CaptionCaps     *bool   `json:"captionCaps"`
 	CaptionLanguage *string `json:"captionLanguage"`
 	PresetID        string  `json:"presetId"`
-}
-
-// exportChoice is an export's caption choices once the preset and the
-// defaults have filled in what the body left out.
-type exportChoice struct {
-	Format                                                       string
-	Captions                                                     bool
-	CaptionStyle, CaptionPosition, CaptionColor, CaptionLanguage string
-	CaptionCaps                                                  *bool
-}
-
-// resolve fills the choices the body left out from the preset (a zero
-// Preset when none was given) and the defaults.
-func (b exportBody) resolve(p domain.Preset) exportChoice {
-	pick := func(v *string, fromPreset string) string {
-		if v != nil {
-			return *v
-		}
-		return fromPreset
-	}
-	c := exportChoice{
-		Format: b.Format, Captions: p.ID == "" || p.Captions,
-		CaptionStyle: pick(b.CaptionStyle, p.CaptionStyle), CaptionPosition: pick(b.CaptionPosition, p.CaptionPosition),
-		CaptionColor: pick(b.CaptionColor, p.CaptionColor), CaptionLanguage: pick(b.CaptionLanguage, p.CaptionLanguage),
-		CaptionCaps: p.CaptionCaps,
-	}
-	if b.Captions != nil {
-		c.Captions = *b.Captions
-	}
-	if b.CaptionCaps != nil {
-		c.CaptionCaps = b.CaptionCaps
-	}
-	if c.CaptionStyle == "" {
-		c.CaptionStyle = jobcontracts.CaptionStyles[0]
-	}
-	if c.CaptionPosition == jobcontracts.CaptionPositions[0] {
-		c.CaptionPosition = "" // the default, as before presets
-	}
-	return c
-}
-
-// captionLanguage returns the language an export's captions are burned in
-// (empty for the transcript's own) and whether the transcript must be
-// translated into it first. Asking for the transcript's own language is
-// asking for no translation.
-func (a *api) captionLanguage(ctx context.Context, assetID string, captions bool, asked string) (string, bool, error) {
-	if !captions || asked == "" {
-		return "", false, nil
-	}
-	tr, err := a.Store.GetTranscript(ctx, assetID)
-	if errors.Is(err, store.ErrNotFound) {
-		return "", false, errNothingToTranslate
-	}
-	if err != nil {
-		return "", false, err
-	}
-	if tr.Language == asked {
-		return "", false, nil
-	}
-	_, err = a.Store.GetTranslation(ctx, assetID, asked)
-	if errors.Is(err, store.ErrNotFound) {
-		return asked, true, nil
-	}
-	return asked, false, err
 }
 
 // downloadClip handles GET /clips/{id}/download?format=vertical: it redirects

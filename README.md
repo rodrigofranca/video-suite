@@ -21,7 +21,7 @@ An upload creates an asset and eight jobs: `extract-metadata` → `generate-thum
 
 | Path | What it is |
 |---|---|
-| `apps/api` | HTTP API (Go) and database migrations |
+| `apps/api` | HTTP API (Go) and database migrations: use cases in `internal/app`, HTTP adapters in `internal/httpapi` ([ADR 0033](docs/adr/0033-use-cases-ports-and-adapters.md)) |
 | `apps/worker` | Media worker (Go): reads the `jobs` stream, runs FFmpeg, chains the pipeline |
 | `apps/ai-worker` | AI worker (Python, faster-whisper, OpenCV, ONNX Runtime): reads the `jobs:ai` stream, transcribes speech, asks the gateway for summaries, tags, chapters and clips, and finds who to keep in frame in each clip (the face, or whoever speaks) |
 | `apps/dashboard` | Web dashboard (SvelteKit): upload, video list, job logs, player |
