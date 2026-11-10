@@ -125,18 +125,20 @@ func (q *fakeQueue) Enqueue(_ context.Context, msg jobcontracts.Message) error {
 	return nil
 }
 
-// seq numbers job IDs across use cases, so a fake shared by two runs never
+// seq numbers IDs across use cases, so a fake shared by two runs never
 // holds two jobs with the same ID.
 var seq int
 
+func fixedClock() clock {
+	return clock{Now: func() time.Time { return now }, NewID: func() string {
+		seq++
+		return fmt.Sprintf("00000000-0000-4000-8000-%012d", seq) // shaped like a real ID
+	}}
+}
+
 func useCase(f *fakeStore, q *fakeQueue) ExportClip {
 	return ExportClip{
-		Assets: f, Clips: f, Speech: f, Brand: f, Jobs: f, Queue: q,
-		Now: func() time.Time { return now },
-		NewID: func() string {
-			seq++
-			return fmt.Sprintf("job-%d", seq)
-		},
+		Assets: f, Clips: f, Speech: f, Brand: f, Jobs: f, Queue: q, clock: fixedClock(),
 	}
 }
 

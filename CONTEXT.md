@@ -115,7 +115,11 @@ Directory structure follows monorepo conventions (`apps/`, `packages/`) but no T
 
 ## Use case
 
-A command the platform carries out when someone asks for it, apart from how they asked: it checks the request, applies the rules and drives the ports (the store, the queue, the storage), and answers with a kind of problem (invalid, not found, conflict, unavailable) instead of an HTTP status. Use cases live in `apps/api/internal/app`; the HTTP handlers translate to and from them, and reads that only show data stay in the HTTP layer (ADR 0033). Clip export is the first; the other commands follow.
+A command the platform carries out when someone asks for it, apart from how they asked: it checks the request, applies the rules and drives the ports (the store, the queue, the storage), and answers with a kind of problem (invalid, not found, conflict, unavailable, too large, unsupported) instead of an HTTP status. Use cases live in `apps/api/internal/app`; the HTTP handlers translate to and from them, and reads that only show data stay in the HTTP layer (ADR 0033). Every command of the API is one: upload, delete and re-run on videos, edit, delete and export on clips, saving and deleting presets, and the brand library.
+
+## Library
+
+The private brand files that presets use: opening and closing vignettes (ADR 0030) and watermark images (ADR 0031). One use case, `app.Library`, adds and removes them; each kind of file (`app.FileKind`) brings its own checks, size limit and storage key. A file cannot be removed while a preset uses it.
 
 ## Player
 

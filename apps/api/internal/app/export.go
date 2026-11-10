@@ -30,9 +30,7 @@ type ExportClip struct {
 	Jobs   Jobs
 	Queue  Queue
 	Log    *slog.Logger
-	// Now and NewID default to the clock and random IDs; tests fix them.
-	Now   func() time.Time
-	NewID func() string
+	clock
 }
 
 // ExportRequest is what someone asked for. A nil choice was left out: the
@@ -70,22 +68,7 @@ var ChoicesOnOffer = "formats: " + strings.Join(jobcontracts.ClipFormats, ", ") 
 // Run checks the request, works out the captions and the vignettes, and
 // queues the jobs.
 func (uc ExportClip) Run(ctx context.Context, req ExportRequest) (ExportResult, error) {
-	if !domain.IsID(req.AssetID) {
-		return ExportResult{}, fail(NotFound, "not found")
-	}
-	if _, err := uc.Assets.GetAsset(ctx, req.AssetID); err != nil {
-		if isNotFound(err) {
-			return ExportResult{}, fail(NotFound, "not found")
-		}
-		return ExportResult{}, err
-	}
-	if !domain.IsID(req.ClipID) {
-		return ExportResult{}, fail(NotFound, "clip not found")
-	}
-	clip, err := uc.Clips.GetClip(ctx, req.ClipID)
-	if isNotFound(err) || (err == nil && clip.AssetID != req.AssetID) {
-		return ExportResult{}, fail(NotFound, "clip not found")
-	}
+	clip, err := clipOf(ctx, uc.Assets, uc.Clips, req.AssetID, req.ClipID)
 	if err != nil {
 		return ExportResult{}, err
 	}
@@ -297,23 +280,4 @@ func (uc ExportClip) watermark(ctx context.Context, p domain.Preset) (*jobcontra
 	return &jobcontracts.Watermark{Key: img.StorageKey, Position: p.WatermarkPosition, Size: p.WatermarkSize, Opacity: p.WatermarkOpacity}, nil
 }
 
-func (uc ExportClip) now() time.Time {
-	if uc.Now != nil {
-		return uc.Now()
-	}
-	return time.Now()
-}
-
-func (uc ExportClip) newID() string {
-	if uc.NewID != nil {
-		return uc.NewID()
-	}
-	return domain.NewID()
-}
-
-func (uc ExportClip) log() *slog.Logger {
-	if uc.Log == nil {
-		return slog.New(slog.DiscardHandler)
-	}
-	return uc.Log
-}
+func (uc ExportClip) log() *slog.Logger { return orDiscard(uc.Log) }

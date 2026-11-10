@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 
 	"ultramedia/media-core/domain"
 
@@ -34,6 +35,10 @@ const (
 	Conflict
 	// Unavailable: a service the use case needs failed; trying later may work.
 	Unavailable
+	// TooLarge: a file is bigger than allowed.
+	TooLarge
+	// Unsupported: a file is not of a kind the use case accepts.
+	Unsupported
 )
 
 // Error is a use case's answer to a request it cannot carry out. Msg is
@@ -66,9 +71,32 @@ type Assets interface {
 	GetSource(ctx context.Context, assetID string) (domain.Source, error)
 }
 
+// AssetWriter creates, completes and deletes videos. The IfIdle methods
+// return domain.ErrBusy while the asset is uploading or has a job pending
+// or running, and domain.ErrNotFound for an unknown one.
+type AssetWriter interface {
+	CreateAsset(ctx context.Context, a domain.Asset) error
+	CompleteUpload(ctx context.Context, src domain.Source, jobs []domain.Job) error
+	SetAssetStatus(ctx context.Context, id, status string) error
+	DeleteAsset(ctx context.Context, id string) error
+	DeleteAssetIfIdle(ctx context.Context, id string) error
+}
+
+// Metadata reads what the metadata job found in a video.
+type Metadata interface {
+	GetTechnicalMetadata(ctx context.Context, assetID string) (domain.TechnicalMetadata, error)
+}
+
 // Clips reads clips.
 type Clips interface {
 	GetClip(ctx context.Context, id string) (domain.Clip, error)
+}
+
+// ClipWriter changes and deletes clips, only while the asset is idle
+// (domain.ErrBusy otherwise).
+type ClipWriter interface {
+	EditClipIfIdle(ctx context.Context, c domain.Clip, retrack *domain.Job) error
+	DeleteClipIfIdle(ctx context.Context, assetID, clipID string) error
 }
 
 // Speech reads what was said: the transcript and its translations.
@@ -82,6 +110,30 @@ type Brand interface {
 	GetPreset(ctx context.Context, id string) (domain.Preset, error)
 	GetVignette(ctx context.Context, id string) (domain.Vignette, error)
 	GetWatermark(ctx context.Context, id string) (domain.Watermark, error)
+}
+
+// PresetWriter saves presets. CreatePreset and UpdatePreset return
+// domain.ErrNameTaken when another preset has the name.
+type PresetWriter interface {
+	CreatePreset(ctx context.Context, p domain.Preset) error
+	UpdatePreset(ctx context.Context, p domain.Preset) error
+	DeletePreset(ctx context.Context, id string) error
+}
+
+// LibraryWriter records and removes the library's files. The deletes
+// return a *domain.InUseError while a preset uses the file.
+type LibraryWriter interface {
+	CreateVignette(ctx context.Context, v domain.Vignette) error
+	DeleteVignette(ctx context.Context, id string) error
+	CreateWatermark(ctx context.Context, w domain.Watermark) error
+	DeleteWatermark(ctx context.Context, id string) error
+}
+
+// Files keeps stored files (S3).
+type Files interface {
+	Upload(ctx context.Context, key string, body io.Reader, contentType string) error
+	Delete(ctx context.Context, key string) error
+	DeletePrefix(ctx context.Context, prefix string) (int, error)
 }
 
 // Jobs records processing jobs. CreateJobIfIdle returns domain.ErrBusy

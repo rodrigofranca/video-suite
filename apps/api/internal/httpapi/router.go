@@ -39,7 +39,15 @@ type Deps struct {
 type api struct {
 	Deps
 	// Use cases (docs/adr/0033): the handlers translate HTTP to them.
-	exports app.ExportClip
+	uploads       app.UploadVideo
+	videoDeletes  app.DeleteVideo
+	reruns        app.RerunJob
+	clipEdits     app.EditClip
+	clipDeletes   app.DeleteClip
+	exports       app.ExportClip
+	presets       app.SavePreset
+	presetDeletes app.DeletePreset
+	library       app.Library
 }
 
 // NewRouter returns the API routes.
@@ -51,11 +59,8 @@ func NewRouter(deps Deps) http.Handler {
 		deps.Log = slog.New(slog.DiscardHandler)
 	}
 	a := &api{Deps: deps}
-	if deps.Store != nil {
-		a.exports = app.ExportClip{
-			Assets: deps.Store, Clips: deps.Store, Speech: deps.Store, Brand: deps.Store, Jobs: deps.Store,
-			Queue: app.QueueFunc(deps.Enqueue), Log: deps.Log,
-		}
+	if deps.Store != nil && deps.Storage != nil {
+		a.wire()
 	}
 	mux := http.NewServeMux()
 
@@ -100,6 +105,21 @@ func NewRouter(deps Deps) http.Handler {
 	return cors(deps.AllowedOrigin, mux)
 }
 
+// wire builds the use cases on the services: the store, the storage and
+// the queue are the adapters behind their ports.
+func (a *api) wire() {
+	db, files, queue, log := a.Store, a.Storage, app.QueueFunc(a.Enqueue), a.Log
+	a.uploads = app.UploadVideo{Assets: db, Files: files, Jobs: db, Queue: queue, Log: log, MaxBytes: a.MaxUploadBytes}
+	a.videoDeletes = app.DeleteVideo{Assets: db, Writer: db, Files: files, Log: log}
+	a.reruns = app.RerunJob{Assets: db, Writer: db, Jobs: db, Queue: queue, Log: log}
+	a.clipEdits = app.EditClip{Assets: db, Clips: db, Metadata: db, Writer: db, Jobs: db, Queue: queue, Log: log}
+	a.clipDeletes = app.DeleteClip{Assets: db, Writer: db, Files: files, Log: log}
+	a.exports = app.ExportClip{Assets: db, Clips: db, Speech: db, Brand: db, Jobs: db, Queue: queue, Log: log}
+	a.presets = app.SavePreset{Brand: db, Writer: db}
+	a.presetDeletes = app.DeletePreset{Writer: db}
+	a.library = app.Library{Store: db, Files: files, Log: log}
+}
+
 func (a *api) health(w http.ResponseWriter, r *http.Request) {
 	if err := a.DB.Ping(r.Context()); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "error", "error": err.Error()})
@@ -139,6 +159,7 @@ func (a *api) useCaseError(w http.ResponseWriter, r *http.Request, err error) {
 	status := map[app.Kind]int{
 		app.Invalid: http.StatusBadRequest, app.NotFound: http.StatusNotFound,
 		app.Conflict: http.StatusConflict, app.Unavailable: http.StatusInternalServerError,
+		app.TooLarge: http.StatusRequestEntityTooLarge, app.Unsupported: http.StatusUnsupportedMediaType,
 	}[e.Kind]
 	if status == 0 {
 		status = http.StatusInternalServerError

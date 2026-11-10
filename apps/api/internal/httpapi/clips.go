@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -240,31 +239,9 @@ func latestClipFile(arts []domain.Artifact, clipID, format string) (clipFileMeta
 }
 
 // editClip handles PATCH /assets/{id}/clips/{clipId} with any of {"start",
-// "end", "title"}: it changes the clip for the exports from then on
-// (docs/adr/0024). New times must stay inside the video and give a clip of
-// domain.MinClipSeconds to domain.MaxClipSeconds; they clear the face track
-// and queue a track-faces job for this clip. Like an export, an edit waits
-// until no job of the asset is pending or running.
+// "end", "title"}: app.EditClip changes the clip for the exports from then
+// on (docs/adr/0024).
 func (a *api) editClip(w http.ResponseWriter, r *http.Request) {
-	asset, ok := a.loadAsset(w, r)
-	if !ok {
-		return
-	}
-	ctx := r.Context()
-	clipID := r.PathValue("clipId")
-	if !domain.IsID(clipID) {
-		writeError(w, http.StatusNotFound, "clip not found")
-		return
-	}
-	clip, err := a.Store.GetClip(ctx, clipID)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && clip.AssetID != asset.ID) {
-		writeError(w, http.StatusNotFound, "clip not found")
-		return
-	}
-	if err != nil {
-		a.internalError(w, r, err)
-		return
-	}
 	var body struct {
 		Start *float64 `json:"start"`
 		End   *float64 `json:"end"`
@@ -272,109 +249,17 @@ func (a *api) editClip(w http.ResponseWriter, r *http.Request) {
 	}
 	dec := json.NewDecoder(io.LimitReader(r.Body, 4096))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&body); err != nil || (body.Start == nil && body.End == nil && body.Title == nil) {
+	if err := dec.Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, `expected a JSON body with any of {"start": 12.5, "end": 40, "title": "..."} (seconds from the start of the video)`)
 		return
 	}
-	edited := clip
-	if body.Start != nil {
-		edited.Start = math.Round(*body.Start*1000) / 1000
-	}
-	if body.End != nil {
-		edited.End = math.Round(*body.End*1000) / 1000
-	}
-	if body.Title != nil {
-		edited.Title = strings.Join(strings.Fields(*body.Title), " ")
-	}
-	duration, err := a.videoDuration(ctx, asset.ID)
+	clip, err := a.clipEdits.Run(r.Context(), app.EditRequest{AssetID: r.PathValue("id"), ClipID: r.PathValue("clipId"),
+		Start: body.Start, End: body.End, Title: body.Title})
 	if err != nil {
-		a.internalError(w, r, err)
+		a.useCaseError(w, r, err)
 		return
 	}
-	if msg := checkClip(edited, duration); msg != "" {
-		writeError(w, http.StatusBadRequest, msg)
-		return
-	}
-	var retrack *domain.Job
-	if edited.Start != clip.Start || edited.End != clip.End {
-		src, err := a.Store.GetSource(ctx, asset.ID)
-		if err != nil {
-			a.internalError(w, r, err)
-			return
-		}
-		input, _ := json.Marshal(jobcontracts.TrackFacesInput{AssetID: asset.ID, StorageKey: src.StorageKey, ClipID: clip.ID})
-		retrack = &domain.Job{
-			ID: domain.NewID(), AssetID: asset.ID, Type: jobcontracts.JobTypeTrackFaces, InputJSON: input,
-			Status: domain.JobPending, CreatedAt: time.Now(),
-		}
-	}
-	if edited.Start == clip.Start && edited.End == clip.End && edited.Title == clip.Title {
-		a.writeClip(w, r, clip)
-		return
-	}
-	err = a.Store.EditClipIfIdle(ctx, edited, retrack)
-	if errors.Is(err, store.ErrBusy) {
-		writeError(w, http.StatusConflict, err.Error())
-		return
-	}
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "clip not found")
-		return
-	}
-	if err != nil {
-		a.internalError(w, r, err)
-		return
-	}
-	a.Log.Info("clip edited", "asset_id", asset.ID, "clip_id", clip.ID, "start", edited.Start, "end", edited.End)
-	if retrack != nil {
-		msg := jobcontracts.Message{JobID: retrack.ID, Type: retrack.Type, Payload: retrack.InputJSON}
-		if err := a.Enqueue(ctx, msg); err != nil {
-			// The edit stands; the clip stays without a face track (centred) and the job shows why.
-			a.Store.FinishJob(context.WithoutCancel(ctx), retrack.ID, fmt.Errorf("could not enqueue job: %w", err))
-			a.Log.Error("enqueue failed", "asset_id", asset.ID, "job_id", retrack.ID, "error", err)
-		}
-	}
-	saved, err := a.Store.GetClip(ctx, clip.ID)
-	if err != nil {
-		a.internalError(w, r, err)
-		return
-	}
-	a.writeClip(w, r, saved)
-}
-
-// checkClip returns why an edited clip is not valid, or "".
-func checkClip(c domain.Clip, duration float64) string {
-	switch {
-	case c.Start < 0 || c.End <= c.Start:
-		return "the start must be at least 0 and before the end"
-	case c.End-c.Start < domain.MinClipSeconds || c.End-c.Start > domain.MaxClipSeconds:
-		return fmt.Sprintf("a clip lasts from %.0f to %.0f seconds", domain.MinClipSeconds, domain.MaxClipSeconds)
-	case duration > 0 && c.End > duration+0.05:
-		return fmt.Sprintf("the end is after the end of the video (%.1f s)", duration)
-	case c.Title == "":
-		return "the title cannot be empty"
-	case len([]rune(c.Title)) > domain.MaxClipTitle:
-		return fmt.Sprintf("the title is longer than %d characters", domain.MaxClipTitle)
-	}
-	return ""
-}
-
-// videoDuration is the source's duration from its metadata, or 0 when unknown.
-func (a *api) videoDuration(ctx context.Context, assetID string) (float64, error) {
-	m, err := a.Store.GetTechnicalMetadata(ctx, assetID)
-	if errors.Is(err, store.ErrNotFound) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	var doc struct {
-		Summary struct {
-			DurationSeconds float64 `json:"durationSeconds"`
-		} `json:"summary"`
-	}
-	json.Unmarshal(m.MetadataJSON, &doc)
-	return doc.Summary.DurationSeconds, nil
+	a.writeClip(w, r, clip)
 }
 
 // writeClip answers with one clip as listClips shows it.
