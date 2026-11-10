@@ -93,6 +93,7 @@ func NewRouter(deps Deps) http.Handler {
 	mux.HandleFunc("PUT /presets/{id}", a.updatePreset)
 	mux.HandleFunc("DELETE /presets/{id}", a.deletePreset)
 
+	mux.HandleFunc("GET /search", a.search)
 	mux.HandleFunc("GET /usage", a.getUsage)
 
 	mux.HandleFunc("GET /jobs/{id}", a.getJob)

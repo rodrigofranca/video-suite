@@ -34,6 +34,9 @@ func TestRoutesWithoutServices(t *testing.T) {
 		{"re-run without a body", fakeDB{}, "POST", "/assets/nope/jobs", "", 400, `expected a JSON body`},
 		{"upload without multipart", fakeDB{}, "POST", "/assets/upload", "", 400, `multipart/form-data`},
 		{"wrong method", fakeDB{}, "DELETE", "/assets", "", 405, ``},
+		{"search without words", fakeDB{}, "GET", "/search?q=%20%20", "", 400, `type what to search for`},
+		{"search too long", fakeDB{}, "GET", "/search?q=" + strings.Repeat("a", 201), "", 400, `up to 200 characters`},
+		{"search with a bad offset", fakeDB{}, "GET", "/search?q=x&offset=-1", "", 400, `offset must be`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

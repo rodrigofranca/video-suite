@@ -284,6 +284,39 @@ export interface UsageSummary {
 	byVideo: AIUsageGroup[];
 }
 /** Periods the usage page offers, in days; 0 is everything. */
+/** A piece of what was said; match marks the words that matched a search. */
+export interface TextPart {
+	text: string;
+	match?: boolean;
+}
+
+/** A moment of a video whose speech matches a search (docs/adr/0038). */
+export interface SearchMoment {
+	start: number;
+	end: number;
+	parts: TextPart[];
+}
+
+export interface SearchVideo {
+	asset: Asset;
+	language: string;
+	/** How many moments match; moments are the best of them, in time order. */
+	matches: number;
+	moments: SearchMoment[];
+}
+
+export interface SearchResult {
+	query: string;
+	/** How many videos have a transcript: those a search looks through. */
+	searched: number;
+	videos: SearchVideo[];
+	/** More videos after these: ask again with offset. */
+	more: boolean;
+}
+
+export const searchSpeech = (q: string, offset = 0) =>
+	getJSON<SearchResult>(`/search?q=${encodeURIComponent(q)}${offset ? `&offset=${offset}` : ''}`);
+
 export const usagePeriods = [1, 7, 30, 90, 0] as const;
 export const getUsage = (days: number) => getJSON<UsageSummary>(`/usage?days=${days}`);
 

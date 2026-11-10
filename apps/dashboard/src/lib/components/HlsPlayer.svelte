@@ -2,6 +2,7 @@
 	// Plays an HLS playlist: hls.js where Media Source Extensions exist,
 	// native HLS otherwise (Safari on iOS). UltraMedia replaces this later
 	// (docs/adr/0012).
+	import { untrack } from 'svelte';
 	import type { Subtitles } from '$lib/api';
 	import { languageName } from '$lib/format';
 
@@ -9,11 +10,14 @@
 		src,
 		poster,
 		subtitles = [],
+		start = null,
 		ontime
 	}: {
 		src: string;
 		poster?: string | null;
 		subtitles?: Subtitles[];
+		/** Where to start, in seconds, such as a moment found by a search; the start of the video if null. */
+		start?: number | null;
 		/** Called with the current time, in seconds, while the video plays. */
 		ontime?: (seconds: number) => void;
 	} = $props();
@@ -59,6 +63,7 @@
 
 	$effect(() => {
 		const url = src;
+		const at = untrack(() => start); // a new start alone does not reload the video
 		let destroyed = false;
 		let hls: { destroy(): void } | undefined;
 		error = '';
@@ -66,7 +71,7 @@
 		import('hls.js').then(({ default: Hls }) => {
 			if (destroyed) return;
 			if (Hls.isSupported()) {
-				const instance = new Hls();
+				const instance = new Hls(at !== null ? { startPosition: at } : {});
 				instance.on(Hls.Events.ERROR, (_event, data) => {
 					if (data.fatal) error = `Playback error: ${data.details}`;
 				});
@@ -86,6 +91,7 @@
 				hls = instance;
 				player = instance;
 			} else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+				if (at !== null) video.addEventListener('loadedmetadata', () => (video.currentTime = at), { once: true });
 				video.src = url;
 			} else {
 				error = 'This browser cannot play HLS video.';
