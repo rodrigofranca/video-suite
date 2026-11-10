@@ -8,8 +8,9 @@
 	import ExportFormat from './ExportFormat.svelte';
 	import type { ClipActions, ClipContext } from './clip-types';
 
-	// One suggested clip: its title and range, editing and deleting, how it
-	// will be exported, and its exports. Its choices live here, with the clip.
+	// One clip, suggested or made from a quote: its title and range, editing
+	// and deleting, how it will be exported, and its exports. Its choices
+	// live here, with the clip.
 	let { clip, context, actions }: { clip: Clip; context: ClipContext; actions: ClipActions } = $props();
 
 	const choices = new ExportChoices(() => context);
@@ -47,12 +48,18 @@
 	}
 </script>
 
-<li class="card clip">
+<li class="card clip" id="clip-{clip.id}" data-origin={clip.origin}>
 	<div class="head">
-		<span class="rank">#{clip.rank}</span>
+		{#if clip.origin === 'quote'}
+			<span class="quote" title="Made from a quote in the transcript">Quote</span>
+		{:else}
+			<span class="rank">#{clip.rank}</span>
+		{/if}
 		<h3>{clip.title}</h3>
 		{#if clip.editedAt}<span class="edited" title="Changed by hand">Edited</span>{/if}
-		<span class="score" title="How likely it is to hold attention, from the model">{clip.score}/10</span>
+		{#if clip.score !== null}
+			<span class="score" title="How likely it is to hold attention, from the model">{clip.score}/10</span>
+		{/if}
 	</div>
 	<p class="muted meta">{formatClock(clip.start)}–{formatClock(clip.end)} · {Math.round(clip.duration)} s</p>
 	{#if clip.reason}<p class="reason">{clip.reason}</p>{/if}
@@ -167,6 +174,17 @@
 		color: var(--accent);
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
+	}
+	.quote {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--accent-fg);
+		background: var(--accent);
+		border-radius: 999px;
+		padding: 0.1rem 0.5rem;
+	}
+	.clip {
+		scroll-margin-top: 1rem;
 	}
 	.edited {
 		font-size: 0.75rem;

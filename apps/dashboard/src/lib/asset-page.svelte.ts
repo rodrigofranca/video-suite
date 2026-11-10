@@ -1,4 +1,5 @@
 import {
+	createClip,
 	deleteAsset,
 	deleteClip,
 	editClip,
@@ -15,6 +16,7 @@ import {
 	type AssetDetail,
 	type CaptionOptions,
 	type CaptionStyle,
+	type Clip,
 	type ClipFormat,
 	type ClipList,
 	type Preset,
@@ -84,9 +86,11 @@ export class AssetPage {
 		);
 		// Clips change with new suggestions, a new transcription (word
 		// timings), face tracking (face tracks) and every export that moves.
+		// They load once the transcript is there, even when suggesting failed:
+		// clips can be made from a quote (docs/adr/0039).
 		this.clips = new JobResult(
 			() => {
-				const suggested = doneKey(this.suggestJob);
+				const suggested = doneKey(this.suggestJob) ?? doneKey(this.transcribeJob);
 				if (!suggested) return null;
 				const exports = this.jobs.filter((j) => j.type === 'export-clip');
 				return [
@@ -120,6 +124,14 @@ export class AssetPage {
 	async export(clipId: string, format: ClipFormat, captions: boolean, style: CaptionStyle, options: CaptionOptions) {
 		await exportClip(this.#id(), clipId, format, captions, style, options);
 		await this.#updates.refresh();
+	}
+
+	/** Makes a clip from a quote, first in the list (docs/adr/0039). */
+	async createClip(start: number, end: number, title: string): Promise<Clip> {
+		const clip = await createClip(this.#id(), { start, end, title });
+		await this.clips.reload();
+		await this.#updates.refresh();
+		return clip;
 	}
 
 	async editClip(clipId: string, changes: { start?: number; end?: number; title?: string }) {

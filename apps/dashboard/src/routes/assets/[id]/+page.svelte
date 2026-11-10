@@ -39,6 +39,12 @@
 		segments: v.transcript.value?.segments ?? [],
 		duration: v.asset?.metadata?.durationSeconds ?? 0
 	});
+	let quoteActions = $derived({
+		busy: v.busy,
+		duration: v.asset?.metadata?.durationSeconds ?? 0,
+		onpreview: (start: number, end: number) => player?.playRange(start, end),
+		oncreate: v.createClip.bind(v)
+	});
 	const clipActions = {
 		onpreview: (start: number, end: number) => player?.playRange(start, end),
 		onexport: v.export.bind(v),
@@ -112,8 +118,8 @@
 			job={v.suggestJob}
 			ready={(v.clips.value?.clips.length ?? 0) > 0}
 			empty={!!v.clips.value}
-			failed="Clips could not be suggested; open the Clips job below to see why."
-			emptyText="No clips: the video is too short, has no speech, or no moment works on its own."
+			failed="Clips could not be suggested; open the Clips job below to see why. You can still make one from a quote: ✂ Clip a quote, in the transcript."
+			emptyText="No clips suggested: the video is too short, has no speech, or no moment works on its own. You can make one from a quote: ✂ Clip a quote, in the transcript."
 			runningText="Finding the best moments…"
 			runningId="suggesting"
 			waiting="Suggested clips appear here after the summary."
@@ -135,7 +141,7 @@
 			runningId="transcribing"
 			waiting="The transcript appears here after HLS encoding and audio extraction."
 		>
-			<TranscriptPanel transcript={v.transcript.value!} {currentTime} focus={start} onseek={seek} />
+			<TranscriptPanel transcript={v.transcript.value!} {currentTime} focus={start} onseek={seek} quote={quoteActions} />
 		</JobSection>
 	{/if}
 

@@ -28,3 +28,41 @@ func TestClipProblem(t *testing.T) {
 		}
 	}
 }
+
+func TestSaid(t *testing.T) {
+	tr := Transcript{
+		Segments: []byte(`[{"start": 0, "end": 4, "text": " Bom dia a todos."}, {"start": 4, "end": 9, "text": " A reforma foi aprovada."}]`),
+		Words: []byte(`[{"start": 0, "end": 0.5, "word": "Bom"}, {"start": 0.5, "end": 1, "word": "dia"},
+			{"start": 1, "end": 1.4, "word": "a"}, {"start": 1.4, "end": 2, "word": "todos."},
+			{"start": 4.2, "end": 4.4, "word": "A"}, {"start": 4.4, "end": 5, "word": "reforma"},
+			{"start": 5, "end": 5.4, "word": "foi"}, {"start": 5.4, "end": 6.2, "word": "aprovada."}]`),
+	}
+	for _, c := range []struct {
+		start, end float64
+		want       string
+	}{
+		{4.1, 6.4, "A reforma foi aprovada."},
+		{0.4, 1.3, "dia a"}, // a word counts when its middle is inside
+		{2.5, 3.9, ""},
+	} {
+		if got := tr.Said(c.start, c.end); got != c.want {
+			t.Errorf("Said(%v, %v) = %q, want %q", c.start, c.end, got, c.want)
+		}
+	}
+	// Without word timings: whole segments.
+	tr.Words = []byte("[]")
+	if got := tr.Said(0, 9); got != "Bom dia a todos. A reforma foi aprovada." {
+		t.Errorf("segments: %q", got)
+	}
+}
+
+func TestQuoteTitle(t *testing.T) {
+	if got := QuoteTitle("  A reforma   foi aprovada. "); got != "A reforma foi aprovada." {
+		t.Errorf("short: %q", got)
+	}
+	long := strings.Repeat("palavra ", 30) // 240 characters
+	got := QuoteTitle(long)
+	if n := len([]rune(got)); n > MaxClipTitle || !strings.HasSuffix(got, "palavra…") {
+		t.Errorf("long: %d characters, %q", n, got)
+	}
+}

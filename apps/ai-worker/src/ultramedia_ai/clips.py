@@ -77,26 +77,32 @@ class ClipSuggester(LLMTask):
 
     def replace(self, ctx: JobContext, asset_id: str, clips: list[dict], model: str) -> list[dict]:
         """Replaces the asset's suggestions with clips, keeping the clips
-        edited by hand (docs/adr/0026); returns the new clips stored."""
+        made or edited by hand (docs/adr/0026, 0039); returns the new clips
+        stored."""
         edited = self.store.edited_clips(asset_id)
         fresh, ranks = merge_with_edited(clips, edited)
         self.store.replace_clips(asset_id, ctx.job.id, fresh, model, ranks)
         if edited:
             dropped = len(clips) - len(fresh)
             ctx.log.info(
-                "kept %d clip%s edited by hand%s", len(edited), "" if len(edited) == 1 else "s",
+                "kept %d clip%s made or edited by hand%s", len(edited), "" if len(edited) == 1 else "s",
                 f"; left out {dropped} new suggestion{'' if dropped == 1 else 's'} that repeated them" if dropped else "",
             )
         return fresh
 
 
+# Where a clip made from a quote ranks: above the model's best score.
+_QUOTE = 11
+
+
 def merge_with_edited(clips: list[dict], edited: list[dict]) -> tuple[list[dict], dict[str, int]]:
     """New suggestions without those that share more than half of a clip
-    edited by hand, and everyone ranked by score (edited clips first on a
-    tie, then by start). Returns the new clips, ranked, and the edited
-    clips' ranks by id."""
+    made or edited by hand, and everyone ranked by score (edited clips first
+    on a tie, then by start). A clip made from a quote has no score and comes
+    before every scored one (docs/adr/0039). Returns the new clips, ranked,
+    and the edited clips' ranks by id."""
     fresh = [c for c in clips if not any(_overlap(c, e) > 0.5 for e in edited)]
-    everyone = [(e["score"], 0, e["start"], ("edited", e["id"])) for e in edited]
+    everyone = [(_QUOTE if e["score"] is None else e["score"], 0, e["start"], ("edited", e["id"])) for e in edited]
     everyone += [(c["score"], 1, c["start"], ("new", i)) for i, c in enumerate(fresh)]
     everyone.sort(key=lambda x: (-x[0], x[1], x[2]))
     ranks: dict[str, int] = {}

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -47,10 +48,14 @@ type subtitlesDTO struct {
 }
 
 type transcriptDTO struct {
-	Language  string          `json:"language"`
-	Model     string          `json:"model"`
-	Text      string          `json:"text"`
-	Segments  json.RawMessage `json:"segments"`
+	Language string          `json:"language"`
+	Model    string          `json:"model"`
+	Text     string          `json:"text"`
+	Segments json.RawMessage `json:"segments"`
+	// Words is every word with its start and end, for word-by-word captions
+	// and quotes (docs/adr/0039); empty for transcripts made before words
+	// were saved.
+	Words     json.RawMessage `json:"words"`
 	CreatedAt time.Time       `json:"createdAt"`
 }
 
@@ -310,7 +315,8 @@ func (a *api) getTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, transcriptDTO{
-		Language: t.Language, Model: t.Model, Text: t.Text, Segments: json.RawMessage(t.Segments), CreatedAt: t.CreatedAt,
+		Language: t.Language, Model: t.Model, Text: t.Text, Segments: json.RawMessage(t.Segments),
+		Words: json.RawMessage(cmp.Or(string(t.Words), "[]")), CreatedAt: t.CreatedAt,
 	})
 }
 

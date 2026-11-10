@@ -23,13 +23,14 @@ export function encodingText(hls: Job | undefined): string {
 }
 
 /** What suggesting clips again does, asked before it runs (docs/adr/0026); empty without clips. */
-export function resuggestNote(clips: Pick<Clip, 'editedAt'>[] | null | undefined): string {
+export function resuggestNote(clips: Pick<Clip, 'editedAt' | 'origin'>[] | null | undefined): string {
 	if (!clips || clips.length === 0) return '';
-	const edited = clips.filter((c) => c.editedAt).length;
+	// Clips made from a quote stay too (docs/adr/0039).
+	const edited = clips.filter((c) => c.editedAt || c.origin === 'quote').length;
 	const others = clips.length - edited;
 	const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 	if (edited === 0) return `This replaces the ${plural(others, 'clip')} below with new suggestions.`;
-	const keep = `The ${plural(edited, 'clip')} you edited stay${edited === 1 ? 's' : ''}`;
+	const keep = `The ${plural(edited, 'clip')} you made or edited stay${edited === 1 ? 's' : ''}`;
 	return others === 0
 		? `${keep}; new suggestions are added around ${edited === 1 ? 'it' : 'them'}.`
 		: `This replaces the other ${plural(others, 'clip')} with new suggestions. ${keep}.`;

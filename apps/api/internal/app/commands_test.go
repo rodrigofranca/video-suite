@@ -65,6 +65,18 @@ func (f *fakeWriter) GetTechnicalMetadata(_ context.Context, id string) (domain.
 	}
 	return domain.TechnicalMetadata{AssetID: id, MetadataJSON: f.metadata}, nil
 }
+func (f *fakeWriter) CreateClipIfIdle(_ context.Context, c domain.Clip, track domain.Job) error {
+	if f.busy {
+		return domain.ErrBusy
+	}
+	if _, ok := f.assets[c.AssetID]; !ok {
+		return domain.ErrNotFound
+	}
+	f.clips[c.ID] = c
+	f.created = append(f.created, track)
+	f.queued = append(f.queued, track)
+	return nil
+}
 func (f *fakeWriter) EditClipIfIdle(_ context.Context, c domain.Clip, retrack *domain.Job) error {
 	if f.busy {
 		return domain.ErrBusy
@@ -299,6 +311,52 @@ func TestEditClip(t *testing.T) {
 	f.clips[otherID] = domain.Clip{ID: otherID, AssetID: "elsewhere", Start: 1, End: 20, Title: "x"}
 	if _, err := uc.Run(context.Background(), EditRequest{AssetID: assetID, ClipID: otherID, Title: ptr("y")}); kindOf(err) != NotFound {
 		t.Fatalf("other video's clip: %v", err)
+	}
+}
+
+func TestCreateClip(t *testing.T) {
+	f := newWriter()
+	f.metadata = []byte(`{"summary":{"durationSeconds":60}}`)
+	f.transcripts[assetID] = domain.Transcript{AssetID: assetID, Language: "pt",
+		Words: []byte(`[{"start": 12.1, "end": 12.5, "word": "A"}, {"start": 12.5, "end": 13.4, "word": "reforma"},
+			{"start": 13.4, "end": 13.8, "word": "foi"}, {"start": 13.8, "end": 15.0, "word": "aprovada."}]`)}
+	uc := CreateClip{Assets: f, Clips: f, Metadata: f, Speech: f, Writer: f, clock: fixedClock()}
+	ctx := context.Background()
+
+	// No title: the quote is the title.
+	c, err := uc.Run(ctx, CreateRequest{AssetID: assetID, Start: 12.0004, End: 15.2})
+	if err != nil || c.Title != "A reforma foi aprovada." || c.Origin != domain.ClipQuote || c.Start != 12 || c.End != 15.2 {
+		t.Fatalf("clip %+v, err %v", c, err)
+	}
+	if len(f.queued) != 1 || f.queued[0].Type != jobcontracts.JobTypeTrackFaces || !strings.Contains(string(f.queued[0].InputJSON), c.ID) {
+		t.Fatalf("queued %+v", f.queued)
+	}
+	// A title given is kept, with its spaces tidied.
+	if c, err := uc.Run(ctx, CreateRequest{AssetID: assetID, Start: 20, End: 30, Title: "  The   vote "}); err != nil || c.Title != "The vote" {
+		t.Fatalf("titled: %+v, %v", c, err)
+	}
+	// Nothing said in the range: a title from the time.
+	if c, err := uc.Run(ctx, CreateRequest{AssetID: assetID, Start: 45, End: 50}); err != nil || c.Title != "Clip at 0:45" {
+		t.Fatalf("silent range: %+v, %v", c, err)
+	}
+
+	for why, r := range map[string]CreateRequest{
+		"too short":      {Start: 12, End: 14},
+		"after the end":  {Start: 50, End: 61},
+		"start past end": {Start: 30, End: 20},
+		"too long":       {Start: 0, End: 200},
+	} {
+		r.AssetID = assetID
+		if _, err := uc.Run(ctx, r); kindOf(err) != Invalid {
+			t.Errorf("%s: %v", why, err)
+		}
+	}
+	if _, err := uc.Run(ctx, CreateRequest{AssetID: otherID, Start: 1, End: 9}); kindOf(err) != NotFound {
+		t.Fatalf("unknown video: %v", err)
+	}
+	f.busy = true
+	if _, err := uc.Run(ctx, CreateRequest{AssetID: assetID, Start: 1, End: 9}); kindOf(err) != Conflict {
+		t.Fatalf("busy: %v", err)
 	}
 }
 

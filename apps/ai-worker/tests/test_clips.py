@@ -126,7 +126,7 @@ def test_suggesting_again_keeps_the_clips_edited_by_hand(cfg, store, asset, fake
     clips = store.get_clips(asset["id"])
     assert [(c["title"], c["rank"]) for c in clips] == [("Novo e melhor", 1), ("Segundo", 2)]
     assert [c["id"] for c in store.clip_ranges(asset["id"])][1] == second["id"]  # the same clip, not a copy
-    assert "kept 1 clip edited by hand; left out 1 new suggestion that repeated them" in caplog.text
+    assert "kept 1 clip made or edited by hand; left out 1 new suggestion that repeated them" in caplog.text
 
     # Nothing to clip any more: the edited clip still stays.
     fake.answer({"clips": []})
@@ -145,6 +145,32 @@ def test_merge_with_edited_ranks_everyone_by_score():
     assert [(c["title"], c["rank"]) for c in fresh] == [("a", 1), ("b", 3)]
     assert ranks == {"e1": 2}  # a tie with b: the edited clip first
     assert merge_with_edited(new, []) == ([{**c, "rank": i} for i, c in enumerate(new, start=1)], {})
+
+
+def test_keeps_clips_made_from_a_quote(cfg, store, asset, fake):
+    # A clip someone made from a quote (docs/adr/0039): no job, no score.
+    save_transcript(store, asset, SEGMENTS)
+    store.conn.execute(
+        """INSERT INTO clips (id, asset_id, origin, start_seconds, end_seconds, title, rank, model)
+           VALUES (gen_random_uuid(), %s, 'quote', 60, 70, 'Citação', 1, '')""",
+        (asset["id"],),
+    )
+    fake.answer({"clips": [
+        {"start": 62, "end": 75, "title": "Repete a citação", "score": 9},
+        {"start": 0, "end": 29.5, "title": "Outro", "score": 10},
+    ]})
+    run(cfg, store, asset, fake)
+    # Kept, first even before a 10, and the suggestion that repeats it is left out.
+    assert [(c["title"], c["rank"], c["score"]) for c in store.get_clips(asset["id"])] == [
+        ("Citação", 1, None), ("Outro", 2, 10),
+    ]
+
+
+def test_merge_ranks_a_quote_first():
+    edited = [{"id": "q1", "start": 200.0, "end": 210.0, "score": None}, {"id": "e1", "start": 100.0, "end": 130.0, "score": 10}]
+    fresh, ranks = merge_with_edited([{"start": 0.0, "end": 30.0, "title": "a", "score": 10, "rank": 1}], edited)
+    assert ranks == {"q1": 1, "e1": 2}
+    assert fresh[0]["rank"] == 3
 
 
 def test_asks_again_when_the_answer_is_not_json(cfg, store, asset, fake):

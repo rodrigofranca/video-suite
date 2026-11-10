@@ -208,10 +208,12 @@ class Store:
         return {"language": row[0], "summary": row[1], "tags": list(row[2]), "chapters": chapters, "model": row[4]}
 
     def edited_clips(self, asset_id: str) -> list[dict]:
-        """The asset's clips changed by hand, which new suggestions keep (docs/adr/0026)."""
+        """The asset's clips made or changed by hand, which new suggestions
+        keep: edited ones (docs/adr/0026) and those made from a quote, which
+        have no score (docs/adr/0039)."""
         rows = self.conn.execute(
             """SELECT id::text, start_seconds, end_seconds, title, score FROM clips
-               WHERE asset_id = %s AND edited_at IS NOT NULL ORDER BY rank""",
+               WHERE asset_id = %s AND (edited_at IS NOT NULL OR origin = 'quote') ORDER BY rank""",
             (asset_id,),
         ).fetchall()
         return [{"id": r[0], "start": r[1], "end": r[2], "title": r[3], "score": r[4]} for r in rows]
@@ -220,10 +222,12 @@ class Store:
         self, asset_id: str, job_id: str, clips: list[dict], model: str, edited_ranks: dict[str, int] | None = None
     ) -> None:
         """Store an asset's suggested clips, removing the earlier suggestions
-        but not the clips edited by hand, which get the ranks in edited_ranks
-        (see ReplaceClips in Go)."""
+        but not the clips made or edited by hand, which get the ranks in
+        edited_ranks (see ReplaceClips in Go)."""
         with self.conn.transaction():
-            self.conn.execute("DELETE FROM clips WHERE asset_id = %s AND edited_at IS NULL", (asset_id,))
+            self.conn.execute(
+                "DELETE FROM clips WHERE asset_id = %s AND edited_at IS NULL AND origin = 'suggested'", (asset_id,)
+            )
             for clip_id, rank in (edited_ranks or {}).items():
                 self.conn.execute("UPDATE clips SET rank = %s WHERE id = %s AND asset_id = %s", (rank, clip_id, asset_id))
             for c in clips:

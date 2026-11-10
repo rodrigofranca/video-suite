@@ -1,0 +1,5 @@
+DELETE FROM clips WHERE origin = 'quote';
+ALTER TABLE clips DROP CONSTRAINT IF EXISTS clips_suggested_by_a_job;
+ALTER TABLE clips ALTER COLUMN score SET NOT NULL;
+ALTER TABLE clips ALTER COLUMN job_id SET NOT NULL;
+ALTER TABLE clips DROP COLUMN IF EXISTS origin;

@@ -44,13 +44,16 @@ describe('jobs', () => {
 	});
 
 	it('says what suggesting clips again does', () => {
-		const clip = (edited: boolean) => ({ editedAt: edited ? '2026-11-10' : null });
+		const clip = (edited: boolean, origin: 'suggested' | 'quote' = 'suggested') => ({
+			editedAt: edited ? '2026-11-10' : null,
+			origin
+		});
 		expect(resuggestNote(null)).toBe('');
 		expect(resuggestNote([])).toBe('');
 		expect(resuggestNote([clip(false), clip(false)])).toBe('This replaces the 2 clips below with new suggestions.');
-		expect(resuggestNote([clip(true)])).toBe('The 1 clip you edited stays; new suggestions are added around it.');
-		expect(resuggestNote([clip(true), clip(true), clip(false)])).toBe(
-			'This replaces the other 1 clip with new suggestions. The 2 clips you edited stay.'
+		expect(resuggestNote([clip(true)])).toBe('The 1 clip you made or edited stays; new suggestions are added around it.');
+		expect(resuggestNote([clip(true), clip(false, 'quote'), clip(false)])).toBe(
+			'This replaces the other 1 clip with new suggestions. The 2 clips you made or edited stay.'
 		);
 	});
 });

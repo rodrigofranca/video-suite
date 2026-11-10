@@ -90,10 +90,11 @@ type Clips interface {
 	GetClip(ctx context.Context, id string) (domain.Clip, error)
 }
 
-// ClipWriter changes and deletes clips, only while the asset is idle
-// (domain.ErrBusy otherwise). EditClipIfIdle queues retrack, when given, in
-// the same transaction.
+// ClipWriter makes, changes and deletes clips, only while the asset is idle
+// (domain.ErrBusy otherwise). CreateClipIfIdle queues track, and
+// EditClipIfIdle retrack when given, in the same transaction.
 type ClipWriter interface {
+	CreateClipIfIdle(ctx context.Context, c domain.Clip, track domain.Job) error
 	EditClipIfIdle(ctx context.Context, c domain.Clip, retrack *domain.Job) error
 	DeleteClipIfIdle(ctx context.Context, assetID, clipID string) error
 }

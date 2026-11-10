@@ -681,3 +681,82 @@ func TestUsage(t *testing.T) {
 		t.Fatalf("by video = %+v", sum.ByAsset)
 	}
 }
+
+func TestCreateClipIfIdle(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	asset, jobs := newUpload(t, s)
+	suggested := domain.Clip{ID: domain.NewID(), JobID: jobs[0].ID, Start: 40, End: 60, Title: "Suggested", Score: 7, Rank: 1, Model: "m"}
+	if err := s.ReplaceClips(ctx, asset.ID, []domain.Clip{suggested}); err != nil {
+		t.Fatal(err)
+	}
+	quote := func(start float64, title string) (domain.Clip, domain.Job) {
+		c := domain.Clip{ID: domain.NewID(), AssetID: asset.ID, Start: start, End: start + 5, Title: title, CreatedAt: time.Now()}
+		j := domain.Job{ID: domain.NewID(), AssetID: asset.ID, Type: "track-faces", InputJSON: []byte(`{"clip_id":"` + c.ID + `"}`), CreatedAt: time.Now()}
+		return c, j
+	}
+	first, track := quote(10, "First quote")
+	if err := s.CreateClipIfIdle(ctx, first, track); !errors.Is(err, ErrBusy) {
+		t.Fatalf("while the upload's jobs are pending: %v, want ErrBusy", err)
+	}
+	for _, j := range jobs {
+		s.StartJob(ctx, j.ID)
+		s.FinishJob(ctx, j.ID, nil)
+	}
+	if err := s.CreateClipIfIdle(ctx, first, track); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetClip(ctx, first.ID)
+	if err != nil || got.Origin != domain.ClipQuote || got.JobID != "" || got.Score != 0 || got.Rank != 1 || got.EditedAt != nil || got.Title != "First quote" {
+		t.Fatalf("quote clip = %+v, %v", got, err)
+	}
+	if j, err := s.GetJob(ctx, track.ID); err != nil || j.Status != domain.JobPending || j.Type != "track-faces" {
+		t.Fatalf("track job = %+v, %v", j, err)
+	}
+	if next, err := s.NextPendingJob(ctx, asset.ID, "track-faces"); err != nil || next.ID != track.ID {
+		t.Fatalf("queued track-faces = %+v, %v", next, err)
+	}
+	// While it tracks faces, another quote waits.
+	second, track2 := quote(20, "Second quote")
+	if err := s.CreateClipIfIdle(ctx, second, track2); !errors.Is(err, ErrBusy) {
+		t.Fatalf("while tracking: %v, want ErrBusy", err)
+	}
+	s.FinishJob(ctx, track.ID, nil)
+	if err := s.CreateClipIfIdle(ctx, second, track2); err != nil {
+		t.Fatal(err)
+	}
+	s.FinishJob(ctx, track2.ID, nil)
+
+	// The newest quote first, then the earlier one, then the suggestion.
+	list, _ := s.ListClips(ctx, asset.ID)
+	var order []string
+	for _, c := range list {
+		order = append(order, c.Title)
+	}
+	if strings.Join(order, ",") != "Second quote,First quote,Suggested" {
+		t.Fatalf("order = %v", order)
+	}
+	if list[2].Origin != domain.ClipSuggested || list[2].JobID != jobs[0].ID || list[2].Score != 7 {
+		t.Fatalf("suggested clip = %+v", list[2])
+	}
+
+	// New suggestions keep the quotes.
+	if err := s.ReplaceClips(ctx, asset.ID, []domain.Clip{{ID: domain.NewID(), JobID: jobs[0].ID, Start: 70, End: 90, Title: "New", Score: 6, Rank: 3, Model: "m"}}); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := s.ListClips(ctx, asset.ID); len(list) != 3 {
+		t.Fatalf("after new suggestions: %d clips, want the two quotes and the new one", len(list))
+	}
+
+	unknown, track3 := quote(1, "x")
+	unknown.AssetID = domain.NewID()
+	if err := s.CreateClipIfIdle(ctx, unknown, track3); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown asset: %v, want ErrNotFound", err)
+	}
+	// A suggested clip needs its job and score.
+	_, err = s.db.Exec(ctx, `INSERT INTO clips (id, asset_id, start_seconds, end_seconds, title, rank, model) VALUES ($1, $2, 1, 5, 'x', 9, 'm')`,
+		domain.NewID(), asset.ID)
+	if err == nil {
+		t.Fatal("a suggested clip without a job was saved")
+	}
+}

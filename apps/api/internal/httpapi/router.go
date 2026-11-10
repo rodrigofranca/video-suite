@@ -38,6 +38,7 @@ type api struct {
 	uploads       app.UploadVideo
 	videoDeletes  app.DeleteVideo
 	reruns        app.RerunJob
+	clipCreates   app.CreateClip
 	clipEdits     app.EditClip
 	clipDeletes   app.DeleteClip
 	exports       app.ExportClip
@@ -73,6 +74,7 @@ func NewRouter(deps Deps) http.Handler {
 	mux.HandleFunc("GET /assets/{id}/transcript", a.getTranscript)
 	mux.HandleFunc("GET /assets/{id}/analysis", a.getAnalysis)
 	mux.HandleFunc("GET /assets/{id}/clips", a.listClips)
+	mux.HandleFunc("POST /assets/{id}/clips", a.createClip)
 	mux.HandleFunc("PATCH /assets/{id}/clips/{clipId}", a.editClip)
 	mux.HandleFunc("DELETE /assets/{id}/clips/{clipId}", a.deleteClip)
 	mux.HandleFunc("POST /assets/{id}/clips/{clipId}/exports", a.exportClip)
@@ -110,6 +112,7 @@ func (a *api) wire() {
 	a.uploads = app.UploadVideo{Assets: db, Files: files, Log: log, MaxBytes: a.MaxUploadBytes}
 	a.videoDeletes = app.DeleteVideo{Assets: db, Writer: db, Files: files, Log: log}
 	a.reruns = app.RerunJob{Assets: db, Jobs: db, Log: log}
+	a.clipCreates = app.CreateClip{Assets: db, Clips: db, Metadata: db, Speech: db, Writer: db, Log: log}
 	a.clipEdits = app.EditClip{Assets: db, Clips: db, Metadata: db, Writer: db, Log: log}
 	a.clipDeletes = app.DeleteClip{Assets: db, Writer: db, Files: files, Log: log}
 	a.exports = app.ExportClip{Assets: db, Clips: db, Speech: db, Brand: db, Jobs: db, Log: log}

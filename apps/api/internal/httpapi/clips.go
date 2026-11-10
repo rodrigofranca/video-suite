@@ -25,13 +25,16 @@ import (
 const downloadLinkExpiry = 15 * time.Minute
 
 type clipDTO struct {
-	ID        string    `json:"id"`
-	Start     float64   `json:"start"`
-	End       float64   `json:"end"`
-	Duration  float64   `json:"duration"`
-	Title     string    `json:"title"`
-	Reason    string    `json:"reason"`
-	Score     int       `json:"score"`
+	ID       string  `json:"id"`
+	Start    float64 `json:"start"`
+	End      float64 `json:"end"`
+	Duration float64 `json:"duration"`
+	Title    string  `json:"title"`
+	Reason   string  `json:"reason"`
+	// Origin is "suggested" (by the language model) or "quote" (made from
+	// the transcript, docs/adr/0039); Score is null for a quote.
+	Origin    string    `json:"origin"`
+	Score     *int      `json:"score"`
 	Rank      int       `json:"rank"`
 	Model     string    `json:"model"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -160,8 +163,11 @@ func (a *api) listClips(w http.ResponseWriter, r *http.Request) {
 func toClipDTO(c domain.Clip, jobs []domain.Job, arts []domain.Artifact) clipDTO {
 	dto := clipDTO{
 		ID: c.ID, Start: c.Start, End: c.End, Duration: c.End - c.Start, Title: c.Title, Reason: c.Reason,
-		Score: c.Score, Rank: c.Rank, Model: c.Model, CreatedAt: c.CreatedAt, EditedAt: c.EditedAt,
+		Origin: c.Origin, Rank: c.Rank, Model: c.Model, CreatedAt: c.CreatedAt, EditedAt: c.EditedAt,
 		Exports: clipExports(c, jobs, arts),
+	}
+	if c.Score > 0 {
+		dto.Score = &c.Score
 	}
 	dto.FaceCoverage, dto.FaceFollows, dto.FacePeople = faceSummary(c.FaceTrack)
 	return dto
@@ -262,8 +268,34 @@ func (a *api) editClip(w http.ResponseWriter, r *http.Request) {
 	a.writeClip(w, r, clip)
 }
 
+// createClip handles POST /assets/{id}/clips with {"start": 12.1,
+// "end": 18.4, "title": "..."}: a clip made from a quote (docs/adr/0039).
+func (a *api) createClip(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Start *float64 `json:"start"`
+		End   *float64 `json:"end"`
+		Title string   `json:"title"`
+	}
+	dec := json.NewDecoder(io.LimitReader(r.Body, 4096))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil || body.Start == nil || body.End == nil {
+		writeError(w, http.StatusBadRequest, `expected a JSON body with {"start": 12.1, "end": 18.4} (seconds from the start of the video) and an optional "title"`)
+		return
+	}
+	clip, err := a.clipCreates.Run(r.Context(), app.CreateRequest{AssetID: r.PathValue("id"), Start: *body.Start, End: *body.End, Title: body.Title})
+	if err != nil {
+		a.useCaseError(w, r, err)
+		return
+	}
+	a.writeClipStatus(w, r, clip, http.StatusCreated)
+}
+
 // writeClip answers with one clip as listClips shows it.
 func (a *api) writeClip(w http.ResponseWriter, r *http.Request, c domain.Clip) {
+	a.writeClipStatus(w, r, c, http.StatusOK)
+}
+
+func (a *api) writeClipStatus(w http.ResponseWriter, r *http.Request, c domain.Clip, status int) {
 	ctx := r.Context()
 	jobs, err := a.Store.ListJobs(ctx, c.AssetID)
 	if err != nil {
@@ -275,7 +307,7 @@ func (a *api) writeClip(w http.ResponseWriter, r *http.Request, c domain.Clip) {
 		a.internalError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toClipDTO(c, jobs, arts))
+	writeJSON(w, status, toClipDTO(c, jobs, arts))
 }
 
 // exportClip handles POST /assets/{id}/clips/{clipId}/exports with
