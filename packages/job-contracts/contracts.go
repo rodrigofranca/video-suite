@@ -235,3 +235,20 @@ func NextJobType(jobType string) (string, bool) {
 	next, ok := After[jobType]
 	return next, ok
 }
+
+// Domain events (docs/adr/0034). A change that should lead to more work
+// records an event in the outbox table, in its own transaction; a relay then
+// handles the event. So the work is never lost between the database and the
+// queue, and the rules that react to an event live in one place.
+const (
+	// EventJobQueued: a pending job may run. The relay sends its message to
+	// the job's stream.
+	EventJobQueued = "job.queued"
+	// EventJobFinished: a job ended, done or failed. The relay moves the
+	// pipeline on: the HLS job decides the asset's status (docs/adr/0003)
+	// and the asset's next pending job is queued (NextJobType).
+	EventJobFinished = "job.finished"
+	// OutboxChannel is the PostgreSQL channel that wakes the relays when
+	// events are recorded.
+	OutboxChannel = "outbox_events"
+)

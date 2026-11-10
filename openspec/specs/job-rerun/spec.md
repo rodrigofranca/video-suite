@@ -24,7 +24,7 @@ A API SHALL recusar com 409 o pedido enquanto qualquer job do asset estiver `pen
 - **THEN** o primeiro SHALL receber 202 e o segundo 409
 
 ### Requirement: Efeito no asset
-Rodar de novo `extract-metadata` ou `generate-thumbnail` SHALL manter o status do asset. Rodar de novo `transcode-hls` SHALL pôr o asset em `processing` até o job terminar. A nova tentativa SHALL rodar sozinha, sem enfileirar os passos seguintes, exceto os de `RerunWith`, criados `pending` na mesma transação e enfileirados pelo worker depois dela.
+Rodar de novo `extract-metadata` ou `generate-thumbnail` SHALL manter o status do asset. Rodar de novo `transcode-hls` SHALL pôr o asset em `processing` até o job terminar. A nova tentativa SHALL rodar sozinha, sem enfileirar os passos seguintes, exceto os de `RerunWith`, criados `pending` na mesma transação e postos na fila pelo relay depois dela.
 
 #### Scenario: Nova conversão HLS
 - **WHEN** o asset está `ready` e o HLS roda de novo

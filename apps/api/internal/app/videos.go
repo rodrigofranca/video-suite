@@ -92,13 +92,11 @@ func (c clock) newID() string {
 
 // UploadVideo stores an uploaded MP4 and starts its pipeline (docs/adr/0009):
 // it creates the asset, streams the file to storage while counting and
-// hashing it, records the source with one job per pipeline step, and queues
-// the first.
+// hashing it, and records the source with one job per pipeline step, the
+// first one queued (docs/adr/0034).
 type UploadVideo struct {
 	Assets   AssetWriter
 	Files    Files
-	Jobs     Jobs
-	Queue    Queue
 	Log      *slog.Logger
 	MaxBytes int64
 	clock
@@ -154,16 +152,6 @@ func (uc UploadVideo) Run(ctx context.Context, req UploadRequest) (string, error
 	if err != nil {
 		uc.discard(ctx, asset.ID, key)
 		return "", err
-	}
-
-	first := jobs[0]
-	if err := uc.Queue.Enqueue(ctx, jobcontracts.Message{JobID: first.ID, Type: first.Type, Payload: first.InputJSON}); err != nil {
-		// The file is stored but nothing will process it: say so in the job.
-		bg := context.WithoutCancel(ctx)
-		uc.Jobs.FinishJob(bg, first.ID, fmt.Errorf("could not enqueue job: %w", err))
-		uc.Assets.SetAssetStatus(bg, asset.ID, domain.AssetFailed)
-		log.Error("enqueue failed", "asset_id", asset.ID, "job_id", first.ID, "error", err)
-		return "", &Error{Kind: Unavailable, Msg: "the file was stored but processing could not start", Err: err}
 	}
 	log.Info("asset uploaded", "asset_id", asset.ID, "bytes", src.SizeBytes)
 	return asset.ID, nil
@@ -248,12 +236,10 @@ func logDeleted(log *slog.Logger, err error, msg string, args ...any) {
 // earlier attempts stay in the history (docs/adr/0015), with the jobs that
 // work on its result after it (jobcontracts.RerunWith). Only when every job
 // of the asset has finished. Running HLS again makes the asset processing
-// until it ends (docs/adr/0003).
+// until it ends (docs/adr/0003). The job is queued with it (docs/adr/0034).
 type RerunJob struct {
 	Assets Assets
-	Writer AssetWriter
 	Jobs   Jobs
-	Queue  Queue
 	Log    *slog.Logger
 	clock
 }
@@ -297,23 +283,10 @@ func (uc RerunJob) Run(ctx context.Context, assetID, jobType string) (domain.Job
 	if err != nil {
 		return domain.Job{}, err
 	}
-	log := orDiscard(uc.Log)
-	if err := uc.Queue.Enqueue(ctx, jobcontracts.Message{JobID: job.ID, Type: job.Type, Payload: job.InputJSON}); err != nil {
-		bg := context.WithoutCancel(ctx)
-		uc.Jobs.FinishJob(bg, job.ID, fmt.Errorf("could not enqueue job: %w", err))
-		for _, j := range then {
-			uc.Jobs.FinishJob(bg, j.ID, errors.New("not run: the job before it could not be queued"))
-		}
-		if assetStatus != "" {
-			uc.Writer.SetAssetStatus(bg, assetID, domain.AssetFailed)
-		}
-		log.Error("enqueue failed", "asset_id", assetID, "job_id", job.ID, "error", err)
-		return domain.Job{}, &Error{Kind: Unavailable, Msg: "the job could not be queued", Err: err}
-	}
 	saved, err := uc.Jobs.GetJob(ctx, job.ID)
 	if err != nil {
 		return domain.Job{}, err
 	}
-	log.Info("job queued again", "asset_id", assetID, "job_id", job.ID, "type", job.Type)
+	orDiscard(uc.Log).Info("job queued again", "asset_id", assetID, "job_id", job.ID, "type", job.Type)
 	return saved, nil
 }

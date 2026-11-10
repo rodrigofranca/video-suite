@@ -24,7 +24,7 @@ O início SHALL ser pelo menos 0 e antes do fim, o fim SHALL não passar da dura
 - **THEN** a API SHALL responder 409
 
 ### Requirement: Rastreio depois da edição
-Quando início ou fim mudam, a mesma transação SHALL limpar `face_track` do corte e criar um `track-faces` `pending` com `clip_id`, e a API SHALL enfileirá-lo em `jobs:ai`. Se o enfileiramento falhar, a edição SHALL valer e o job SHALL ficar `failed` com o motivo.
+Quando início ou fim mudam, a mesma transação SHALL limpar `face_track` do corte, criar um `track-faces` `pending` com `clip_id` e pô-lo na fila pela outbox (ADR 0034), para o stream `jobs:ai`.
 
 #### Scenario: Novo intervalo
 - **WHEN** o corte passa de 12–47,5 s para 10,25–40 s

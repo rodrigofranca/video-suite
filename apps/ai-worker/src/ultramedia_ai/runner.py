@@ -1,6 +1,7 @@
 """Runs one job end to end. It mirrors apps/worker/internal/pipeline (Go):
-status in PostgreSQL, logs in job_logs, a time limit, progress, and the next
-pipeline step."""
+status in PostgreSQL, logs in job_logs, a time limit and progress. Saving the
+result records the job.finished event; the outbox relay in the Go processes
+moves the pipeline on (docs/adr/0034)."""
 
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from . import contracts
-from .store import ASSET_FAILED, Job, Store
+from .store import Job, Store
 
 
 class Retry(Exception):
@@ -69,14 +70,12 @@ class Runner:
         self,
         store: Store,
         handlers: dict[str, Handler],
-        enqueue: Callable[[contracts.Message], None],
         log: logging.Logger,
         stop: threading.Event,
         timeout_seconds: float = 30 * 60,
     ):
         self.store = store
         self.handlers = handlers
-        self.enqueue = enqueue
         self.log = log
         self.stop = stop
         self.timeout_seconds = timeout_seconds
@@ -95,9 +94,8 @@ class Runner:
         except Exception as e:
             raise Retry(f"start job: {e}") from e
         if not started:
-            # Delivered twice: do not run again, but make sure the pipeline moved on.
+            # Delivered twice: do not run again; the pipeline moved on when it finished.
             self.log.info("job already finished, skipping job_id=%s status=%s", job.id, job.status)
-            self._advance(job, joblog)
             return
 
         joblog.info("job started")
@@ -130,30 +128,8 @@ class Runner:
             self.store.finish_job(job.id, str(error) if error is not None else None)
         except Exception:
             self.log.exception("could not save job result job_id=%s", job.id)
-        self._advance(job, joblog)
         if error is not None:
             raise error
-
-    def _advance(self, job: Job, joblog: logging.Logger) -> None:
-        """Enqueue the next pending job of the asset (see Runner.advance in Go)."""
-        next_type = contracts.next_job_type(job.type)
-        if next_type is None:
-            return
-        try:
-            nxt = self.store.next_pending_job(job.asset_id, next_type)
-        except Exception as e:
-            joblog.error("could not load next job: %s", e)
-            return
-        if nxt is None:
-            return
-        try:
-            self.enqueue(contracts.Message(job_id=nxt.id, type=nxt.type, payload=nxt.input_json))
-        except Exception as e:
-            joblog.error("could not enqueue %s: %s", nxt.type, e)
-            self.store.finish_job(nxt.id, f"could not enqueue job: {e}")
-            self.store.set_asset_status(job.asset_id, ASSET_FAILED)
-            return
-        joblog.info("queued next job next_type=%s next_job_id=%s", nxt.type, nxt.id)
 
     def _usage_recorder(self, job: Job, joblog: logging.Logger) -> Callable[[object], None]:
         def record(completion) -> None:

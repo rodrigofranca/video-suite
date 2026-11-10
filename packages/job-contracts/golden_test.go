@@ -32,6 +32,7 @@ func contractsDoc() map[string]any {
 		"fields":           map[string]string{"jobId": FieldJobID, "type": FieldType, "payload": FieldPayload},
 		"pipeline":         Pipeline,
 		"after":            After,
+		"events":           map[string]string{"jobQueued": EventJobQueued, "jobFinished": EventJobFinished, "channel": OutboxChannel},
 		"captionLanguages": CaptionLanguages,
 		"routes":           routes,
 		"examples": map[string]json.RawMessage{

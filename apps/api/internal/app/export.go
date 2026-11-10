@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -28,7 +27,6 @@ type ExportClip struct {
 	Speech Speech
 	Brand  Brand
 	Jobs   Jobs
-	Queue  Queue
 	Log    *slog.Logger
 	clock
 }
@@ -66,7 +64,8 @@ var ChoicesOnOffer = "formats: " + strings.Join(jobcontracts.ClipFormats, ", ") 
 	"; languages (empty for the transcript's own): " + strings.Join(jobcontracts.CaptionLanguages, ", ")
 
 // Run checks the request, works out the captions and the vignettes, and
-// queues the jobs.
+// records the jobs: the first is queued with them (docs/adr/0034), and an
+// export that waits for a translation is queued when it ends.
 func (uc ExportClip) Run(ctx context.Context, req ExportRequest) (ExportResult, error) {
 	clip, err := clipOf(ctx, uc.Assets, uc.Clips, req.AssetID, req.ClipID)
 	if err != nil {
@@ -132,15 +131,6 @@ func (uc ExportClip) Run(ctx context.Context, req ExportRequest) (ExportResult, 
 	}
 	if err != nil {
 		return ExportResult{}, err
-	}
-	if err := uc.Queue.Enqueue(ctx, jobcontracts.Message{JobID: first.ID, Type: first.Type, Payload: first.InputJSON}); err != nil {
-		bg := context.WithoutCancel(ctx)
-		uc.Jobs.FinishJob(bg, first.ID, fmt.Errorf("could not enqueue job: %w", err))
-		if translate {
-			uc.Jobs.FinishJob(bg, job.ID, errors.New("not run: the translation before it could not be queued"))
-		}
-		uc.log().Error("enqueue failed", "asset_id", req.AssetID, "job_id", first.ID, "error", err)
-		return ExportResult{}, &Error{Kind: Unavailable, Msg: "the job could not be queued", Err: err}
 	}
 
 	saved, err := uc.Jobs.GetJob(ctx, job.ID)

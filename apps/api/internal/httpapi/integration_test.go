@@ -2,11 +2,11 @@ package httpapi
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"image"
 	"image/jpeg"
 	"image/png"
@@ -15,8 +15,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -40,9 +40,10 @@ type env struct {
 	storage *storage.Client
 	handler http.Handler
 
-	mu       sync.Mutex
-	enqueued []jobcontracts.Message
-	failNext bool
+	// The test's videos, and the last outbox event before the jobs that
+	// queued() reports: the API queues jobs through the outbox (docs/adr/0034).
+	assets []string
+	mark   int64
 }
 
 func newEnv(t *testing.T, maxUpload int64) *env {
@@ -70,20 +71,46 @@ func newEnv(t *testing.T, maxUpload int64) *env {
 	}
 
 	e := &env{t: t, db: pool, store: store.New(pool), storage: st}
-	e.handler = NewRouter(Deps{
-		DB: pool, Store: e.store, Storage: st, MaxUploadBytes: maxUpload,
-		Enqueue: func(_ context.Context, m jobcontracts.Message) error {
-			e.mu.Lock()
-			defer e.mu.Unlock()
-			if e.failNext {
-				e.failNext = false
-				return errors.New("redis down")
-			}
-			e.enqueued = append(e.enqueued, m)
-			return nil
-		},
-	})
+	e.handler = NewRouter(Deps{DB: pool, Store: e.store, Storage: st, MaxUploadBytes: maxUpload})
 	return e
+}
+
+// queued returns the messages of the jobs the test's requests queued since
+// the last markQueue, in order: the job.queued events in the outbox, which
+// the relay would send to Redis.
+func (e *env) queued() []jobcontracts.Message {
+	e.t.Helper()
+	ctx := context.Background()
+	var events []domain.Event
+	for _, id := range e.assets {
+		list, err := e.store.Events(ctx, id)
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		for _, ev := range list {
+			if ev.Type == jobcontracts.EventJobQueued && ev.ID > e.mark {
+				events = append(events, ev)
+			}
+		}
+	}
+	slices.SortFunc(events, func(a, b domain.Event) int { return cmp.Compare(a.ID, b.ID) })
+	var msgs []jobcontracts.Message
+	for _, ev := range events {
+		job, err := e.store.GetJob(ctx, ev.JobID)
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		msgs = append(msgs, jobcontracts.Message{JobID: job.ID, Type: job.Type, Payload: job.InputJSON})
+	}
+	return msgs
+}
+
+// markQueue forgets the jobs queued so far.
+func (e *env) markQueue() {
+	e.t.Helper()
+	if err := e.db.QueryRow(context.Background(), `SELECT COALESCE(MAX(id), 0) FROM outbox_events`).Scan(&e.mark); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 // upload posts content as a multipart file and returns the response.
@@ -142,6 +169,7 @@ func fakeMP4(size int) []byte {
 }
 
 func (e *env) cleanupAsset(id string) {
+	e.assets = append(e.assets, id)
 	e.t.Cleanup(func() {
 		ctx := context.Background()
 		e.storage.Delete(ctx, storage.SourceKey(id))
@@ -201,10 +229,10 @@ func TestUploadCreatesAssetJobsAndEnqueuesFirst(t *testing.T) {
 		}
 	}
 
-	if len(e.enqueued) != 1 || e.enqueued[0].JobID != detail.Jobs[0].ID || e.enqueued[0].Type != jobcontracts.JobTypeExtractMetadata {
-		t.Fatalf("enqueued = %+v, want only the first job", e.enqueued)
+	if len(e.queued()) != 1 || e.queued()[0].JobID != detail.Jobs[0].ID || e.queued()[0].Type != jobcontracts.JobTypeExtractMetadata {
+		t.Fatalf("enqueued = %+v, want only the first job", e.queued())
 	}
-	in, err := jobcontracts.Decode[jobcontracts.ExtractMetadataInput](e.enqueued[0])
+	in, err := jobcontracts.Decode[jobcontracts.ExtractMetadataInput](e.queued()[0])
 	if err != nil || in.AssetID != created.AssetID || in.StorageKey != detail.Source.StorageKey {
 		t.Fatalf("payload = %+v, %v", in, err)
 	}
@@ -311,32 +339,6 @@ func TestUploadRejections(t *testing.T) {
 				t.Errorf("%s: asset %s was left behind", tc.name, a.ID)
 			}
 		}
-	}
-}
-
-func TestUploadEnqueueFailureMarksAssetFailed(t *testing.T) {
-	e := newEnv(t, 0)
-	e.failNext = true
-	name := "orphan-" + time.Now().Format("150405.000000") + ".mp4"
-	rec := e.upload(name, fakeMP4(1024))
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status %d, want 500", rec.Code)
-	}
-
-	assets, _ := e.store.ListAssets(context.Background(), domain.AssetFailed)
-	var id string
-	for _, a := range assets {
-		if a.Filename == name {
-			id = a.ID
-		}
-	}
-	if id == "" {
-		t.Fatal("asset should be kept and marked failed")
-	}
-	e.cleanupAsset(id)
-	jobs, _ := e.store.ListJobs(context.Background(), id)
-	if jobs[0].Status != domain.JobFailed || jobs[0].ErrorMessage == nil {
-		t.Fatalf("first job = %+v, want failed with a message", jobs[0])
 	}
 }
 
@@ -454,15 +456,15 @@ func TestRerunJob(t *testing.T) {
 		}
 	}
 
-	e.enqueued = nil
+	e.markQueue()
 	var job struct{ ID, Type, Status string }
 	if code := e.post("/assets/"+id+"/jobs", `{"type":"generate-thumbnail"}`, &job); code != http.StatusAccepted {
 		t.Fatalf("re-run thumbnail: %d", code)
 	}
-	if job.Type != "generate-thumbnail" || job.Status != "pending" || len(e.enqueued) != 1 || e.enqueued[0].JobID != job.ID {
-		t.Fatalf("job = %+v, enqueued = %+v", job, e.enqueued)
+	if job.Type != "generate-thumbnail" || job.Status != "pending" || len(e.queued()) != 1 || e.queued()[0].JobID != job.ID {
+		t.Fatalf("job = %+v, enqueued = %+v", job, e.queued())
 	}
-	in, _ := jobcontracts.Decode[jobcontracts.GenerateThumbnailInput](e.enqueued[0])
+	in, _ := jobcontracts.Decode[jobcontracts.GenerateThumbnailInput](e.queued()[0])
 	if in.AssetID != id || in.StorageKey != storage.SourceKey(id) || in.AtSecond != 3 {
 		t.Fatalf("payload = %+v", in)
 	}
@@ -478,13 +480,13 @@ func TestRerunJob(t *testing.T) {
 	// Re-running the clip suggestions also tracks faces again, after them.
 	e.store.StartJob(ctx, job.ID)
 	e.store.FinishJob(ctx, job.ID, nil)
-	e.enqueued = nil
+	e.markQueue()
 	var clips struct{ ID, Type string }
 	if code := e.post("/assets/"+id+"/jobs", `{"type":"suggest-clips"}`, &clips); code != http.StatusAccepted {
 		t.Fatalf("re-run clips: %d", code)
 	}
-	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeSuggestClips {
-		t.Fatalf("enqueued = %+v, want only suggest-clips", e.enqueued)
+	if len(e.queued()) != 1 || e.queued()[0].Type != jobcontracts.JobTypeSuggestClips {
+		t.Fatalf("enqueued = %+v, want only suggest-clips", e.queued())
 	}
 	track, err := e.store.NextPendingJob(ctx, id, jobcontracts.JobTypeTrackFaces)
 	if err != nil {
@@ -697,7 +699,7 @@ func TestClips(t *testing.T) {
 	if code := e.post(exportPath, `{"format": "vertical", "captions": false}`, &job); code != http.StatusAccepted || job.Type != jobcontracts.JobTypeExportClip {
 		t.Fatalf("export: %d %+v", code, job)
 	}
-	msg := e.enqueued[len(e.enqueued)-1]
+	msg := e.queued()[len(e.queued())-1]
 	in, err := jobcontracts.Decode[jobcontracts.ExportClipInput](msg)
 	if err != nil || msg.Stream() != jobcontracts.StreamJobs || in.ClipID != best || in.Format != "vertical" || in.Captions || in.CaptionStyle != "highlight" ||
 		in.StorageKey != storage.SourceKey(id) || in.OutputKey != storage.ClipKey(id, best, "vertical") {
@@ -734,7 +736,7 @@ func TestClips(t *testing.T) {
 	if code := e.post(exportPath, `{"format": "vertical-blur", "captionStyle": "box", "captionPosition": "top", "captionColor": "green", "captionCaps": true}`, &withOptions); code != http.StatusAccepted {
 		t.Fatalf("export with caption options: %d", code)
 	}
-	opts, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[len(e.enqueued)-1])
+	opts, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.queued()[len(e.queued())-1])
 	if opts.CaptionPosition != "top" || opts.CaptionColor != "green" || opts.CaptionCaps == nil || !*opts.CaptionCaps {
 		t.Fatalf("queued %+v", opts)
 	}
@@ -810,27 +812,27 @@ func TestExportWithTranslatedCaptions(t *testing.T) {
 	}
 
 	// The transcript's own language: no translation.
-	e.enqueued = nil
+	e.markQueue()
 	var job struct{ ID, Type, Status string }
 	if code := e.post(exportPath, `{"format": "vertical", "captionLanguage": "pt"}`, &job); code != http.StatusAccepted {
 		t.Fatalf("export in the transcript's language: %d", code)
 	}
-	in, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
-	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeExportClip || in.CaptionLanguage != "" {
-		t.Fatalf("enqueued %+v, caption language %q", e.enqueued, in.CaptionLanguage)
+	in, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.queued()[0])
+	if len(e.queued()) != 1 || e.queued()[0].Type != jobcontracts.JobTypeExportClip || in.CaptionLanguage != "" {
+		t.Fatalf("enqueued %+v, caption language %q", e.queued(), in.CaptionLanguage)
 	}
 	e.store.FinishJob(ctx, job.ID, nil)
 
 	// A new language: the translation is queued, the export waits for it.
-	e.enqueued = nil
+	e.markQueue()
 	if code := e.post(exportPath, `{"format": "vertical", "captionLanguage": "en", "captionStyle": "karaoke"}`, &job); code != http.StatusAccepted ||
 		job.Type != jobcontracts.JobTypeExportClip || job.Status != "pending" {
 		t.Fatalf("export in English: %d %+v", code, job)
 	}
-	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeTranslateTranscript || e.enqueued[0].Stream() != jobcontracts.StreamAIJobs {
-		t.Fatalf("enqueued = %+v, want only the translation, on the AI stream", e.enqueued)
+	if len(e.queued()) != 1 || e.queued()[0].Type != jobcontracts.JobTypeTranslateTranscript || e.queued()[0].Stream() != jobcontracts.StreamAIJobs {
+		t.Fatalf("enqueued = %+v, want only the translation, on the AI stream", e.queued())
 	}
-	tin, _ := jobcontracts.Decode[jobcontracts.TranslateTranscriptInput](e.enqueued[0])
+	tin, _ := jobcontracts.Decode[jobcontracts.TranslateTranscriptInput](e.queued()[0])
 	waiting, _ := e.store.GetJob(ctx, job.ID)
 	win, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](jobcontracts.Message{Payload: waiting.InputJSON})
 	if tin.AssetID != id || tin.Language != "en" || win.CaptionLanguage != "en" || win.CaptionStyle != "karaoke" {
@@ -853,9 +855,9 @@ func TestExportWithTranslatedCaptions(t *testing.T) {
 	}
 
 	// The workers finish: a translation, its subtitles and the clip.
-	e.store.FinishJob(ctx, e.enqueued[0].JobID, nil)
+	e.store.FinishJob(ctx, e.queued()[0].JobID, nil)
 	e.store.FinishJob(ctx, job.ID, nil)
-	e.store.SaveTranslation(ctx, domain.Translation{ID: domain.NewID(), AssetID: id, JobID: e.enqueued[0].JobID, Language: "en", SourceLanguage: "pt", Model: "m"})
+	e.store.SaveTranslation(ctx, domain.Translation{ID: domain.NewID(), AssetID: id, JobID: e.queued()[0].JobID, Language: "en", SourceLanguage: "pt", Model: "m"})
 	for _, sub := range []struct{ key, meta string }{
 		{storage.SubtitlesKey(id, "pt"), `{"language":"pt"}`},
 		{storage.SubtitlesKey(id, "en"), `{"language":"en","translatedFrom":"pt"}`},
@@ -886,21 +888,21 @@ func TestExportWithTranslatedCaptions(t *testing.T) {
 	}
 
 	// The translation exists: the export goes straight to the media worker.
-	e.enqueued = nil
+	e.markQueue()
 	if code := e.post(exportPath, `{"format": "original", "captionLanguage": "en"}`, &job); code != http.StatusAccepted {
 		t.Fatalf("second export in English: %d", code)
 	}
-	in, _ = jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
-	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeExportClip || in.CaptionLanguage != "en" {
-		t.Fatalf("enqueued %+v, caption language %q", e.enqueued, in.CaptionLanguage)
+	in, _ = jobcontracts.Decode[jobcontracts.ExportClipInput](e.queued()[0])
+	if len(e.queued()) != 1 || e.queued()[0].Type != jobcontracts.JobTypeExportClip || in.CaptionLanguage != "en" {
+		t.Fatalf("enqueued %+v, caption language %q", e.queued(), in.CaptionLanguage)
 	}
 	e.store.FinishJob(ctx, job.ID, nil)
 	// Without captions, the language does not matter.
-	e.enqueued = nil
+	e.markQueue()
 	e.post(exportPath, `{"format": "original", "captions": false, "captionLanguage": "es"}`, &job)
-	in, _ = jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
-	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeExportClip || in.CaptionLanguage != "" {
-		t.Fatalf("without captions: enqueued %+v, caption language %q", e.enqueued, in.CaptionLanguage)
+	in, _ = jobcontracts.Decode[jobcontracts.ExportClipInput](e.queued()[0])
+	if len(e.queued()) != 1 || e.queued()[0].Type != jobcontracts.JobTypeExportClip || in.CaptionLanguage != "" {
+		t.Fatalf("without captions: enqueued %+v, caption language %q", e.queued(), in.CaptionLanguage)
 	}
 	e.store.FinishJob(ctx, job.ID, nil)
 
@@ -970,7 +972,7 @@ func TestEditClip(t *testing.T) {
 	}
 
 	// Only the title: the face track stays and nothing is queued.
-	e.enqueued = nil
+	e.markQueue()
 	var clip struct {
 		Title        string
 		Start, End   float64
@@ -981,8 +983,8 @@ func TestEditClip(t *testing.T) {
 	if code := e.send(http.MethodPatch, path, `{"title": "  The  hook\n"}`, &clip); code != http.StatusOK {
 		t.Fatalf("title edit: %d", code)
 	}
-	if clip.Title != "The hook" || clip.EditedAt == nil || clip.FaceCoverage == nil || len(e.enqueued) != 0 || clip.Exports[0].Outdated {
-		t.Fatalf("after the title edit: %+v, enqueued %d", clip, len(e.enqueued))
+	if clip.Title != "The hook" || clip.EditedAt == nil || clip.FaceCoverage == nil || len(e.queued()) != 0 || clip.Exports[0].Outdated {
+		t.Fatalf("after the title edit: %+v, enqueued %d", clip, len(e.queued()))
 	}
 
 	// New times: the face track is cleared, this clip is tracked again, and the export is outdated.
@@ -992,10 +994,10 @@ func TestEditClip(t *testing.T) {
 	if clip.Start != 10.25 || clip.End != 40 || clip.FaceCoverage != nil || !clip.Exports[0].Outdated {
 		t.Fatalf("after the times edit: %+v", clip)
 	}
-	if len(e.enqueued) != 1 || e.enqueued[0].Type != jobcontracts.JobTypeTrackFaces || e.enqueued[0].Stream() != jobcontracts.StreamAIJobs {
-		t.Fatalf("enqueued = %+v, want one track-faces job", e.enqueued)
+	if len(e.queued()) != 1 || e.queued()[0].Type != jobcontracts.JobTypeTrackFaces || e.queued()[0].Stream() != jobcontracts.StreamAIJobs {
+		t.Fatalf("enqueued = %+v, want one track-faces job", e.queued())
 	}
-	in, _ := jobcontracts.Decode[jobcontracts.TrackFacesInput](e.enqueued[0])
+	in, _ := jobcontracts.Decode[jobcontracts.TrackFacesInput](e.queued()[0])
 	if in.AssetID != id || in.ClipID != clipID || in.StorageKey != storage.SourceKey(id) {
 		t.Fatalf("track-faces input = %+v", in)
 	}
@@ -1198,11 +1200,11 @@ func TestVignettesAndPresets(t *testing.T) {
 		t.Fatalf("an unknown preset: %d", code)
 	}
 	var job struct{ ID string }
-	e.enqueued = nil
+	e.markQueue()
 	if code := e.post(exportPath, `{"format": "vertical", "presetId": "`+preset.ID+`", "captionColor": "green"}`, &job); code != http.StatusAccepted {
 		t.Fatalf("export with the preset: %d", code)
 	}
-	in, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
+	in, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.queued()[0])
 	if in.Preset != name || in.Intro == nil || in.Intro.Vertical != storage.VignetteKey(intro.ID) || in.Intro.Horizontal != "" || in.Outro != nil ||
 		in.CaptionStyle != "box" || in.CaptionColor != "green" || in.CaptionCaps == nil || !*in.CaptionCaps || in.CaptionPosition != "" ||
 		in.CaptionLanguage != "" { // the preset's English is the transcript's own
@@ -1230,9 +1232,9 @@ func TestVignettesAndPresets(t *testing.T) {
 		updated.Name != name+" v2" || updated.Captions || updated.IntroVerticalID != nil || updated.OutroVerticalID == nil {
 		t.Fatalf("update: %d %+v", code, updated)
 	}
-	e.enqueued = nil
+	e.markQueue()
 	e.post(exportPath, `{"format": "original", "presetId": "`+preset.ID+`"}`, &job)
-	in, _ = jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
+	in, _ = jobcontracts.Decode[jobcontracts.ExportClipInput](e.queued()[0])
 	if in.Captions || in.Intro != nil || in.Outro == nil || in.Outro.Vertical != storage.VignetteKey(outro.ID) {
 		t.Fatalf("queued with the new preset: %+v", in)
 	}
@@ -1386,11 +1388,11 @@ func TestWatermarksAndPresets(t *testing.T) {
 	for _, j := range jobs {
 		e.store.FinishJob(ctx, j.ID, nil)
 	}
-	e.enqueued = nil
+	e.markQueue()
 	if code := e.post("/assets/"+id+"/clips/"+clipID+"/exports", `{"format": "vertical", "captions": false, "presetId": "`+preset.ID+`"}`, nil); code != http.StatusAccepted {
 		t.Fatalf("export: %d", code)
 	}
-	in, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.enqueued[0])
+	in, _ := jobcontracts.Decode[jobcontracts.ExportClipInput](e.queued()[0])
 	if in.Watermark == nil || in.Watermark.Key != storage.WatermarkKey(logo.ID, ".png") || in.Watermark.Position != "bottom-left" ||
 		in.Watermark.Size != 25 || in.Watermark.Opacity != 60 {
 		t.Fatalf("queued watermark %+v", in.Watermark)

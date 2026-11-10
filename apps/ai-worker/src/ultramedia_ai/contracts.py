@@ -49,6 +49,13 @@ FIELD_JOB_ID = "job_id"
 FIELD_TYPE = "type"
 FIELD_PAYLOAD = "payload"
 
+# Domain events (docs/adr/0034). Finishing a job records job.finished in the
+# outbox, in the same transaction as the result; the relay in the Go
+# processes then moves the pipeline on and sends queued jobs to Redis.
+EVENT_JOB_QUEUED = "job.queued"
+EVENT_JOB_FINISHED = "job.finished"
+OUTBOX_CHANNEL = "outbox_events"
+
 AI_JOB_TYPES = {JOB_TRANSCRIBE_AUDIO, JOB_ANALYZE_TRANSCRIPT, JOB_SUGGEST_CLIPS, JOB_TRACK_FACES, JOB_TRANSLATE_TRANSCRIPT}
 
 _UUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -63,14 +70,6 @@ def stream_for(job_type: str) -> str:
     """The stream a job type is queued on (see jobcontracts.StreamFor)."""
     return STREAM_AI if job_type in AI_JOB_TYPES else STREAM_MEDIA
 
-
-def next_job_type(job_type: str) -> str | None:
-    """The job type that follows job_type in the pipeline, or in AFTER."""
-    try:
-        i = PIPELINE.index(job_type)
-    except ValueError:
-        return AFTER.get(job_type)
-    return PIPELINE[i + 1] if i + 1 < len(PIPELINE) else None
 
 
 @dataclass(frozen=True)

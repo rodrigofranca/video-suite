@@ -1,5 +1,6 @@
 // Package pipeline runs one job end to end: it tracks the job's status in
-// PostgreSQL, records its logs, and starts the next pipeline step.
+// PostgreSQL and records its logs. Finishing a job records the job.finished
+// event, and the outbox relay moves the pipeline on (docs/adr/0034).
 package pipeline
 
 import (
@@ -24,10 +25,8 @@ const DefaultTimeout = 30 * time.Minute
 type Runner struct {
 	Store      *store.Store
 	Dispatcher *jobs.Dispatcher
-	// Enqueue adds a message to the jobs stream.
-	Enqueue func(ctx context.Context, msg jobcontracts.Message) error
-	Log     *slog.Logger
-	Timeout time.Duration // defaults to DefaultTimeout
+	Log        *slog.Logger
+	Timeout    time.Duration // defaults to DefaultTimeout
 }
 
 // Process runs the job a queue message points to. The job row in PostgreSQL
@@ -48,13 +47,8 @@ func (r *Runner) Process(ctx context.Context, msg jobcontracts.Message) error {
 	}
 	if !started {
 		// Delivered twice (e.g. the worker stopped before acking). Do not run
-		// it again, but make sure the pipeline moved on.
+		// it again; the pipeline moved on when it finished.
 		r.log().Info("job already finished, skipping", "job_id", job.ID, "status", job.Status)
-		var prevErr error
-		if job.Status == domain.JobFailed {
-			prevErr = errors.New("failed earlier")
-		}
-		r.advance(context.WithoutCancel(ctx), job, prevErr, log)
 		return nil
 	}
 
@@ -74,10 +68,11 @@ func (r *Runner) Process(ctx context.Context, msg jobcontracts.Message) error {
 	} else {
 		log.Info("job finished")
 	}
+	// Saving the result also records the job.finished event, which settles
+	// the asset and queues the next job.
 	if err := r.Store.FinishJob(bg, job.ID, runErr); err != nil {
 		r.log().Error("could not save job result", "job_id", job.ID, "error", err)
 	}
-	r.advance(bg, job, runErr, log)
 	return runErr
 }
 
@@ -123,44 +118,6 @@ func (r *Runner) progressReporter(ctx context.Context, jobID string) func(int) {
 		}
 		last, lastAt = percent, time.Now()
 	}
-}
-
-// advance updates the asset and enqueues the next pipeline step. An asset is
-// ready when its HLS job succeeds and failed when it fails (docs/adr/0003);
-// other failures do not stop the pipeline (docs/adr/0009). Steps after HLS
-// (audio, transcription) run while the video is already playable.
-func (r *Runner) advance(ctx context.Context, job domain.Job, runErr error, log *slog.Logger) {
-	if job.Type == jobcontracts.JobTypeTranscodeHLS {
-		status := domain.AssetReady
-		if runErr != nil {
-			status = domain.AssetFailed
-		}
-		if err := r.Store.SetAssetStatus(ctx, job.AssetID, status); err != nil {
-			r.log().Error("could not update asset status", "asset_id", job.AssetID, "error", err)
-		}
-	}
-
-	nextType, ok := jobcontracts.NextJobType(job.Type)
-	if !ok {
-		return
-	}
-	next, err := r.Store.NextPendingJob(ctx, job.AssetID, nextType)
-	if errors.Is(err, store.ErrNotFound) {
-		return // already started by an earlier delivery
-	}
-	if err != nil {
-		log.Error("could not load next job: " + err.Error())
-		return
-	}
-	msg := jobcontracts.Message{JobID: next.ID, Type: next.Type, Payload: next.InputJSON}
-	if err := r.Enqueue(ctx, msg); err != nil {
-		// Nothing would ever run the rest of the pipeline: fail it visibly.
-		log.Error("could not enqueue " + next.Type + ": " + err.Error())
-		r.Store.FinishJob(ctx, next.ID, fmt.Errorf("could not enqueue job: %w", err))
-		r.Store.SetAssetStatus(ctx, job.AssetID, domain.AssetFailed)
-		return
-	}
-	log.Info("queued next job", "next_type", next.Type, "next_job_id", next.ID)
 }
 
 func (r *Runner) log() *slog.Logger {

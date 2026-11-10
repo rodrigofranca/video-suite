@@ -35,7 +35,7 @@ These parts of the PRD v0.1 and the roadmap are superseded:
 
 Confirmed on 2026-11-07 and recorded as ADRs:
 
-- [0009](adr/0009-pipeline-chaining.md): the API creates all job rows and enqueues the first; the worker enqueues the next when a job ends.
+- [0009](adr/0009-pipeline-chaining.md): the API creates all job rows and queues the first; the next is queued when a job ends (through the outbox since 0034).
 - [0010](adr/0010-public-hls-playback.md): the player reads HLS straight from storage; only `assets/*/hls/*` is public.
 - [0011](adr/0011-status-polling.md): the dashboard polls every 3 seconds.
 - [0012](adr/0012-hls-js-before-ultramedia.md): `hls.js` until the UltraMedia player is packaged.
@@ -68,3 +68,4 @@ Confirmed on 2026-11-07 and recorded as ADRs:
 - [0031](adr/0031-watermark.md): a watermark image in presets, in a corner, sized by the clip's shorter side so it matches in both shapes, under the captions and not on the vignettes.
 - [0032](adr/0032-ai-usage.md): every call to the language model is recorded with its tokens and the cost LiteLLM reports; totals per video and per period in the dashboard.
 - [0033](adr/0033-use-cases-ports-and-adapters.md): a light Clean Architecture in the API: use cases in `apps/api/internal/app` behind small ports, HTTP handlers as adapters, reads stay direct; every command is a use case now (upload, delete, re-run, clip edit and export, presets), and vignettes and watermarks share one library with a strategy per kind of file.
+- [0034](adr/0034-outbox-and-domain-events.md): a transactional outbox with domain events: `job.queued` and `job.finished` are recorded with the change, and a relay in the API and the media worker sends jobs to Redis and moves the pipeline on; Redis down no longer fails videos; chaining lives in one place, in Go.

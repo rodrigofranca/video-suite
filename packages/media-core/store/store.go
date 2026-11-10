@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"ultramedia/media-core/domain"
+
+	jobcontracts "ultramedia/job-contracts"
 )
 
 // ErrNotFound is returned when a row does not exist (domain.ErrNotFound).
@@ -174,8 +176,10 @@ func (s *Store) SetAssetStatus(ctx context.Context, id, status string) error {
 	return err
 }
 
-// CompleteUpload records the stored source file and the pipeline jobs, and
-// moves the asset to processing, all in one transaction.
+// CompleteUpload records the stored source file and the pipeline jobs,
+// queues the first job and moves the asset to processing, all in one
+// transaction. The worker that runs a job queues the next one when it ends
+// (the job.finished event).
 func (s *Store) CompleteUpload(ctx context.Context, src domain.Source, jobs []domain.Job) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		_, err := tx.Exec(ctx,
@@ -192,6 +196,11 @@ func (s *Store) CompleteUpload(ctx context.Context, src domain.Source, jobs []do
 				j.ID, j.AssetID, j.Type, j.InputJSON, j.Status, j.CreatedAt)
 			if err != nil {
 				return fmt.Errorf("insert job %s: %w", j.Type, err)
+			}
+		}
+		if len(jobs) > 0 {
+			if err := queueJob(ctx, tx, jobs[0]); err != nil {
+				return err
 			}
 		}
 		_, err = tx.Exec(ctx,
@@ -250,7 +259,9 @@ func (s *Store) StartJob(ctx context.Context, id string) (bool, error) {
 	return tag.RowsAffected() == 1, nil
 }
 
-// FinishJob marks a job done, or failed with jobErr's message.
+// FinishJob marks a job done, or failed with jobErr's message, and records
+// the job.finished event that moves the pipeline on, in one transaction. An
+// unknown job is left alone.
 func (s *Store) FinishJob(ctx context.Context, id string, jobErr error) error {
 	status, progress := domain.JobDone, new(int)
 	*progress = 100
@@ -260,19 +271,29 @@ func (s *Store) FinishJob(ctx context.Context, id string, jobErr error) error {
 		m := jobErr.Error()
 		msg = &m
 	}
-	_, err := s.db.Exec(ctx,
-		`UPDATE processing_jobs
-		 SET status = $2, progress = COALESCE($3, progress), error_message = $4, completed_at = NOW()
-		 WHERE id = $1`,
-		id, status, progress, msg)
-	return err
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		var assetID string
+		err := tx.QueryRow(ctx,
+			`UPDATE processing_jobs
+			 SET status = $2, progress = COALESCE($3, progress), error_message = $4, completed_at = NOW()
+			 WHERE id = $1 RETURNING asset_id`,
+			id, status, progress, msg).Scan(&assetID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return recordEvent(ctx, tx, jobcontracts.EventJobFinished, assetID, id)
+	})
 }
 
 // ErrBusy is returned when an asset still has jobs pending or running.
 var ErrBusy = domain.ErrBusy
 
 // CreateJobIfIdle adds a pending job for an asset whose jobs have all
-// finished, and the pending jobs in then, which the pipeline runs after it.
+// finished and queues it, with the pending jobs in then, which the pipeline
+// queues after it.
 // When assetStatus is not empty the asset moves to that status in the same
 // transaction. It returns ErrNotFound for an unknown asset and ErrBusy while
 // any job of the asset is pending or running. The asset row is locked, so
@@ -303,6 +324,9 @@ func (s *Store) CreateJobIfIdle(ctx context.Context, job domain.Job, assetStatus
 				return err
 			}
 		}
+		if err := queueJob(ctx, tx, job); err != nil {
+			return err
+		}
 		if assetStatus == "" {
 			return nil
 		}
@@ -321,13 +345,12 @@ func (s *Store) SetJobProgress(ctx context.Context, id string, progress int) err
 	return err
 }
 
-// NextPendingJob returns the asset's pending job of the given type.
+const nextPendingJob = `SELECT ` + jobColumns + ` FROM processing_jobs
+	WHERE asset_id = $1 AND type = $2 AND status = $3 ORDER BY created_at LIMIT 1`
+
+// NextPendingJob returns the asset's oldest pending job of a type.
 func (s *Store) NextPendingJob(ctx context.Context, assetID, jobType string) (domain.Job, error) {
-	return scanJob(s.db.QueryRow(ctx,
-		`SELECT `+jobColumns+` FROM processing_jobs
-		 WHERE asset_id = $1 AND type = $2 AND status = $3
-		 ORDER BY created_at LIMIT 1`,
-		assetID, jobType, domain.JobPending))
+	return scanJob(s.db.QueryRow(ctx, nextPendingJob, assetID, jobType, domain.JobPending))
 }
 
 // ---- Job logs ----
@@ -551,9 +574,9 @@ func (s *Store) GetClip(ctx context.Context, id string) (domain.Clip, error) {
 
 // EditClipIfIdle sets a clip's start, end and title, and marks it edited,
 // while none of its asset's jobs is pending or running. With retrack, the
-// clip's face track is cleared and retrack is added as a pending job in the
-// same transaction, to track the new range. It returns ErrNotFound for an
-// unknown clip and ErrBusy while the asset is busy.
+// clip's face track is cleared and retrack is added as a pending job and
+// queued, in the same transaction, to track the new range. It returns
+// ErrNotFound for an unknown clip and ErrBusy while the asset is busy.
 func (s *Store) EditClipIfIdle(ctx context.Context, c domain.Clip, retrack *domain.Job) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		var assetID string
@@ -587,7 +610,11 @@ func (s *Store) EditClipIfIdle(ctx context.Context, c domain.Clip, retrack *doma
 			`INSERT INTO processing_jobs (id, asset_id, type, input_json, status, created_at)
 			 VALUES ($1, $2, $3, $4, $5, $6)`,
 			retrack.ID, assetID, retrack.Type, retrack.InputJSON, domain.JobPending, retrack.CreatedAt)
-		return err
+		if err != nil {
+			return err
+		}
+		retrack.AssetID = assetID
+		return queueJob(ctx, tx, *retrack)
 	})
 }
 
