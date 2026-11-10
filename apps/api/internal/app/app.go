@@ -15,8 +15,6 @@ import (
 	"io"
 
 	"ultramedia/media-core/domain"
-
-	jobcontracts "ultramedia/job-contracts"
 )
 
 // ---- Errors ----
@@ -71,13 +69,13 @@ type Assets interface {
 	GetSource(ctx context.Context, assetID string) (domain.Source, error)
 }
 
-// AssetWriter creates, completes and deletes videos. The IfIdle methods
-// return domain.ErrBusy while the asset is uploading or has a job pending
-// or running, and domain.ErrNotFound for an unknown one.
+// AssetWriter creates, completes and deletes videos. CompleteUpload queues
+// the first job in the same transaction (the outbox, docs/adr/0034). The
+// IfIdle methods return domain.ErrBusy while the asset is uploading or has a
+// job pending or running, and domain.ErrNotFound for an unknown one.
 type AssetWriter interface {
 	CreateAsset(ctx context.Context, a domain.Asset) error
 	CompleteUpload(ctx context.Context, src domain.Source, jobs []domain.Job) error
-	SetAssetStatus(ctx context.Context, id, status string) error
 	DeleteAsset(ctx context.Context, id string) error
 	DeleteAssetIfIdle(ctx context.Context, id string) error
 }
@@ -93,7 +91,8 @@ type Clips interface {
 }
 
 // ClipWriter changes and deletes clips, only while the asset is idle
-// (domain.ErrBusy otherwise).
+// (domain.ErrBusy otherwise). EditClipIfIdle queues retrack, when given, in
+// the same transaction.
 type ClipWriter interface {
 	EditClipIfIdle(ctx context.Context, c domain.Clip, retrack *domain.Job) error
 	DeleteClipIfIdle(ctx context.Context, assetID, clipID string) error
@@ -136,23 +135,13 @@ type Files interface {
 	DeletePrefix(ctx context.Context, prefix string) (int, error)
 }
 
-// Jobs records processing jobs. CreateJobIfIdle returns domain.ErrBusy
-// while the asset has a job pending or running.
+// Jobs records processing jobs. CreateJobIfIdle queues the job in the same
+// transaction (the outbox, docs/adr/0034), and returns domain.ErrBusy while
+// the asset has a job pending or running.
 type Jobs interface {
 	CreateJobIfIdle(ctx context.Context, job domain.Job, assetStatus string, then ...domain.Job) error
-	FinishJob(ctx context.Context, id string, jobErr error) error
 	GetJob(ctx context.Context, id string) (domain.Job, error)
 }
-
-// Queue hands a job to the workers.
-type Queue interface {
-	Enqueue(ctx context.Context, msg jobcontracts.Message) error
-}
-
-// QueueFunc lets a function be the Queue.
-type QueueFunc func(ctx context.Context, msg jobcontracts.Message) error
-
-func (f QueueFunc) Enqueue(ctx context.Context, msg jobcontracts.Message) error { return f(ctx, msg) }
 
 // isNotFound reports a port's "does not exist".
 func isNotFound(err error) bool { return errors.Is(err, domain.ErrNotFound) }

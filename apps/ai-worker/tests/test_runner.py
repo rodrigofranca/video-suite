@@ -13,12 +13,11 @@ from ultramedia_ai.runner import Retry, Runner
 class Harness:
     def __init__(self, store, asset):
         self.store, self.asset = store, asset
-        self.enqueued: list[contracts.Message] = []
         self.calls: list[str] = []
         self.behavior = {}
         self.stop = threading.Event()
         handlers = {t: self._handler(t) for t in contracts.PIPELINE}
-        self.runner = Runner(store, handlers, self.enqueued.append, logging.getLogger("test"), self.stop, timeout_seconds=5)
+        self.runner = Runner(store, handlers, logging.getLogger("test"), self.stop, timeout_seconds=5)
 
     def _handler(self, job_type):
         def handle(ctx, payload):
@@ -36,6 +35,12 @@ class Harness:
     def job(self, job_type):
         return self.store.get_job(self.asset["jobs"][job_type])
 
+    def events(self, job_type):
+        """The outbox events of a job: what the relay will act on (docs/adr/0034)."""
+        return self.store.conn.execute(
+            "SELECT type, handled_at FROM outbox_events WHERE job_id = %s ORDER BY id", (self.asset["jobs"][job_type],)
+        ).fetchall()
+
     def logs(self, job_type):
         rows = self.store.conn.execute(
             "SELECT level, message FROM job_logs WHERE job_id = %s ORDER BY timestamp, id", (self.asset["jobs"][job_type],)
@@ -48,55 +53,39 @@ def h(store, asset):
     return Harness(store, asset)
 
 
-def test_success_chains_next_job(h):
+def test_success_records_the_finished_event(h):
     h.process(contracts.JOB_EXTRACT_AUDIO)
     job = h.job(contracts.JOB_EXTRACT_AUDIO)
     assert (job.status, job.progress) == ("done", 100)
-    assert len(h.enqueued) == 1
-    nxt = h.enqueued[0]
-    assert nxt.job_id == h.asset["jobs"][contracts.JOB_TRANSCRIBE_AUDIO]
-    assert nxt.stream == contracts.STREAM_AI
+    # The relay in the Go processes queues the next job from this event.
+    assert h.events(contracts.JOB_EXTRACT_AUDIO) == [(contracts.EVENT_JOB_FINISHED, None)]
     messages = [m for _, m in h.logs(contracts.JOB_EXTRACT_AUDIO)]
-    assert messages[:3] == ["job started", "working", "job finished"]
-    assert messages[3].startswith("queued next job next_type=transcribe-audio")
-
-
-def test_transcription_chains_analysis_on_the_ai_stream(h):
-    h.process(contracts.JOB_TRANSCRIBE_AUDIO)
-    assert [m.job_id for m in h.enqueued] == [h.asset["jobs"][contracts.JOB_ANALYZE_TRANSCRIPT]]
-    assert h.enqueued[0].stream == contracts.STREAM_AI
-
-
-def test_last_job_does_not_chain(h):
-    h.process(contracts.JOB_TRACK_FACES)
-    assert h.job(contracts.JOB_TRACK_FACES).status == "done"
-    assert h.enqueued == []
+    assert messages == ["job started", "working", "job finished"]
 
 
 @pytest.mark.parametrize("fails", [False, True])
-def test_a_translation_queues_the_export_waiting_for_it(h, fails):
-    """Even after a failed translation: the export then fails with the reason."""
-    ids = {}
-    for i, (job_type, payload) in enumerate(
-        [(contracts.JOB_TRANSLATE_TRANSCRIPT, '{"language": "en"}'), (contracts.JOB_EXPORT_CLIP, '{"format": "vertical"}')]
-    ):
-        ids[job_type] = h.store.conn.execute(
-            """INSERT INTO processing_jobs (id, asset_id, type, input_json, status, created_at)
-               VALUES (gen_random_uuid(), %s, %s, %s, 'pending', NOW() + %s * INTERVAL '1 ms') RETURNING id::text""",
-            (h.asset["id"], job_type, payload, i),
-        ).fetchone()[0]
+def test_a_failed_job_records_the_event_too(h, fails):
+    """The pipeline goes on after a failure: an export waiting for a failed
+    translation then fails with the reason."""
+    def crash(ctx):
+        raise RuntimeError("model crashed")
 
-    def translate(ctx, payload):
-        if fails:
-            raise RuntimeError("gateway down")
-
-    h.runner.handlers[contracts.JOB_TRANSLATE_TRANSCRIPT] = translate
-    job = h.store.get_job(ids[contracts.JOB_TRANSLATE_TRANSCRIPT])
+    if fails:
+        h.behavior[contracts.JOB_TRANSCRIBE_AUDIO] = crash
     try:
-        h.runner.process(contracts.Message(job.id, job.type, job.input_json))
+        h.process(contracts.JOB_TRANSCRIBE_AUDIO)
     except RuntimeError:
         assert fails
-    assert [(m.job_id, m.stream) for m in h.enqueued] == [(ids[contracts.JOB_EXPORT_CLIP], contracts.STREAM_MEDIA)]
+    assert h.job(contracts.JOB_TRANSCRIBE_AUDIO).status == ("failed" if fails else "done")
+    assert h.events(contracts.JOB_TRANSCRIBE_AUDIO) == [(contracts.EVENT_JOB_FINISHED, None)]
+
+
+def test_an_unknown_job_records_nothing(store):
+    store.finish_job("00000000-0000-4000-8000-000000000000", None)
+    n = store.conn.execute(
+        "SELECT COUNT(*) FROM outbox_events WHERE job_id = '00000000-0000-4000-8000-000000000000'"
+    ).fetchone()[0]
+    assert n == 0
 
 
 def test_model_calls_are_recorded_for_the_job(h):
@@ -136,6 +125,7 @@ def test_duplicate_delivery_is_skipped(h):
     h.process(contracts.JOB_TRANSCRIBE_AUDIO)
     h.process(contracts.JOB_TRANSCRIBE_AUDIO)
     assert h.calls == [contracts.JOB_TRANSCRIBE_AUDIO]
+    assert len(h.events(contracts.JOB_TRANSCRIBE_AUDIO)) == 1  # the pipeline moves on once
 
 
 def test_timeout(h):
@@ -183,18 +173,6 @@ def test_progress_is_throttled(h, monkeypatch):
     h.process(contracts.JOB_TRANSCRIBE_AUDIO)
     assert seen == [10, 10]
     assert h.job(contracts.JOB_TRANSCRIBE_AUDIO).progress == 100
-
-
-def test_enqueue_failure_fails_next_job_and_asset(h):
-    def broken(msg):
-        raise ConnectionError("redis down")
-
-    h.runner.enqueue = broken
-    h.process(contracts.JOB_EXTRACT_AUDIO)
-    nxt = h.job(contracts.JOB_TRANSCRIBE_AUDIO)
-    assert nxt.status == "failed" and "could not enqueue" in nxt.error_message
-    status = h.store.conn.execute("SELECT status FROM media_assets WHERE id = %s", (h.asset["id"],)).fetchone()[0]
-    assert status == "failed"
 
 
 def test_unknown_job(h):

@@ -15,6 +15,7 @@ import (
 
 	"ultramedia/api/internal/httpapi"
 	"ultramedia/media-core/db"
+	"ultramedia/media-core/outbox"
 	"ultramedia/media-core/storage"
 	"ultramedia/media-core/store"
 
@@ -77,15 +78,29 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("connect to storage at %s: %w", storageCfg.Endpoint, err)
 	}
 
+	st := store.New(pool)
+	// The outbox relay sends the jobs the API records to Redis (docs/adr/0034).
+	// The media worker runs one too; they share the work.
+	relay := &outbox.Relay{Store: st, Handlers: outbox.Handlers(func(ctx context.Context, msg jobcontracts.Message) error {
+		return rdb.XAdd(ctx, &redis.XAddArgs{Stream: msg.Stream(), Values: msg.Values()}).Err()
+	}), Log: log.With("component", "outbox")}
+	relayCtx, stopRelay := context.WithCancel(ctx)
+	relayDone := make(chan struct{})
+	go func() {
+		relay.Run(relayCtx)
+		close(relayDone)
+	}()
+	defer func() { // stop it before the pool closes
+		stopRelay()
+		<-relayDone
+	}()
+
 	srv := &http.Server{
 		Addr: ":" + port,
 		Handler: httpapi.NewRouter(httpapi.Deps{
-			DB:      pool,
-			Store:   store.New(pool),
-			Storage: files,
-			Enqueue: func(ctx context.Context, msg jobcontracts.Message) error {
-				return rdb.XAdd(ctx, &redis.XAddArgs{Stream: msg.Stream(), Values: msg.Values()}).Err()
-			},
+			DB:            pool,
+			Store:         st,
+			Storage:       files,
 			AllowedOrigin: origin,
 			Log:           log,
 		}),

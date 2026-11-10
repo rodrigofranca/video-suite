@@ -10,8 +10,9 @@ from datetime import datetime
 import psycopg
 from psycopg.types.json import Jsonb
 
+from . import contracts
+
 JOB_PENDING, JOB_RUNNING, JOB_DONE, JOB_FAILED = "pending", "running", "done", "failed"
-ASSET_FAILED = "failed"
 ARTIFACT_SUBTITLES = "subtitles"
 
 
@@ -63,15 +64,25 @@ class Store:
         return cur.rowcount == 1
 
     def finish_job(self, job_id: str, error: str | None) -> None:
-        if error is None:
+        """Save a job's result and record the job.finished event that moves the
+        pipeline on (docs/adr/0034), in one transaction."""
+        with self.conn.transaction():
+            if error is None:
+                row = self.conn.execute(
+                    """UPDATE processing_jobs SET status = %s, progress = 100, error_message = NULL, completed_at = NOW()
+                       WHERE id = %s RETURNING asset_id""",
+                    (JOB_DONE, job_id),
+                ).fetchone()
+            else:
+                row = self.conn.execute(
+                    "UPDATE processing_jobs SET status = %s, error_message = %s, completed_at = NOW() WHERE id = %s RETURNING asset_id",
+                    (JOB_FAILED, error, job_id),
+                ).fetchone()
+            if row is None:
+                return  # an unknown job is left alone, as in Go
             self.conn.execute(
-                "UPDATE processing_jobs SET status = %s, progress = 100, error_message = NULL, completed_at = NOW() WHERE id = %s",
-                (JOB_DONE, job_id),
-            )
-        else:
-            self.conn.execute(
-                "UPDATE processing_jobs SET status = %s, error_message = %s, completed_at = NOW() WHERE id = %s",
-                (JOB_FAILED, error, job_id),
+                "INSERT INTO outbox_events (type, asset_id, job_id) VALUES (%s, %s, %s)",
+                (contracts.EVENT_JOB_FINISHED, row[0], job_id),
             )
 
     def set_progress(self, job_id: str, percent: int) -> None:
@@ -80,22 +91,11 @@ class Store:
             (max(0, min(int(percent), 100)), job_id, JOB_RUNNING),
         )
 
-    def next_pending_job(self, asset_id: str, job_type: str) -> Job | None:
-        row = self.conn.execute(
-            f"""SELECT {_JOB_COLUMNS} FROM processing_jobs
-                WHERE asset_id = %s AND type = %s AND status = %s ORDER BY created_at LIMIT 1""",
-            (asset_id, job_type, JOB_PENDING),
-        ).fetchone()
-        return _job(row)
-
     def add_log(self, job_id: str, level: str, message: str) -> None:
         self.conn.execute(
             "INSERT INTO job_logs (id, job_id, level, message, timestamp) VALUES (%s, %s, %s, %s, NOW())",
             (str(uuid.uuid4()), job_id, level, message),
         )
-
-    def set_asset_status(self, asset_id: str, status: str) -> None:
-        self.conn.execute("UPDATE media_assets SET status = %s, updated_at = NOW() WHERE id = %s", (status, asset_id))
 
     # ---- Outputs ----
 

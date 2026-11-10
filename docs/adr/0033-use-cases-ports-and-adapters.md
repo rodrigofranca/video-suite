@@ -40,6 +40,8 @@ A biblioteca é uma só, com uma estratégia por tipo de arquivo (`app.FileKind`
 
 O HTTP ficou só com o que é HTTP: ler o multipart e o JSON, o limite do corpo (`http.MaxBytesReader`, que responde 413) e o status de cada tipo de erro (`TooLarge` vira 413 e `Unsupported` vira 415). As regras que estavam repetidas nos handlers foram para um lugar só: nome, nome de arquivo, conferência de MP4, leitor que conta e calcula o hash, e a validação do corte (`domain.Clip.Problem`). Só uma resposta mudou: um pedido com corpo inválido recebe 400 antes de o ID ser conferido, como já acontecia na exportação.
 
+**O passo 2 terminou** (ADR 0034). Os jobs vão para a fila por uma outbox transacional, com os eventos `job.queued` e `job.finished`. Os casos de uso não falam mais com o Redis, e a porta `Queue` saiu. O encadeamento ficou num lugar só, em Go.
+
 **A migração é gradual,** um comando por vez, com os testes de integração garantindo que nada muda para quem usa:
 
 1. Os outros comandos da API: editar e apagar corte, apagar vídeo, rodar de novo, upload, presets e biblioteca. As bibliotecas de vinhetas e de marcas d'água viram uma só, genérica.

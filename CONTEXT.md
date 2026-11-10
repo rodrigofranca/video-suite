@@ -59,7 +59,16 @@ Upload triggers automatic job pipeline: `extract-metadata` → `generate-thumbna
 
 `export-clip` is not in the pipeline: it runs when someone asks for a Clip in a format, and, like a re-run, only when no other Job of the Asset is pending or running.
 
-The API creates all the Job rows as `pending` and enqueues only the first. When a Job ends, done or failed, the worker enqueues the next pending Job of the same Asset (ADR 0009). Job statuses: `pending → running → done | failed`.
+The API creates all the Job rows as `pending` and queues only the first. When a Job ends, done or failed, the next pending Job of the same Asset is queued (ADR 0009), through the Outbox (ADR 0034). Job statuses: `pending → running → done | failed`.
+
+## Outbox
+
+Domain events recorded in `outbox_events` in the same transaction as the change that caused them, and handled afterwards by a relay (ADR 0034). So work is never lost between the database and the queue. Two events, named in `packages/job-contracts`:
+
+- `job.queued`: a pending Job may run. The relay sends its message to the Job's stream. Recorded by the upload (the first Job), a re-run, an export and a clip edit.
+- `job.finished`: a Job ended, done or failed. Recorded by both workers when they save the result. The relay settles the Asset (the HLS Job decides `ready` or `failed`) and queues the next pending Job, writing which in the finished Job's log.
+
+The relay runs inside the API and the media worker; each event is claimed by one relay at a time. It wakes on a PostgreSQL notification and looks every 5 s anyway. A failed event is tried again after 1 s, 2 s, 4 s and so on, up to 5 minutes: with Redis down, Jobs stay `pending` until it is back. Handled events are kept 7 days.
 
 ## Transcript
 
@@ -136,6 +145,6 @@ Process that picks pending Jobs and executes them. Separate from the API process
 
 `jobcontracts.StreamFor` decides which stream a Job goes to.
 
-Queue: Redis Streams (XADD/XREADGROUP) for at-least-once delivery and job re-claim on worker crash. NATS is a future upgrade path.
+Queue: Redis Streams (XADD/XREADGROUP) for at-least-once delivery and job re-claim on worker crash. Only the Outbox relay writes to it. NATS is a future upgrade path.
 
 Queue message: fields `job_id`, `type` and `payload` (JSON of the typed input), defined in `packages/job-contracts`. The PostgreSQL job row is the source of truth; the message only says which job to run. The worker acks every message, even when the job fails. It does not ack a job interrupted by shutdown (the job stays `running`), and on restart it first re-runs messages it received but never acked, so `WORKER_NAME` (and `AI_WORKER_NAME`) must stay stable. A duplicate delivery of a finished job is skipped.

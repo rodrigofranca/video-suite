@@ -37,7 +37,9 @@ type fakeStore struct {
 	busy         bool
 	failReads    error // returned by GetTranscript, to see errors pass through
 	created      []domain.Job
-	finished     map[string]error
+	// queued holds the jobs the store was asked to queue, as the real one
+	// records them in the outbox (docs/adr/0034).
+	queued []domain.Job
 }
 
 func newFake() *fakeStore {
@@ -50,7 +52,6 @@ func newFake() *fakeStore {
 		presets:      map[string]domain.Preset{},
 		vignettes:    map[string]domain.Vignette{},
 		watermarks:   map[string]domain.Watermark{},
-		finished:     map[string]error{},
 	}
 }
 
@@ -97,10 +98,7 @@ func (f *fakeStore) CreateJobIfIdle(_ context.Context, job domain.Job, _ string,
 		return domain.ErrBusy
 	}
 	f.created = append(append(f.created, job), then...)
-	return nil
-}
-func (f *fakeStore) FinishJob(_ context.Context, id string, jobErr error) error {
-	f.finished[id] = jobErr
+	f.queued = append(f.queued, job)
 	return nil
 }
 func (f *fakeStore) GetJob(_ context.Context, id string) (domain.Job, error) {
@@ -110,19 +108,6 @@ func (f *fakeStore) GetJob(_ context.Context, id string) (domain.Job, error) {
 		}
 	}
 	return domain.Job{}, domain.ErrNotFound
-}
-
-type fakeQueue struct {
-	sent []jobcontracts.Message
-	err  error
-}
-
-func (q *fakeQueue) Enqueue(_ context.Context, msg jobcontracts.Message) error {
-	if q.err != nil {
-		return q.err
-	}
-	q.sent = append(q.sent, msg)
-	return nil
 }
 
 // seq numbers IDs across use cases, so a fake shared by two runs never
@@ -136,10 +121,8 @@ func fixedClock() clock {
 	}}
 }
 
-func useCase(f *fakeStore, q *fakeQueue) ExportClip {
-	return ExportClip{
-		Assets: f, Clips: f, Speech: f, Brand: f, Jobs: f, Queue: q, clock: fixedClock(),
-	}
+func useCase(f *fakeStore) ExportClip {
+	return ExportClip{Assets: f, Clips: f, Speech: f, Brand: f, Jobs: f, clock: fixedClock()}
 }
 
 func str(s string) *string { return &s }
@@ -164,14 +147,14 @@ func kindOf(err error) Kind {
 }
 
 func TestExportQueuesTheExport(t *testing.T) {
-	f, q := newFake(), &fakeQueue{}
-	res, err := useCase(f, q).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical"})
+	f := newFake()
+	res, err := useCase(f).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Translate != nil || len(f.created) != 1 || len(q.sent) != 1 || q.sent[0].JobID != res.Job.ID ||
-		q.sent[0].Type != jobcontracts.JobTypeExportClip || !res.Job.CreatedAt.Equal(now) {
-		t.Fatalf("result %+v, created %d, sent %+v", res, len(f.created), q.sent)
+	if res.Translate != nil || len(f.created) != 1 || len(f.queued) != 1 || f.queued[0].ID != res.Job.ID ||
+		f.queued[0].Type != jobcontracts.JobTypeExportClip || !res.Job.CreatedAt.Equal(now) {
+		t.Fatalf("result %+v, created %d, sent %+v", res, len(f.created), f.queued)
 	}
 	in := input(t, res.Job)
 	want := jobcontracts.ExportClipInput{AssetID: assetID, ClipID: clipID, StorageKey: "assets/" + assetID + "/source/input.mp4",
@@ -192,13 +175,13 @@ func TestExportNamesWhatIsMissing(t *testing.T) {
 		"an unknown clip":         {AssetID: assetID, ClipID: "44444444-4444-4444-8444-444444444444", Format: "vertical"},
 		"a clip of another video": {AssetID: assetID, ClipID: otherID, Format: "vertical"},
 	} {
-		_, err := useCase(f, &fakeQueue{}).Run(context.Background(), req)
+		_, err := useCase(f).Run(context.Background(), req)
 		if kindOf(err) != NotFound {
 			t.Errorf("%s: %v, want NotFound", name, err)
 		}
 	}
 	delete(f.sources, assetID)
-	_, err := useCase(f, &fakeQueue{}).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical"})
+	_, err := useCase(f).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical"})
 	if kindOf(err) != Conflict || !strings.Contains(err.Error(), "no source file") {
 		t.Errorf("without a source: %v", err)
 	}
@@ -214,7 +197,7 @@ func TestExportRejectsChoicesNotOnOffer(t *testing.T) {
 	} {
 		req.AssetID, req.ClipID = assetID, clipID
 		f := newFake()
-		_, err := useCase(f, &fakeQueue{}).Run(context.Background(), req)
+		_, err := useCase(f).Run(context.Background(), req)
 		if kindOf(err) != Invalid || !errors.Is(err, ErrInvalidChoice) || !strings.Contains(err.Error(), "formats: original") || len(f.created) != 0 {
 			t.Errorf("%s: %v", name, err)
 		}
@@ -222,7 +205,7 @@ func TestExportRejectsChoicesNotOnOffer(t *testing.T) {
 }
 
 func TestExportWithAPreset(t *testing.T) {
-	f, q := newFake(), &fakeQueue{}
+	f := newFake()
 	caps := true
 	f.presets[otherID] = domain.Preset{ID: otherID, Name: "My channel", Captions: true, CaptionStyle: "box", CaptionPosition: "top",
 		CaptionColor: "pink", CaptionCaps: &caps, CaptionLanguage: "pt", IntroVertical: "v1", Watermark: "w1",
@@ -231,7 +214,7 @@ func TestExportWithAPreset(t *testing.T) {
 	f.watermarks["w1"] = domain.Watermark{ID: "w1", StorageKey: "library/watermarks/w1.png"}
 
 	// The request's color wins; the rest comes from the preset; Portuguese is the transcript's own.
-	res, err := useCase(f, q).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical-face",
+	res, err := useCase(f).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical-face",
 		CaptionColor: str("green"), PresetID: otherID})
 	if err != nil {
 		t.Fatal(err)
@@ -250,17 +233,17 @@ func TestExportWithAPreset(t *testing.T) {
 
 	// A preset without captions turns them off unless the request turns them on.
 	f.presets[otherID] = domain.Preset{ID: otherID, Name: "Clean", Captions: false, CaptionStyle: "lines"}
-	res, _ = useCase(f, q).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "original", PresetID: otherID})
+	res, _ = useCase(f).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "original", PresetID: otherID})
 	if input(t, res.Job).Captions {
 		t.Fatal("the preset's captions off was not applied")
 	}
-	res, _ = useCase(f, q).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "original", PresetID: otherID, Captions: yes()})
+	res, _ = useCase(f).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "original", PresetID: otherID, Captions: yes()})
 	if !input(t, res.Job).Captions {
 		t.Fatal("the request's captions on lost to the preset")
 	}
 
 	for _, id := range []string{"nope", "55555555-5555-4555-8555-555555555555"} {
-		_, err := useCase(f, q).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "original", PresetID: id})
+		_, err := useCase(f).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "original", PresetID: id})
 		if kindOf(err) != Invalid || err.Error() != "unknown preset" {
 			t.Errorf("preset %q: %v", id, err)
 		}
@@ -268,15 +251,15 @@ func TestExportWithAPreset(t *testing.T) {
 }
 
 func TestExportTranslatesFirstWhenNeeded(t *testing.T) {
-	f, q := newFake(), &fakeQueue{}
+	f := newFake()
 	req := ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical", CaptionLanguage: str("en")}
-	res, err := useCase(f, q).Run(context.Background(), req)
+	res, err := useCase(f).Run(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Translate == nil || len(f.created) != 2 || f.created[0].Type != jobcontracts.JobTypeTranslateTranscript ||
-		len(q.sent) != 1 || q.sent[0].JobID != res.Translate.ID {
-		t.Fatalf("created %+v, sent %+v", f.created, q.sent)
+		len(f.queued) != 1 || f.queued[0].ID != res.Translate.ID {
+		t.Fatalf("created %+v, sent %+v", f.created, f.queued)
 	}
 	if !res.Job.CreatedAt.After(res.Translate.CreatedAt) || input(t, res.Job).CaptionLanguage != "en" {
 		t.Fatalf("the export does not wait for the translation: %+v", res.Job)
@@ -288,17 +271,17 @@ func TestExportTranslatesFirstWhenNeeded(t *testing.T) {
 	}
 
 	// Once translated, the export goes alone.
-	f, q = newFake(), &fakeQueue{}
+	f = newFake()
 	f.translations[assetID+"/en"] = true
-	res, _ = useCase(f, q).Run(context.Background(), req)
+	res, _ = useCase(f).Run(context.Background(), req)
 	if res.Translate != nil || len(f.created) != 1 || input(t, res.Job).CaptionLanguage != "en" {
 		t.Fatalf("with a translation: %+v", f.created)
 	}
 
 	// Without captions, the language does not matter.
-	f, q = newFake(), &fakeQueue{}
+	f = newFake()
 	req.Captions = no()
-	res, _ = useCase(f, q).Run(context.Background(), req)
+	res, _ = useCase(f).Run(context.Background(), req)
 	if res.Translate != nil || input(t, res.Job).CaptionLanguage != "" {
 		t.Fatalf("without captions: %+v", input(t, res.Job))
 	}
@@ -306,37 +289,26 @@ func TestExportTranslatesFirstWhenNeeded(t *testing.T) {
 	// Without a transcript there is nothing to translate.
 	f = newFake()
 	delete(f.transcripts, assetID)
-	_, err = useCase(f, &fakeQueue{}).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical", CaptionLanguage: str("en")})
+	_, err = useCase(f).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical", CaptionLanguage: str("en")})
 	if kindOf(err) != Conflict || !strings.Contains(err.Error(), "no transcript") {
 		t.Fatalf("without a transcript: %v", err)
 	}
 }
 
 func TestExportWaitsForTheAssetsJobs(t *testing.T) {
-	f, q := newFake(), &fakeQueue{}
+	f := newFake()
 	f.busy = true
-	_, err := useCase(f, q).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical"})
-	if kindOf(err) != Conflict || !errors.Is(err, domain.ErrBusy) || len(q.sent) != 0 {
-		t.Fatalf("busy: %v, sent %v", err, q.sent)
+	_, err := useCase(f).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical"})
+	if kindOf(err) != Conflict || !errors.Is(err, domain.ErrBusy) || len(f.queued) != 0 {
+		t.Fatalf("busy: %v, sent %v", err, f.queued)
 	}
 }
 
-// Failures that the HTTP tests cannot cause.
-func TestExportWhenTheQueueOrTheStoreFails(t *testing.T) {
-	f, q := newFake(), &fakeQueue{err: errors.New("redis down")}
-	_, err := useCase(f, q).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical", CaptionLanguage: str("en")})
-	if kindOf(err) != Unavailable || err.(*Error).Msg != "the job could not be queued" {
-		t.Fatalf("queue down: %v", err)
-	}
-	// Both the translation and the export waiting for it are closed, with the reason.
-	if len(f.finished) != 2 || !strings.Contains(f.finished[f.created[0].ID].Error(), "redis down") ||
-		!strings.Contains(f.finished[f.created[1].ID].Error(), "could not be queued") {
-		t.Fatalf("finished = %v", f.finished)
-	}
-
-	f = newFake()
+// A failure the HTTP tests cannot cause.
+func TestExportWhenTheStoreFails(t *testing.T) {
+	f := newFake()
 	f.failReads = errors.New("connection reset")
-	_, err = useCase(f, &fakeQueue{}).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical", CaptionLanguage: str("en")})
+	_, err := useCase(f).Run(context.Background(), ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical", CaptionLanguage: str("en")})
 	if err == nil || kindOf(err) != 0 || !strings.Contains(err.Error(), "connection reset") {
 		t.Fatalf("a store failure should pass through as an internal error: %v", err)
 	}

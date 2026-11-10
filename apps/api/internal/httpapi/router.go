@@ -12,8 +12,6 @@ import (
 	"ultramedia/media-core/domain"
 	"ultramedia/media-core/storage"
 	"ultramedia/media-core/store"
-
-	jobcontracts "ultramedia/job-contracts"
 )
 
 // Pinger reports whether the database is reachable (satisfied by *pgxpool.Pool).
@@ -26,8 +24,6 @@ type Deps struct {
 	DB      Pinger
 	Store   *store.Store
 	Storage *storage.Client
-	// Enqueue adds a message to the jobs stream.
-	Enqueue func(ctx context.Context, msg jobcontracts.Message) error
 	// MaxUploadBytes limits the size of an uploaded file. Defaults to
 	// domain.MaxUploadBytes.
 	MaxUploadBytes int64
@@ -105,16 +101,17 @@ func NewRouter(deps Deps) http.Handler {
 	return cors(deps.AllowedOrigin, mux)
 }
 
-// wire builds the use cases on the services: the store, the storage and
-// the queue are the adapters behind their ports.
+// wire builds the use cases on the services: the store and the storage are
+// the adapters behind their ports. Jobs reach the queue through the outbox
+// (docs/adr/0034), which the store writes and the relay sends.
 func (a *api) wire() {
-	db, files, queue, log := a.Store, a.Storage, app.QueueFunc(a.Enqueue), a.Log
-	a.uploads = app.UploadVideo{Assets: db, Files: files, Jobs: db, Queue: queue, Log: log, MaxBytes: a.MaxUploadBytes}
+	db, files, log := a.Store, a.Storage, a.Log
+	a.uploads = app.UploadVideo{Assets: db, Files: files, Log: log, MaxBytes: a.MaxUploadBytes}
 	a.videoDeletes = app.DeleteVideo{Assets: db, Writer: db, Files: files, Log: log}
-	a.reruns = app.RerunJob{Assets: db, Writer: db, Jobs: db, Queue: queue, Log: log}
-	a.clipEdits = app.EditClip{Assets: db, Clips: db, Metadata: db, Writer: db, Jobs: db, Queue: queue, Log: log}
+	a.reruns = app.RerunJob{Assets: db, Jobs: db, Log: log}
+	a.clipEdits = app.EditClip{Assets: db, Clips: db, Metadata: db, Writer: db, Log: log}
 	a.clipDeletes = app.DeleteClip{Assets: db, Writer: db, Files: files, Log: log}
-	a.exports = app.ExportClip{Assets: db, Clips: db, Speech: db, Brand: db, Jobs: db, Queue: queue, Log: log}
+	a.exports = app.ExportClip{Assets: db, Clips: db, Speech: db, Brand: db, Jobs: db, Log: log}
 	a.presets = app.SavePreset{Brand: db, Writer: db}
 	a.presetDeletes = app.DeletePreset{Writer: db}
 	a.library = app.Library{Store: db, Files: files, Log: log}

@@ -12,6 +12,7 @@ import (
 
 	"ultramedia/media-core/db"
 	"ultramedia/media-core/domain"
+	"ultramedia/media-core/outbox"
 	"ultramedia/media-core/store"
 	"ultramedia/worker/internal/jobs"
 	"ultramedia/worker/internal/queue"
@@ -25,14 +26,17 @@ type harness struct {
 	t      *testing.T
 	store  *store.Store
 	runner *Runner
-	asset  domain.Asset
-	jobs   []domain.Job // pipeline order
+	// The outbox relay, for this test's video only: it moves the pipeline on
+	// after each job, as the one in the worker process does.
+	relay *outbox.Relay
+	asset domain.Asset
+	jobs  []domain.Job // pipeline order
 
-	mu       sync.Mutex
-	calls    map[string]int // handler calls per job type
-	enqueued []jobcontracts.Message
-	behavior map[string]func(ctx context.Context) error
-	failEnq  bool
+	mu        sync.Mutex
+	calls     map[string]int // handler calls per job type
+	enqueued  []jobcontracts.Message
+	behavior  map[string]func(ctx context.Context) error
+	redisDown bool
 }
 
 func newHarness(t *testing.T) *harness {
@@ -78,24 +82,27 @@ func newHarness(t *testing.T) *harness {
 			return nil
 		})
 	}
-	h.runner = &Runner{
-		Store: h.store, Dispatcher: d, Timeout: 5 * time.Second,
-		Enqueue: func(_ context.Context, m jobcontracts.Message) error {
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			if h.failEnq {
-				return errors.New("redis down")
-			}
-			h.enqueued = append(h.enqueued, m)
-			return nil
-		},
-	}
+	h.runner = &Runner{Store: h.store, Dispatcher: d, Timeout: 5 * time.Second}
+	h.relay = &outbox.Relay{Store: h.store, Assets: []string{h.asset.ID}, Handlers: outbox.Handlers(func(_ context.Context, m jobcontracts.Message) error {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.redisDown {
+			return errors.New("redis down")
+		}
+		h.enqueued = append(h.enqueued, m)
+		return nil
+	})}
+	h.relay.Drain(ctx) // the upload queued the first job
+	h.enqueued = nil
 	return h
 }
 
+// process runs a job, then lets the relay handle what it recorded.
 func (h *harness) process(ctx context.Context, i int) error {
 	j := h.jobs[i]
-	return h.runner.Process(ctx, jobcontracts.Message{JobID: j.ID, Type: j.Type, Payload: j.InputJSON})
+	err := h.runner.Process(ctx, jobcontracts.Message{JobID: j.ID, Type: j.Type, Payload: j.InputJSON})
+	h.relay.Drain(context.Background())
+	return err
 }
 
 func (h *harness) job(i int) domain.Job {
@@ -262,15 +269,18 @@ func TestShutdownLeavesJobToResume(t *testing.T) {
 	}
 }
 
-func TestEnqueueFailureFailsAsset(t *testing.T) {
+func TestNextJobWaitsWhileRedisIsDown(t *testing.T) {
 	h := newHarness(t)
-	h.failEnq = true
+	h.redisDown = true
 	h.process(context.Background(), 0)
-	if got := h.job(1); got.Status != domain.JobFailed || !strings.Contains(*got.ErrorMessage, "could not enqueue") {
-		t.Fatalf("next job = %s %v", got.Status, got.ErrorMessage)
+	// The next job is queued in the outbox, not failed: it goes once Redis is back.
+	if got := h.job(1); got.Status != domain.JobPending || h.assetStatus() != domain.AssetProcessing || h.lastEnqueued() != "" {
+		t.Fatalf("next job %s, asset %s, sent %q", got.Status, h.assetStatus(), h.lastEnqueued())
 	}
-	if h.assetStatus() != domain.AssetFailed {
-		t.Fatalf("asset = %s, want failed", h.assetStatus())
+	events, _ := h.store.Events(context.Background(), h.asset.ID)
+	last := events[len(events)-1]
+	if last.Type != jobcontracts.EventJobQueued || last.JobID != h.jobs[1].ID || last.HandledAt != nil || last.Attempts != 1 {
+		t.Fatalf("last event = %+v, want the next job waiting for another try", last)
 	}
 }
 

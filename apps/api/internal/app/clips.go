@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"math"
 	"strings"
@@ -17,16 +16,14 @@ import (
 
 // EditClip changes a clip's start, end or title for the exports from then
 // on (docs/adr/0024). The clip must keep to domain.Clip.Problem. New times
-// clear its face track and queue a track-faces job for this clip only; if
-// that job cannot be queued the edit stands and the clip is centred. Like
-// an export, it waits until no job of the asset is pending or running.
+// clear its face track and queue a track-faces job for this clip only, in
+// the same transaction. Like an export, it waits until no job of the asset
+// is pending or running.
 type EditClip struct {
 	Assets   Assets
 	Clips    Clips
 	Metadata Metadata
 	Writer   ClipWriter
-	Jobs     Jobs
-	Queue    Queue
 	Log      *slog.Logger
 	clock
 }
@@ -88,16 +85,7 @@ func (uc EditClip) Run(ctx context.Context, req EditRequest) (domain.Clip, error
 	case err != nil:
 		return clip, err
 	}
-	log := orDiscard(uc.Log)
-	log.Info("clip edited", "asset_id", req.AssetID, "clip_id", clip.ID, "start", edited.Start, "end", edited.End)
-	if retrack != nil {
-		msg := jobcontracts.Message{JobID: retrack.ID, Type: retrack.Type, Payload: retrack.InputJSON}
-		if err := uc.Queue.Enqueue(ctx, msg); err != nil {
-			// The edit stands; the clip stays without a face track (centred) and the job shows why.
-			uc.Jobs.FinishJob(context.WithoutCancel(ctx), retrack.ID, fmt.Errorf("could not enqueue job: %w", err))
-			log.Error("enqueue failed", "asset_id", req.AssetID, "job_id", retrack.ID, "error", err)
-		}
-	}
+	orDiscard(uc.Log).Info("clip edited", "asset_id", req.AssetID, "clip_id", clip.ID, "start", edited.Start, "end", edited.End)
 	return uc.Clips.GetClip(ctx, clip.ID)
 }
 

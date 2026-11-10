@@ -19,6 +19,9 @@ def test_constants_match_go(golden):
 
 def test_lists_match_go(golden):
     assert contracts.AFTER == golden["after"]
+    assert [contracts.EVENT_JOB_QUEUED, contracts.EVENT_JOB_FINISHED, contracts.OUTBOX_CHANNEL] == [
+        golden["events"]["jobQueued"], golden["events"]["jobFinished"], golden["events"]["channel"]
+    ]
     assert contracts.CAPTION_LANGUAGES == golden["captionLanguages"]
 
 
@@ -61,19 +64,6 @@ def test_translate_input_matches_go(golden):
     inp = contracts.TranslateTranscriptInput.from_json(json.dumps(example))
     assert (inp.asset_id, inp.language) == (example["asset_id"], "en")
     assert set(example) == {"asset_id", "language"}
-
-
-def test_next_job_type():
-    assert contracts.next_job_type(contracts.JOB_TRANSCODE_HLS) == contracts.JOB_EXTRACT_AUDIO
-    assert contracts.next_job_type(contracts.JOB_EXTRACT_AUDIO) == contracts.JOB_TRANSCRIBE_AUDIO
-    assert contracts.next_job_type(contracts.JOB_TRANSCRIBE_AUDIO) == contracts.JOB_ANALYZE_TRANSCRIPT
-    assert contracts.next_job_type(contracts.JOB_ANALYZE_TRANSCRIPT) == contracts.JOB_SUGGEST_CLIPS
-    assert contracts.next_job_type(contracts.JOB_SUGGEST_CLIPS) == contracts.JOB_TRACK_FACES
-    assert contracts.next_job_type(contracts.JOB_TRACK_FACES) is None
-    # An export in another language waits for the translation.
-    assert contracts.next_job_type(contracts.JOB_TRANSLATE_TRANSCRIPT) == contracts.JOB_EXPORT_CLIP
-    assert contracts.next_job_type(contracts.JOB_EXPORT_CLIP) is None
-    assert contracts.next_job_type("unknown") is None
 
 
 def test_message_round_trip():

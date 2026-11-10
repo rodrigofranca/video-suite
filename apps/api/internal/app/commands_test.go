@@ -45,10 +45,7 @@ func (f *fakeWriter) CreateAsset(_ context.Context, a domain.Asset) error {
 func (f *fakeWriter) CompleteUpload(_ context.Context, src domain.Source, jobs []domain.Job) error {
 	f.source, f.completed = src, jobs
 	f.created = append(f.created, jobs...)
-	return nil
-}
-func (f *fakeWriter) SetAssetStatus(_ context.Context, id, status string) error {
-	f.status[id] = status
+	f.queued = append(f.queued, jobs[0])
 	return nil
 }
 func (f *fakeWriter) DeleteAsset(_ context.Context, id string) error {
@@ -75,6 +72,7 @@ func (f *fakeWriter) EditClipIfIdle(_ context.Context, c domain.Clip, retrack *d
 	f.edited, f.retrack, f.clips[c.ID] = &c, retrack, c
 	if retrack != nil {
 		f.created = append(f.created, *retrack)
+		f.queued = append(f.queued, *retrack)
 	}
 	return nil
 }
@@ -158,13 +156,13 @@ var mp4 = []byte("\x00\x00\x00\x20ftypisom-and-then-the-video")
 
 // ---- Upload ----
 
-func uploader(f *fakeWriter, files *fakeFiles, q *fakeQueue) UploadVideo {
-	return UploadVideo{Assets: f, Files: files, Jobs: f, Queue: q, MaxBytes: 1 << 10, clock: fixedClock()}
+func uploader(f *fakeWriter, files *fakeFiles) UploadVideo {
+	return UploadVideo{Assets: f, Files: files, MaxBytes: 1 << 10, clock: fixedClock()}
 }
 
 func TestUploadStoresTheFileAndStartsThePipeline(t *testing.T) {
-	f, files, q := newWriter(), newFiles(), &fakeQueue{}
-	id, err := uploader(f, files, q).Run(context.Background(), UploadRequest{Filename: `C:\videos\talk.MP4`, Body: bytes.NewReader(mp4)})
+	f, files := newWriter(), newFiles()
+	id, err := uploader(f, files).Run(context.Background(), UploadRequest{Filename: `C:\videos\talk.MP4`, Body: bytes.NewReader(mp4)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,8 +172,8 @@ func TestUploadStoresTheFileAndStartsThePipeline(t *testing.T) {
 	if f.source.SizeBytes != int64(len(mp4)) || len(f.source.Checksum) != 64 || len(f.completed) != len(jobcontracts.Pipeline) {
 		t.Fatalf("source %+v, %d jobs", f.source, len(f.completed))
 	}
-	if len(q.sent) != 1 || q.sent[0].JobID != f.completed[0].ID || q.sent[0].Type != jobcontracts.Pipeline[0] {
-		t.Fatalf("queued %+v", q.sent)
+	if len(f.queued) != 1 || f.queued[0].ID != f.completed[0].ID || f.queued[0].Type != jobcontracts.Pipeline[0] {
+		t.Fatalf("queued %+v, want only the first job", f.queued)
 	}
 }
 
@@ -190,24 +188,12 @@ func TestUploadRejectsWhatItCannotTake(t *testing.T) {
 		"over 1 KiB":  {"talk.mp4", append(mp4, make([]byte, 1<<10)...), TooLarge},
 		"empty video": {"talk.mp4", nil, Unsupported},
 	} {
-		f, files, q := newWriter(), newFiles(), &fakeQueue{}
+		f, files := newWriter(), newFiles()
 		before := len(f.assets)
-		_, err := uploader(f, files, q).Run(context.Background(), UploadRequest{Filename: c.filename, Body: bytes.NewReader(c.body)})
-		if kindOf(err) != c.want || len(f.assets) != before || len(files.files) != 0 || len(q.sent) != 0 {
+		_, err := uploader(f, files).Run(context.Background(), UploadRequest{Filename: c.filename, Body: bytes.NewReader(c.body)})
+		if kindOf(err) != c.want || len(f.assets) != before || len(files.files) != 0 || len(f.queued) != 0 {
 			t.Errorf("%s: %v (kind %d), %d assets, %d files", name, err, kindOf(err), len(f.assets), len(files.files))
 		}
-	}
-}
-
-func TestUploadWhenTheQueueFails(t *testing.T) {
-	f, files, q := newWriter(), newFiles(), &fakeQueue{err: errors.New("redis down")}
-	_, err := uploader(f, files, q).Run(context.Background(), UploadRequest{Filename: "talk.mp4", Body: bytes.NewReader(mp4)})
-	if kindOf(err) != Unavailable || !strings.Contains(err.Error(), "processing could not start") {
-		t.Fatalf("err = %v", err)
-	}
-	first := f.completed[0]
-	if f.finished[first.ID] == nil || f.status[first.AssetID] != domain.AssetFailed || len(files.files) != 1 {
-		t.Fatalf("finished %v, status %q: the file stays and the job says why", f.finished, f.status[first.AssetID])
 	}
 }
 
@@ -232,27 +218,18 @@ func TestDeleteVideo(t *testing.T) {
 }
 
 func TestRerunJob(t *testing.T) {
-	f, q := newWriter(), &fakeQueue{}
-	uc := RerunJob{Assets: f, Writer: f, Jobs: f, Queue: q, clock: fixedClock()}
+	f := newWriter()
+	uc := RerunJob{Assets: f, Jobs: f, clock: fixedClock()}
 	if _, err := uc.Run(context.Background(), assetID, "make-coffee"); kindOf(err) != Invalid || !errors.Is(err, ErrUnknownJobType) {
 		t.Fatalf("unknown type: %v", err)
 	}
-	job, err := uc.Run(context.Background(), assetID, jobcontracts.JobTypeTranscribeAudio)
-	if err != nil || job.Type != jobcontracts.JobTypeTranscribeAudio || len(q.sent) != 1 {
-		t.Fatalf("job %+v, err %v, sent %d", job, err, len(q.sent))
+	job, err := uc.Run(context.Background(), assetID, jobcontracts.JobTypeSuggestClips)
+	if err != nil || job.Type != jobcontracts.JobTypeSuggestClips || len(f.queued) != 1 || f.queued[0].ID != job.ID {
+		t.Fatalf("job %+v, err %v, queued %+v", job, err, f.queued)
 	}
-	if len(f.created) != 1+len(jobcontracts.RerunWith[job.Type]) {
-		t.Fatalf("created %d jobs, want the job and the ones after it", len(f.created))
-	}
-
-	// HLS again, and the queue fails: the asset is failed again and the jobs say why.
-	f, q = newWriter(), &fakeQueue{err: errors.New("redis down")}
-	uc = RerunJob{Assets: f, Writer: f, Jobs: f, Queue: q, clock: fixedClock()}
-	if _, err := uc.Run(context.Background(), assetID, jobcontracts.JobTypeTranscodeHLS); kindOf(err) != Unavailable {
-		t.Fatalf("err = %v", err)
-	}
-	if f.status[assetID] != domain.AssetFailed || len(f.finished) != len(f.created) {
-		t.Fatalf("status %q, finished %d of %d", f.status[assetID], len(f.finished), len(f.created))
+	// The jobs that work on its result are created too, and wait for it.
+	if len(f.created) != 1+len(jobcontracts.RerunWith[job.Type]) || f.created[1].Type != jobcontracts.JobTypeTrackFaces {
+		t.Fatalf("created %+v, want the job and the ones after it", f.created)
 	}
 	delete(f.sources, assetID)
 	if _, err := uc.Run(context.Background(), assetID, jobcontracts.JobTypeTranscodeHLS); kindOf(err) != Conflict {
@@ -262,17 +239,17 @@ func TestRerunJob(t *testing.T) {
 
 // ---- Clips ----
 
-func editor(f *fakeWriter, q *fakeQueue) EditClip {
-	return EditClip{Assets: f, Clips: f, Metadata: f, Writer: f, Jobs: f, Queue: q, clock: fixedClock()}
+func editor(f *fakeWriter) EditClip {
+	return EditClip{Assets: f, Clips: f, Metadata: f, Writer: f, clock: fixedClock()}
 }
 
 func ptr[T any](v T) *T { return &v }
 
 func TestEditClip(t *testing.T) {
-	f, q := newWriter(), &fakeQueue{}
+	f := newWriter()
 	f.metadata = []byte(`{"summary":{"durationSeconds":60}}`)
 	f.clips[clipID] = domain.Clip{ID: clipID, AssetID: assetID, Start: 10, End: 40, Title: "Best"}
-	uc := editor(f, q)
+	uc := editor(f)
 	edit := func(r EditRequest) (domain.Clip, error) {
 		r.AssetID, r.ClipID = assetID, clipID
 		return uc.Run(context.Background(), r)
@@ -295,13 +272,13 @@ func TestEditClip(t *testing.T) {
 
 	// The title alone: no new face track.
 	c, err := edit(EditRequest{Title: ptr("  The  hook ")})
-	if err != nil || c.Title != "The hook" || f.retrack != nil || len(q.sent) != 0 {
+	if err != nil || c.Title != "The hook" || f.retrack != nil || len(f.queued) != 0 {
 		t.Fatalf("clip %+v, err %v, retrack %v", c, err, f.retrack)
 	}
 	// New times, kept to the millisecond: this clip is tracked again.
 	c, err = edit(EditRequest{Start: ptr(12.34567)})
-	if err != nil || c.Start != 12.346 || f.retrack == nil || len(q.sent) != 1 || q.sent[0].Type != jobcontracts.JobTypeTrackFaces {
-		t.Fatalf("clip %+v, err %v, sent %+v", c, err, q.sent)
+	if err != nil || c.Start != 12.346 || f.retrack == nil || len(f.queued) != 1 || f.queued[0].Type != jobcontracts.JobTypeTrackFaces {
+		t.Fatalf("clip %+v, err %v, queued %+v", c, err, f.queued)
 	}
 	// The same values again change nothing.
 	f.edited = nil
@@ -318,15 +295,6 @@ func TestEditClip(t *testing.T) {
 	f.clips[otherID] = domain.Clip{ID: otherID, AssetID: "elsewhere", Start: 1, End: 20, Title: "x"}
 	if _, err := uc.Run(context.Background(), EditRequest{AssetID: assetID, ClipID: otherID, Title: ptr("y")}); kindOf(err) != NotFound {
 		t.Fatalf("other video's clip: %v", err)
-	}
-}
-
-func TestEditClipWhenTheQueueFails(t *testing.T) {
-	f, q := newWriter(), &fakeQueue{err: errors.New("redis down")}
-	f.clips[clipID] = domain.Clip{ID: clipID, AssetID: assetID, Start: 10, End: 40, Title: "Best"}
-	c, err := editor(f, q).Run(context.Background(), EditRequest{AssetID: assetID, ClipID: clipID, End: ptr(30.0)})
-	if err != nil || c.End != 30 || f.finished[f.retrack.ID] == nil {
-		t.Fatalf("the edit stands and the job says why: %+v, %v, %v", c, err, f.finished)
 	}
 }
 

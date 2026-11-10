@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"ultramedia/media-core/db"
+	"ultramedia/media-core/outbox"
 	"ultramedia/media-core/storage"
 	"ultramedia/media-core/store"
 	"ultramedia/worker/internal/jobs"
@@ -80,14 +81,23 @@ func run(log *slog.Logger) error {
 	d := jobs.NewDispatcher()
 	jobs.Media{Storage: files, Store: st, TempDir: os.Getenv("WORKER_TEMP_DIR")}.Register(d)
 
-	runner := &pipeline.Runner{
-		Store:      st,
-		Dispatcher: d,
-		Enqueue: func(ctx context.Context, msg jobcontracts.Message) error {
-			return rdb.XAdd(ctx, &redis.XAddArgs{Stream: msg.Stream(), Values: msg.Values()}).Err()
-		},
-		Log: log,
-	}
+	runner := &pipeline.Runner{Store: st, Dispatcher: d, Log: log}
+
+	// The outbox relay sends queued jobs to Redis and moves the pipeline on
+	// when jobs finish (docs/adr/0034). The API runs one too; they share the work.
+	relay := &outbox.Relay{Store: st, Handlers: outbox.Handlers(func(ctx context.Context, msg jobcontracts.Message) error {
+		return rdb.XAdd(ctx, &redis.XAddArgs{Stream: msg.Stream(), Values: msg.Values()}).Err()
+	}), Log: log.With("component", "outbox")}
+	relayCtx, stopRelay := context.WithCancel(ctx)
+	relayDone := make(chan struct{})
+	go func() {
+		relay.Run(relayCtx)
+		close(relayDone)
+	}()
+	defer func() { // stop it before the pool closes
+		stopRelay()
+		<-relayDone
+	}()
 
 	// A stable name lets a restarted worker pick up jobs it had not finished.
 	name := os.Getenv("WORKER_NAME")
