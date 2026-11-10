@@ -1,20 +1,31 @@
 <script lang="ts">
 	import type { Transcript } from '$lib/api';
 	import { formatClock, languageName } from '$lib/format';
+	import { segmentAt } from '$lib/search';
 
 	let {
 		transcript,
 		currentTime = 0,
+		focus = null,
 		onseek
 	}: {
 		transcript: Transcript;
 		currentTime?: number;
+		/** A time to scroll the transcript to, such as a moment found by a search. */
+		focus?: number | null;
 		onseek?: (seconds: number) => void;
 	} = $props();
 
-	let active = $derived(
-		transcript.segments.findIndex((s) => currentTime >= s.start && currentTime < s.end)
-	);
+	let active = $derived(segmentAt(transcript.segments, currentTime));
+
+	// Scroll the list, not the page, so the moment shows a third of the way down.
+	let list = $state<HTMLOListElement>();
+	$effect(() => {
+		if (!list || focus === null) return;
+		const t = focus;
+		const item = list.children[transcript.segments.findIndex((s) => s.end > t)] as HTMLElement | undefined;
+		if (item) list.scrollTop = item.offsetTop - list.clientHeight / 3;
+	});
 </script>
 
 <div class="card transcript" data-testid="transcript">
@@ -24,7 +35,7 @@
 	{#if transcript.segments.length === 0}
 		<p class="muted">No speech found.</p>
 	{:else}
-		<ol>
+		<ol bind:this={list}>
 			{#each transcript.segments as seg, i (i)}
 				<li class:active={i === active}>
 					<button onclick={() => onseek?.(seg.start)} title="Play from {formatClock(seg.start)}">
@@ -51,6 +62,7 @@
 		padding: 0;
 		max-height: 360px;
 		overflow: auto;
+		position: relative; /* items' offsetTop is from the list */
 	}
 	button {
 		all: unset;

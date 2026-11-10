@@ -74,6 +74,10 @@ The relay runs inside the API and the media worker; each event is claimed by one
 
 What was said in an Asset, written by the `transcribe-audio` Job: language (detected unless given), full text, segments with start and end times, every word with its start and end (for word-by-word captions; empty for transcripts made before they were saved), and the Whisper model used. One per Asset in `transcripts`; a re-run replaces it. Subtitles are built from it.
 
+### Search
+
+Finding where something was said, across every Asset with a Transcript (ADR 0038). Each Transcript segment is a row of `transcript_segments`, indexed for full-text search with its language's rules and without accents; a trigger keeps the rows in step with the Transcript. A query is read in every language the archive has. A result is a **moment**: a segment with its start and end, the matching words marked. The video page opens at a moment with `?t=` (seconds) and keeps the query in `?q=` for the way back.
+
 ### AI usage
 
 What the language model used: one row per call in `llm_usage`, with the Asset, the Job and its type, the model that answered, the tokens in and out, and the cost in US dollars as the gateway priced it (empty when it did not know the price). Every answer counts, also one that was unusable and asked again. Rows stay when their Asset is deleted. Jobs from before calls were recorded were read back from their logs (ADR 0032).

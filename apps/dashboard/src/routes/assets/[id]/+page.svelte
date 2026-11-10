@@ -12,12 +12,17 @@
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 	import TranscriptPanel from '$lib/components/Transcript.svelte';
 	import VideoPlaceholder from '$lib/components/VideoPlaceholder.svelte';
+	import { searchLink, startTime } from '$lib/search';
 
 	// The video page shows the state in AssetPage (docs/adr/0037); the parts
 	// are components.
 	const v = new AssetPage(() => page.params.id!);
 	let player = $state<HlsPlayer>();
-	let currentTime = $state(0);
+	// A search result opens the page at its moment (?t=) and keeps the
+	// query (?q=) for the way back (docs/adr/0038).
+	const start = startTime(page.url.searchParams);
+	const searched = page.url.searchParams.get('q')?.trim() ?? '';
+	let currentTime = $state(start ?? 0);
 	const seek = (t: number) => player?.seek(t);
 
 	let clipContext = $derived({
@@ -49,7 +54,13 @@
 
 <svelte:head><title>{v.asset?.filename ?? 'Video'} · UltraMedia</title></svelte:head>
 
-<p class="back"><a href="/assets">← Videos</a></p>
+<p class="back">
+	{#if searched}
+		<a href={searchLink(searched)} data-testid="back-to-search">← Results for “{searched}”</a>
+	{:else}
+		<a href="/assets">← Videos</a>
+	{/if}
+</p>
 
 {#if v.error}
 	<p class="card error">{v.error}</p>
@@ -69,6 +80,7 @@
 				src={asset.playback.manifestUrl}
 				poster={asset.thumbnailUrl}
 				subtitles={asset.subtitles}
+				{start}
 				ontime={(t) => (currentTime = t)}
 			/>
 		{:else}
@@ -123,7 +135,7 @@
 			runningId="transcribing"
 			waiting="The transcript appears here after HLS encoding and audio extraction."
 		>
-			<TranscriptPanel transcript={v.transcript.value!} {currentTime} onseek={seek} />
+			<TranscriptPanel transcript={v.transcript.value!} {currentTime} focus={start} onseek={seek} />
 		</JobSection>
 	{/if}
 

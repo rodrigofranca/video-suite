@@ -1,11 +1,19 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { listAssets, type Asset } from '$lib/api';
+	import { maxSearchLength, searchLink } from '$lib/search';
 	import { formatClock, formatDate, formatResolution } from '$lib/format';
 	import { poll } from '$lib/poll.svelte';
 	import StatusBadge from '$lib/components/StatusBadge.svelte';
 
 	let assets = $state<Asset[] | null>(null);
 	let error = $state('');
+	let typed = $state('');
+
+	function search(e: SubmitEvent) {
+		e.preventDefault();
+		if (typed.trim()) goto(searchLink(typed));
+	}
 
 	poll(async () => {
 		try {
@@ -21,6 +29,17 @@
 
 <div class="title">
 	<h1>Videos</h1>
+	<form class="search" role="search" onsubmit={search}>
+		<input
+			type="search"
+			bind:value={typed}
+			maxlength={maxSearchLength}
+			placeholder="Search what was said…"
+			aria-label="Search what was said in the videos"
+			enterkeyhint="search"
+			data-testid="videos-search"
+		/>
+	</form>
 </div>
 
 {#if error}
@@ -62,7 +81,26 @@
 
 <style>
 	.title {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem 1rem;
 		margin-bottom: 1rem;
+	}
+	.search {
+		flex: 1 1 14rem;
+		max-width: 22rem;
+	}
+	.search input {
+		width: 100%;
+		box-sizing: border-box;
+		font: inherit;
+		padding: 0.45rem 0.75rem;
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: var(--surface);
+		color: var(--text);
 	}
 	.empty {
 		text-align: center;
