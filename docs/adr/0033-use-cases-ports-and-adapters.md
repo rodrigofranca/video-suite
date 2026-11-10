@@ -42,6 +42,8 @@ O HTTP ficou só com o que é HTTP: ler o multipart e o JSON, o limite do corpo 
 
 **O passo 2 terminou** (ADR 0034). Os jobs vão para a fila por uma outbox transacional, com os eventos `job.queued` e `job.finished`. Os casos de uso não falam mais com o Redis, e a porta `Queue` saiu. O encadeamento ficou num lugar só, em Go.
 
+**O passo 3 terminou** (ADR 0035). A exportação no worker é uma lista de estágios (enquadramento, marca d'água, legenda, vinhetas) sobre um builder do grafo do FFmpeg. O job escolhe a ordem, e cada estágio só conhece o corte que recebe.
+
 **A migração é gradual,** um comando por vez, com os testes de integração garantindo que nada muda para quem usa:
 
 1. Os outros comandos da API: editar e apagar corte, apagar vídeo, rodar de novo, upload, presets e biblioteca. As bibliotecas de vinhetas e de marcas d'água viram uma só, genérica.

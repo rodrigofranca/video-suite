@@ -22,7 +22,7 @@ An upload creates an asset and eight jobs: `extract-metadata` → `generate-thum
 | Path | What it is |
 |---|---|
 | `apps/api` | HTTP API (Go) and database migrations: use cases in `internal/app`, HTTP adapters in `internal/httpapi` ([ADR 0033](docs/adr/0033-use-cases-ports-and-adapters.md)) |
-| `apps/worker` | Media worker (Go): reads the `jobs` stream, runs FFmpeg, runs an outbox relay |
+| `apps/worker` | Media worker (Go): reads the `jobs` stream, runs FFmpeg (clip exports as a list of stages over a filter graph builder, [ADR 0035](docs/adr/0035-export-stages-and-filter-graph.md)), runs an outbox relay |
 | `apps/ai-worker` | AI worker (Python, faster-whisper, OpenCV, ONNX Runtime): reads the `jobs:ai` stream, transcribes speech, asks the gateway for summaries, tags, chapters and clips, and finds who to keep in frame in each clip (the face, or whoever speaks) |
 | `apps/dashboard` | Web dashboard (SvelteKit): upload, video list, job logs, player |
 | `packages/job-contracts` | Job types, typed inputs, pipeline order, stream routing and queue message format (shared with Python through `testdata/contracts.json`) |

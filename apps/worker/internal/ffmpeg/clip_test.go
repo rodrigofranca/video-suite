@@ -50,11 +50,12 @@ func TestClipWithVignettes(t *testing.T) {
 	colorVideo(t, outro, "blue", "720x1280", 24, 1, false) // vertical, silent
 	out := filepath.Join(dir, "clip.mp4")
 
-	args, err := ClipArgs(ClipSpec{
-		Input: src, Start: 1, Duration: 3, Format: "vertical", SourceWidth: 640, SourceHeight: 360, Output: out,
-		Intro: &VignetteInput{Path: intro, Duration: 1.5, Audio: true}, Outro: &VignetteInput{Path: outro, Duration: 1},
-		FrameRate: 25, SourceAudio: true,
-	})
+	args, err := Export{
+		Source: Source{Path: src, Start: 1, Duration: 3, Width: 640, Height: 360, FrameRate: 25, Audio: true},
+		Stages: []Stage{Frame{Format: "vertical"},
+			Vignettes{Intro: &VignetteInput{Path: intro, Duration: 1.5, Audio: true}, Outro: &VignetteInput{Path: outro, Duration: 1}}},
+		Output: out,
+	}.Args()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,10 +89,11 @@ func TestClipWithVignetteAndNoSound(t *testing.T) {
 	testvideo.MakeWithoutAudio(t, src, 3, "640x360")
 	colorVideo(t, intro, "green", "1080x1920", 30, 1, false)
 	out := filepath.Join(dir, "clip.mp4")
-	args, err := ClipArgs(ClipSpec{
-		Input: src, Start: 0, Duration: 2, Format: "original", SourceWidth: 640, SourceHeight: 360, Output: out,
-		Intro: &VignetteInput{Path: intro, Duration: 1},
-	})
+	args, err := Export{
+		Source: Source{Path: src, Duration: 2, Width: 640, Height: 360},
+		Stages: []Stage{Frame{Format: "original"}, Vignettes{Intro: &VignetteInput{Path: intro, Duration: 1}}},
+		Output: out,
+	}.Args()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,12 +131,12 @@ func TestClipWithWatermark(t *testing.T) {
 	run := func(opacity int, withIntro bool) string {
 		t.Helper()
 		out := filepath.Join(dir, fmt.Sprintf("clip-%d-%v.mp4", opacity, withIntro))
-		spec := ClipSpec{Input: src, Start: 0, Duration: 2, Format: "original", SourceWidth: 640, SourceHeight: 360, Output: out,
-			FrameRate: 25, SourceAudio: true, Watermark: &WatermarkInput{Path: logo, Position: "top-right", Size: 25, Opacity: opacity}}
+		e := Export{Source: Source{Path: src, Duration: 2, Width: 640, Height: 360, FrameRate: 25, Audio: true}, Output: out,
+			Stages: []Stage{Frame{Format: "original"}, Watermark{Path: logo, Position: "top-right", Size: 25, Opacity: opacity}}}
 		if withIntro {
-			spec.Intro = &VignetteInput{Path: intro, Duration: 1}
+			e.Stages = append(e.Stages, Vignettes{Intro: &VignetteInput{Path: intro, Duration: 1}})
 		}
-		args, err := ClipArgs(spec)
+		args, err := e.Args()
 		if err != nil {
 			t.Fatal(err)
 		}

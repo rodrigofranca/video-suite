@@ -84,23 +84,23 @@ func kbpsFor(short int) int {
 // between them. Quality is constant (CRF) up to each rendition's cap.
 func HLSArgs(input, outDir string, renditions []Rendition, audio bool) []string {
 	seg := strconv.Itoa(SegmentSeconds)
-	split := fmt.Sprintf("[0:v:0]split=%d", len(renditions))
-	var scales, streams []string
-	args := []string{"-hide_banner", "-nostdin", "-y", "-loglevel", "warning", "-i", input}
-	var maps []string
-	for i, r := range renditions {
-		split += fmt.Sprintf("[v%d]", i)
-		scales = append(scales, fmt.Sprintf("[v%d]scale=%d:%d[o%d]", i, r.Width, r.Height, i))
-		maps = append(maps, "-map", fmt.Sprintf("[o%d]", i))
+	// One copy of the picture per rendition, each scaled, each with the sound.
+	var g Graph
+	in := g.Input(input)
+	var keep []Stream
+	var streams []string
+	for i, copy := range g.Split(g.Video(in), len(renditions)) {
+		r := renditions[i]
+		keep = append(keep, g.Pipe(copy, F("scale", r.Width, r.Height)))
 		stream := fmt.Sprintf("v:%d", i)
 		if audio {
-			maps = append(maps, "-map", "0:a:0")
+			keep = append(keep, g.Audio(in))
 			stream += fmt.Sprintf(",a:%d", i)
 		}
 		streams = append(streams, stream+",name:"+r.Name)
 	}
-	args = append(args, "-filter_complex", split+";"+strings.Join(scales, ";"))
-	args = append(args, maps...)
+	io, _ := g.Args(keep...) // the graph reads each stream once
+	args := append([]string{"-hide_banner", "-nostdin", "-y", "-loglevel", "warning"}, io...)
 	args = append(args,
 		"-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
 		"-pix_fmt", "yuv420p", // 8-bit 4:2:0, playable in every browser

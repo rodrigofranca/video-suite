@@ -32,6 +32,8 @@ const (
 // ExportClip cuts one suggested clip out of the source as an MP4 in the
 // requested format, optionally with the subtitles burned in (docs/adr/0020).
 // The clip's start and end come from the database, read when the job runs.
+// It gathers what the export needs and lists the stages, in order; one
+// FFmpeg run does them all (docs/adr/0035).
 func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportClipInput) error {
 	if err := validInput(in.AssetID, in.StorageKey); err != nil {
 		return err
@@ -68,46 +70,60 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	defer os.RemoveAll(dir)
 
 	width, height := ffmpeg.ClipSize(in.Format, src.Width, src.Height)
-	spec := ffmpeg.ClipSpec{
-		Input: url, Start: clip.Start, Duration: duration, Format: in.Format,
-		SourceWidth: src.Width, SourceHeight: src.Height, Output: filepath.Join(dir, "clip.mp4"),
-		FrameRate: src.FrameRate, SourceAudio: src.AudioCodec != "",
-	}
 	if in.Preset != "" {
 		job.Log.Info(fmt.Sprintf("with the preset %q", in.Preset))
 	}
-	if spec.Intro, err = m.vignette(ctx, job, in.Intro, "opening", width, height, dir); err != nil {
-		return err
-	}
-	if spec.Outro, err = m.vignette(ctx, job, in.Outro, "closing", width, height, dir); err != nil {
-		return err
-	}
-	if spec.Watermark, err = m.watermark(ctx, job, in.Watermark, dir); err != nil {
-		return err
-	}
-	total := duration
-	for _, v := range []*ffmpeg.VignetteInput{spec.Intro, spec.Outro} {
-		if v != nil {
-			total += v.Duration
-		}
-	}
-	framing := ""
-	if in.Format == jobcontracts.ClipFormatVerticalFace {
-		spec.Track, framing = faceTrack(job, clip, src.Width, src.Height)
-	}
-	var subs burned
-	if in.Captions {
-		subs, err = m.clipCaptions(ctx, job, in, clip, width, height, dir)
-		if err != nil {
-			return err
-		}
-		spec.SubtitlesFile = subs.Path
-	}
-
-	args, err := ffmpeg.ClipArgs(spec)
+	intro, err := m.vignette(ctx, job, in.Intro, "opening", width, height, dir)
 	if err != nil {
 		return err
 	}
+	outro, err := m.vignette(ctx, job, in.Outro, "closing", width, height, dir)
+	if err != nil {
+		return err
+	}
+	watermark, err := m.watermark(ctx, job, in.Watermark, dir)
+	if err != nil {
+		return err
+	}
+	frame, framing := ffmpeg.Frame{Format: in.Format}, ""
+	if in.Format == jobcontracts.ClipFormatVerticalFace {
+		frame.Track, framing = faceTrack(job, clip, src.Width, src.Height)
+	}
+	var subs burned
+	if in.Captions {
+		if subs, err = m.clipCaptions(ctx, job, in, clip, width, height, dir); err != nil {
+			return err
+		}
+	}
+
+	// The picture's shape first, then what is drawn over it (the captions on
+	// top), and the vignettes last, so they get none of it.
+	stages := []ffmpeg.Stage{frame}
+	if watermark != nil {
+		stages = append(stages, *watermark)
+	}
+	if subs.Path != "" {
+		stages = append(stages, ffmpeg.Captions{File: subs.Path})
+	}
+	total := duration
+	if intro != nil || outro != nil {
+		stages = append(stages, ffmpeg.Vignettes{Intro: intro, Outro: outro})
+		for _, v := range []*ffmpeg.VignetteInput{intro, outro} {
+			if v != nil {
+				total += v.Duration
+			}
+		}
+	}
+	export := ffmpeg.Export{
+		Source: ffmpeg.Source{Path: url, Start: clip.Start, Duration: duration, Width: src.Width, Height: src.Height,
+			FrameRate: src.FrameRate, Audio: src.AudioCodec != ""},
+		Stages: stages, Output: filepath.Join(dir, "clip.mp4"),
+	}
+	args, err := export.Args()
+	if err != nil {
+		return err
+	}
+	job.Log.Info("export stages: " + ffmpeg.Describe(stages))
 	job.Log.Info("running " + ffmpeg.CommandLine(args, url))
 	started := time.Now()
 	length := time.Duration(total * float64(time.Second))
@@ -118,13 +134,13 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	if err != nil {
 		return err
 	}
-	info, err := os.Stat(spec.Output)
+	info, err := os.Stat(export.Output)
 	if err != nil {
 		return err
 	}
 	job.Log.Info(fmt.Sprintf("encoded %dx%d in %s, %d KB", width, height, time.Since(started).Round(100*time.Millisecond), info.Size()/1024))
 
-	if err := m.Storage.UploadFile(ctx, in.OutputKey, spec.Output, "video/mp4"); err != nil {
+	if err := m.Storage.UploadFile(ctx, in.OutputKey, export.Output, "video/mp4"); err != nil {
 		return err
 	}
 	job.Log.Info("uploaded clip", "key", in.OutputKey)
@@ -133,7 +149,7 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 		"captions": subs.Path != "", "captionStyle": subs.Style, "language": subs.Language, "translatedFrom": subs.TranslatedFrom,
 		"captionPosition": subs.Position, "captionColor": subs.Color, "captionCaps": subs.Caps,
 		"start": clip.Start, "end": clip.End, "durationSeconds": duration,
-		"preset": in.Preset, "intro": spec.Intro != nil, "outro": spec.Outro != nil, "watermark": spec.Watermark != nil, "totalSeconds": total,
+		"preset": in.Preset, "intro": intro != nil, "outro": outro != nil, "watermark": watermark != nil, "totalSeconds": total,
 		"width": width, "height": height, "sizeBytes": info.Size(),
 	})
 	return m.Store.CreateArtifact(ctx, domain.Artifact{
@@ -444,7 +460,7 @@ func (m Media) vignette(ctx context.Context, job Job, v *jobcontracts.Vignette, 
 
 // watermark downloads and checks the image laid over the clip
 // (docs/adr/0031). It returns nil without one.
-func (m Media) watermark(ctx context.Context, job Job, wm *jobcontracts.Watermark, dir string) (*ffmpeg.WatermarkInput, error) {
+func (m Media) watermark(ctx context.Context, job Job, wm *jobcontracts.Watermark, dir string) (*ffmpeg.Watermark, error) {
 	if wm == nil {
 		return nil, nil
 	}
@@ -470,7 +486,7 @@ func (m Media) watermark(ctx context.Context, job Job, wm *jobcontracts.Watermar
 	}
 	job.Log.Info(fmt.Sprintf("laying the watermark: %dx%d image, %s, %d%% of the shorter side, %d%% opacity",
 		cfg.Width, cfg.Height, wm.Position, wm.Size, wm.Opacity))
-	return &ffmpeg.WatermarkInput{Path: path, Position: wm.Position, Size: wm.Size, Opacity: wm.Opacity}, nil
+	return &ffmpeg.Watermark{Path: path, Position: wm.Position, Size: wm.Size, Opacity: wm.Opacity}, nil
 }
 
 // minFaceCoverage is the share of a clip in which a face must be found for
