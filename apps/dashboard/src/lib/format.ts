@@ -95,6 +95,20 @@ export function formatBitrate(bitsPerSecond?: number): string {
 	return bitsPerSecond >= 1e6 ? `${(bitsPerSecond / 1e6).toFixed(1)} Mb/s` : `${Math.round(bitsPerSecond / 1e3)} kb/s`;
 }
 
+/** Token counts, compact: 950, 12.3K, 4.1M. */
+export function formatTokens(n: number): string {
+	if (n < 1000) return String(n);
+	if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`;
+	return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+/** US dollars, with the decimals small amounts need: US$ 0.00035, US$ 0.12, US$ 3.40. */
+export function formatUsd(v: number): string {
+	if (v === 0) return 'US$ 0';
+	const digits = v >= 1 ? 2 : Math.min(6, Math.max(2, 1 - Math.floor(Math.log10(v)))); // two significant digits
+	return `US$ ${v.toFixed(digits)}`;
+}
+
 /** What a preset does, on one line: "Word box, top, pink, caps · English". */
 export function describeCaptions(p: {
 	captions: boolean;

@@ -53,6 +53,7 @@ def ask(
 
 def _complete(client: ChatClient, ctx: JobContext, messages: list[dict], max_tokens: int) -> Completion:
     completion = client.complete(messages, max_tokens=max_tokens, sleep=ctx.stop.wait, check=ctx.check)
+    ctx.record_usage(completion)  # every answer is paid for, used or not
     if not completion.text.strip() and completion.finish_reason == "length":
         raise InvalidAnswer(f"the model used all {max_tokens} output tokens without answering")
     return completion

@@ -248,7 +248,40 @@ export interface AssetDetail extends Asset {
 	artifacts: Artifact[];
 	playback: Playback | null;
 	subtitles: Subtitles[];
+	/** What the language model used for this video, in total and per job type. */
+	aiUsage: AIUsage & { byAction: AIUsageGroup[] };
 }
+
+/** Calls to the language model and what they used (docs/adr/0032). */
+export interface AIUsage {
+	calls: number;
+	promptTokens: number;
+	completionTokens: number;
+	/** US dollars, summed over the calls the gateway priced. */
+	costUsd: number;
+	/** Calls without a price (the gateway did not know the model's). */
+	unpricedCalls: number;
+	/** Calls read back from the logs of jobs run before calls were recorded. */
+	fromLogCalls: number;
+}
+export interface AIUsageGroup extends AIUsage {
+	/** A day (YYYY-MM-DD), model, job type or video ID ("" for deleted videos). */
+	key: string;
+	/** For videos, the file name. */
+	label?: string;
+}
+export interface UsageSummary {
+	days: number;
+	since: string | null;
+	total: AIUsage;
+	byDay: AIUsageGroup[];
+	byModel: AIUsageGroup[];
+	byAction: AIUsageGroup[];
+	byVideo: AIUsageGroup[];
+}
+/** Periods the usage page offers, in days; 0 is everything. */
+export const usagePeriods = [1, 7, 30, 90, 0] as const;
+export const getUsage = (days: number) => getJSON<UsageSummary>(`/usage?days=${days}`);
 
 export interface JobLog {
 	id: string;

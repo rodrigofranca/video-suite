@@ -65,6 +65,10 @@ The API creates all the Job rows as `pending` and enqueues only the first. When 
 
 What was said in an Asset, written by the `transcribe-audio` Job: language (detected unless given), full text, segments with start and end times, every word with its start and end (for word-by-word captions; empty for transcripts made before they were saved), and the Whisper model used. One per Asset in `transcripts`; a re-run replaces it. Subtitles are built from it.
 
+### AI usage
+
+What the language model used: one row per call in `llm_usage`, with the Asset, the Job and its type, the model that answered, the tokens in and out, and the cost in US dollars as the gateway priced it (empty when it did not know the price). Every answer counts, also one that was unusable and asked again. Rows stay when their Asset is deleted. Jobs from before calls were recorded were read back from their logs (ADR 0032).
+
 ### Vignette
 
 An opening or closing in the library: a short MP4 uploaded once (up to 100 MB and 30 s), private in storage under `library/vignettes/`, joined before or after exported Clips by a Preset (ADR 0030). One in use by a Preset cannot be deleted.

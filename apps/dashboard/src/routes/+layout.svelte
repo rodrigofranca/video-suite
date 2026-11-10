@@ -15,6 +15,7 @@
 	<nav>
 		<a href="/assets" aria-current={page.url.pathname.startsWith('/assets') ? 'page' : undefined}>Videos</a>
 		<a href="/presets" aria-current={page.url.pathname.startsWith('/presets') ? 'page' : undefined}>Presets</a>
+		<a href="/usage" aria-current={page.url.pathname.startsWith('/usage') ? 'page' : undefined}>AI usage</a>
 		<a class="button" href="/upload">Upload</a>
 	</nav>
 </header>
@@ -31,6 +32,7 @@
 		--muted: #6b7280;
 		--border: #e3e5ea;
 		--accent: #4f46e5;
+		--chart-bar: #4f46e5;
 		--accent-fg: #ffffff;
 		--badge-neutral-bg: #eef0f3;
 		--badge-neutral-fg: #4b5563;
@@ -50,6 +52,7 @@
 			--muted: #9aa1ad;
 			--border: #2a2f3a;
 			--accent: #818cf8;
+			--chart-bar: #767cf2; /* a step darker than the accent, inside the chart lightness band */
 			--accent-fg: #0f1115;
 			--badge-neutral-bg: #2a2f3a;
 			--badge-neutral-fg: #c8ccd4;
@@ -144,9 +147,10 @@
 	}
 	header {
 		display: flex;
+		flex-wrap: wrap;
 		justify-content: space-between;
 		align-items: center;
-		gap: 1rem;
+		gap: 0.5rem 1rem;
 		padding: 0.75rem 1rem;
 		background: var(--surface);
 		border-bottom: 1px solid var(--border);
@@ -158,8 +162,12 @@
 	}
 	nav {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		gap: 1rem;
+		gap: 0.4rem 0.9rem;
+	}
+	nav a {
+		white-space: nowrap;
 	}
 	nav a:not(.button) {
 		color: var(--muted);

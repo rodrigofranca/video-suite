@@ -163,6 +163,27 @@ class Store:
         words = row[2] if not isinstance(row[2], str) else json.loads(row[2])
         return {"source_language": row[0], "segments": segments, "words": words, "model": row[3]}
 
+    def add_llm_usage(
+        self, asset_id: str, job_id: str, job_type: str, model: str,
+        prompt_tokens: int, completion_tokens: int, cost_usd: float | None,
+    ) -> None:
+        """Keep one call to the language model (docs/adr/0032)."""
+        self.conn.execute(
+            """INSERT INTO llm_usage (id, asset_id, job_id, job_type, model, prompt_tokens, completion_tokens, cost_usd)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+            (str(uuid.uuid4()), asset_id, job_id, job_type, model, int(prompt_tokens), int(completion_tokens), cost_usd),
+        )
+
+    def llm_usage(self, job_id: str) -> list[dict]:
+        """For tests: a job's recorded calls, oldest first."""
+        rows = self.conn.execute(
+            """SELECT job_type, model, prompt_tokens, completion_tokens, cost_usd FROM llm_usage
+               WHERE job_id = %s ORDER BY created_at, id""",
+            (job_id,),
+        ).fetchall()
+        keys = ("job_type", "model", "prompt_tokens", "completion_tokens", "cost_usd")
+        return [dict(zip(keys, (r[0], r[1], r[2], r[3], float(r[4]) if r[4] is not None else None))) for r in rows]
+
     def save_analysis(
         self, asset_id: str, job_id: str, language: str, summary: str, tags: list[str], chapters: list[dict], model: str
     ) -> None:

@@ -99,6 +99,27 @@ def test_a_translation_queues_the_export_waiting_for_it(h, fails):
     assert [(m.job_id, m.stream) for m in h.enqueued] == [(ids[contracts.JOB_EXPORT_CLIP], contracts.STREAM_MEDIA)]
 
 
+def test_model_calls_are_recorded_for_the_job(h):
+    from ultramedia_ai.llm import Completion
+
+    def two_calls(ctx):
+        ctx.record_usage(Completion("{}", "claude-haiku-5-5", "stop", 1200, 300, 0.00027))
+        ctx.record_usage(Completion("{}", "claude-haiku-5-5", "stop", 1500, None, None))  # no usage, no price
+
+    h.behavior[contracts.JOB_ANALYZE_TRANSCRIPT] = two_calls
+    h.process(contracts.JOB_ANALYZE_TRANSCRIPT)
+    job_id = h.asset["jobs"][contracts.JOB_ANALYZE_TRANSCRIPT]
+    rows = h.store.llm_usage(job_id)
+    # Usage outlives its video: remove these rows, or they would count in the dev totals.
+    asset = h.store.conn.execute("SELECT DISTINCT asset_id::text FROM llm_usage WHERE job_id = %s", (job_id,)).fetchone()[0]
+    h.store.conn.execute("DELETE FROM llm_usage WHERE job_id = %s", (job_id,))
+    assert rows == [
+        {"job_type": "analyze-transcript", "model": "claude-haiku-5-5", "prompt_tokens": 1200, "completion_tokens": 300, "cost_usd": 0.00027},
+        {"job_type": "analyze-transcript", "model": "claude-haiku-5-5", "prompt_tokens": 1500, "completion_tokens": 0, "cost_usd": None},
+    ]
+    assert asset == h.asset["id"]
+
+
 def test_failure_is_saved_and_reraised(h):
     def boom(ctx):
         raise RuntimeError("model crashed")

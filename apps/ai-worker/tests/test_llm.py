@@ -30,6 +30,17 @@ def test_completion(fake):
     assert req["body"] == {"model": "ultramedia-text", "messages": MESSAGES, "max_tokens": 50}
 
 
+@pytest.mark.parametrize(
+    "header,want",
+    [("3.5e-05", 3.5e-05), ("0.0012", 0.0012), ("", None), ("0.0", None), ("-1", None), ("abc", None)],
+)
+def test_reads_the_cost_litellm_reports(fake, header, want):
+    """No header, a bad one, or zero for a call that used tokens: the price is unknown."""
+    fake.answer("hi", cost=header)
+    cost = client(fake).complete(MESSAGES, max_tokens=5).cost_usd
+    assert cost == pytest.approx(want) if want is not None else cost is None
+
+
 def test_reports_the_model_behind_a_litellm_alias(fake):
     fake.answer("hi", model="ultramedia-text", litellm_model="openai/claude-haiku-5-5")
     assert client(fake).complete(MESSAGES, max_tokens=5).model == "claude-haiku-5-5"

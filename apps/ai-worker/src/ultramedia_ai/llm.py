@@ -34,6 +34,7 @@ class Completion:
     finish_reason: str
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    cost_usd: float | None = None  # as the gateway priced it; None when it did not say
 
 
 class ChatClient:
@@ -154,7 +155,22 @@ def _completion(raw: bytes, headers: dict, fallback_model: str) -> Completion:
         finish_reason=str(choice.get("finish_reason") or ""),
         prompt_tokens=usage.get("prompt_tokens"),
         completion_tokens=usage.get("completion_tokens"),
+        cost_usd=_response_cost(headers, usage),
     )
+
+
+def _response_cost(headers: dict, usage: dict) -> float | None:
+    """What the call cost in US dollars, from the header LiteLLM adds when it
+    knows the model's price (infra/litellm/config.yaml). A zero cost for a
+    call that used tokens means the price is unknown, not that it was free."""
+    value = next((v for k, v in headers.items() if k.lower() == "x-litellm-response-cost"), None)
+    try:
+        cost = float(value) if value not in (None, "") else None
+    except ValueError:
+        return None
+    if cost is None or cost < 0 or (cost == 0 and (usage.get("prompt_tokens") or usage.get("completion_tokens"))):
+        return None
+    return cost
 
 
 def _answering_model(headers: dict) -> str:
