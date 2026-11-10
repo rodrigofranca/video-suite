@@ -16,8 +16,10 @@ var update = flag.Bool("update", false, "rewrite testdata/contracts.json")
 // change here that is not mirrored there fails one of the two test suites.
 func contractsDoc() map[string]any {
 	routes := map[string]string{}
-	for _, t := range slices.Concat(Pipeline, []string{JobTypeExportClip, JobTypeTranslateTranscript}) {
-		routes[t] = StreamFor(t)
+	var jobs []map[string]any
+	for _, t := range JobTypes {
+		routes[t.Name] = StreamFor(t.Name)
+		jobs = append(jobs, map[string]any{"name": t.Name, "label": t.Label, "worker": t.Worker, "rerun": t.Rerun})
 	}
 	example := func(v any) json.RawMessage {
 		b, _ := json.Marshal(v)
@@ -31,6 +33,7 @@ func contractsDoc() map[string]any {
 		},
 		"fields":           map[string]string{"jobId": FieldJobID, "type": FieldType, "payload": FieldPayload},
 		"pipeline":         Pipeline,
+		"jobs":             jobs,
 		"after":            After,
 		"events":           map[string]string{"jobQueued": EventJobQueued, "jobFinished": EventJobFinished, "channel": OutboxChannel},
 		"captionLanguages": CaptionLanguages,
@@ -76,5 +79,39 @@ func TestStreamFor(t *testing.T) {
 	}
 	if (Message{Type: JobTypeTranscribeAudio}).Stream() != StreamAIJobs {
 		t.Fatal("Message.Stream does not use StreamFor")
+	}
+}
+
+// The table agrees with the rest of the contract: the Pipeline comes first,
+// in order, and every job type a rule names is in it.
+func TestJobTypesTable(t *testing.T) {
+	seen := map[string]bool{}
+	for i, jt := range JobTypes {
+		if seen[jt.Name] || jt.Label == "" || (jt.Worker != WorkerMedia && jt.Worker != WorkerAI) {
+			t.Fatalf("bad entry %+v", jt)
+		}
+		seen[jt.Name] = true
+		if i < len(Pipeline) && (Pipeline[i] != jt.Name || !jt.Rerun) {
+			t.Fatalf("entry %d is %s; the Pipeline comes first, in order, and its jobs can run again", i, jt.Name)
+		}
+	}
+	for first, then := range RerunWith {
+		for _, name := range append([]string{first}, then...) {
+			if !seen[name] {
+				t.Fatalf("RerunWith names %s, which is not in JobTypes", name)
+			}
+		}
+	}
+	for first, then := range After {
+		if !seen[first] || !seen[then] {
+			t.Fatalf("After names %s and %s; both must be in JobTypes", first, then)
+		}
+	}
+	if Label(JobTypeTranscodeHLS) != "HLS encoding" || Label("make-coffee") != "make-coffee" {
+		t.Fatal("Label")
+	}
+	if got := TypesOf(WorkerAI); !slices.Equal(got, []string{JobTypeTranscribeAudio, JobTypeAnalyzeTranscript,
+		JobTypeSuggestClips, JobTypeTrackFaces, JobTypeTranslateTranscript}) {
+		t.Fatalf("TypesOf(ai) = %v", got)
 	}
 }

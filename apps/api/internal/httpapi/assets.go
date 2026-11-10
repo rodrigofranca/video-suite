@@ -9,6 +9,8 @@ import (
 
 	"ultramedia/media-core/domain"
 	"ultramedia/media-core/store"
+
+	jobcontracts "ultramedia/job-contracts"
 )
 
 // Response shapes. Field names are camelCase for the dashboard.
@@ -69,9 +71,13 @@ type sourceDTO struct {
 }
 
 type jobDTO struct {
-	ID          string          `json:"id"`
-	AssetID     string          `json:"assetId"`
-	Type        string          `json:"type"`
+	ID      string `json:"id"`
+	AssetID string `json:"assetId"`
+	Type    string `json:"type"`
+	// Label is what people call the type, and CanRerun says whether it can
+	// be run again by hand: both from the job table (docs/adr/0036).
+	Label       string          `json:"label"`
+	CanRerun    bool            `json:"canRerun"`
 	Status      string          `json:"status"`
 	Progress    int             `json:"progress"`
 	Error       *string         `json:"error"`
@@ -116,8 +122,10 @@ func toAsset(a domain.Asset) assetDTO {
 }
 
 func toJob(j domain.Job) jobDTO {
+	kind, _ := jobcontracts.Lookup(j.Type)
 	return jobDTO{
-		ID: j.ID, AssetID: j.AssetID, Type: j.Type, Status: j.Status, Progress: j.Progress,
+		ID: j.ID, AssetID: j.AssetID, Type: j.Type, Label: jobcontracts.Label(j.Type), CanRerun: kind.Rerun,
+		Status: j.Status, Progress: j.Progress,
 		Error: j.ErrorMessage, Input: json.RawMessage(j.InputJSON),
 		CreatedAt: j.CreatedAt, StartedAt: j.StartedAt, CompletedAt: j.CompletedAt,
 	}
@@ -226,7 +234,7 @@ func (a *api) getAsset(w http.ResponseWriter, r *http.Request) {
 		a.internalError(w, r, err)
 		return
 	}
-	detail.AIUsage = assetUsageDTO{usageDTO: toUsage(usage), ByAction: toUsageGroups(byAction)}
+	detail.AIUsage = assetUsageDTO{usageDTO: toUsage(usage), ByAction: actionGroups(byAction)}
 
 	meta, err := a.Store.GetTechnicalMetadata(ctx, asset.ID)
 	switch {

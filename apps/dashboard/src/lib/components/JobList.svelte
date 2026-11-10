@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getJobLogs, type Job, type JobLog } from '$lib/api';
-	import { formatDuration, formatTime, jobLabel, languageName } from '$lib/format';
+	import { formatDuration, formatTime, languageName } from '$lib/format';
 	import StatusBadge from './StatusBadge.svelte';
 
 	let {
@@ -25,7 +25,7 @@
 	const translation = (j: Job) =>
 		j.type === 'translate-transcript' ? ((j.input as { language?: string } | null)?.language ?? '') : '';
 	const kind = (j: Job) => (translation(j) ? `${j.type}:${translation(j)}` : j.type);
-	const label = (j: Job) => jobLabel(j.type) + (translation(j) ? ` · ${languageName(translation(j))}` : '');
+	const label = (j: Job) => (j.label || j.type) + (translation(j) ? ` · ${languageName(translation(j))}` : '');
 
 	// Jobs come in creation order; a re-run adds a new attempt of a type.
 	let busy = $derived(jobs.some((j) => j.status === 'pending' || j.status === 'running'));
@@ -43,11 +43,12 @@
 		return byJob;
 	});
 
-	// A translation runs with an export in its language, not on its own.
+	// The API says which types can run again by hand: a translation runs
+	// with an export in its language, not on its own.
 	const canRerun = (job: Job) =>
 		!!onRerun &&
 		!busy &&
-		job.type !== 'translate-transcript' &&
+		job.canRerun &&
 		latest.get(kind(job)) === job.id &&
 		(job.status === 'done' || job.status === 'failed');
 

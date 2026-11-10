@@ -33,6 +33,10 @@ export interface Job {
 	id: string;
 	assetId: string;
 	type: string;
+	/** What people call the type, from the job table (docs/adr/0036). */
+	label: string;
+	/** Whether it can be run again by hand; exports and translations run with an export. */
+	canRerun: boolean;
 	status: JobStatus;
 	progress: number;
 	error: string | null;
@@ -267,7 +271,7 @@ export interface AIUsage {
 export interface AIUsageGroup extends AIUsage {
 	/** A day (YYYY-MM-DD), model, job type or video ID ("" for deleted videos). */
 	key: string;
-	/** For videos, the file name. */
+	/** For videos, the file name; for job types, what people call them. */
 	label?: string;
 }
 export interface UsageSummary {

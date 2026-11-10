@@ -23,34 +23,41 @@ import (
 // provides the duration.
 const thumbnailAtSecond = 3
 
-// ErrUnknownJobType is returned for a job type outside the pipeline.
-var ErrUnknownJobType = errors.New("unknown job type")
+// ErrUnknownJobType is returned for a job type that is not in the job
+// table; ErrNotRerunnable for one that runs only with an export.
+var (
+	ErrUnknownJobType = errors.New("unknown job type")
+	ErrNotRerunnable  = errors.New("job type cannot be run again by hand")
+)
+
+// inputs builds, for each job type that can run again by hand (Rerun in
+// jobcontracts.JobTypes), its input from the video alone. A test checks
+// that it covers exactly those types.
+var inputs = map[string]func(assetID, sourceKey string) any{
+	jobcontracts.JobTypeExtractMetadata: func(a, k string) any { return jobcontracts.ExtractMetadataInput{AssetID: a, StorageKey: k} },
+	jobcontracts.JobTypeGenerateThumbnail: func(a, k string) any {
+		return jobcontracts.GenerateThumbnailInput{AssetID: a, StorageKey: k, AtSecond: thumbnailAtSecond}
+	},
+	jobcontracts.JobTypeTranscodeHLS: func(a, k string) any { return jobcontracts.TranscodeHLSInput{AssetID: a, StorageKey: k} },
+	jobcontracts.JobTypeExtractAudio: func(a, k string) any {
+		return jobcontracts.ExtractAudioInput{AssetID: a, StorageKey: k, AudioKey: storage.AudioKey(a)}
+	},
+	// Empty language: Whisper detects it.
+	jobcontracts.JobTypeTranscribeAudio: func(a, _ string) any {
+		return jobcontracts.TranscribeAudioInput{AssetID: a, AudioKey: storage.AudioKey(a)}
+	},
+	jobcontracts.JobTypeAnalyzeTranscript: func(a, _ string) any { return jobcontracts.AnalyzeTranscriptInput{AssetID: a} },
+	jobcontracts.JobTypeSuggestClips:      func(a, _ string) any { return jobcontracts.SuggestClipsInput{AssetID: a} },
+	jobcontracts.JobTypeTrackFaces:        func(a, k string) any { return jobcontracts.TrackFacesInput{AssetID: a, StorageKey: k} },
+}
 
 // JobInput builds the JSON input of a pipeline job for an asset.
 func JobInput(jobType, assetID, sourceKey string) ([]byte, error) {
-	var input any
-	switch jobType {
-	case jobcontracts.JobTypeExtractMetadata:
-		input = jobcontracts.ExtractMetadataInput{AssetID: assetID, StorageKey: sourceKey}
-	case jobcontracts.JobTypeGenerateThumbnail:
-		input = jobcontracts.GenerateThumbnailInput{AssetID: assetID, StorageKey: sourceKey, AtSecond: thumbnailAtSecond}
-	case jobcontracts.JobTypeTranscodeHLS:
-		input = jobcontracts.TranscodeHLSInput{AssetID: assetID, StorageKey: sourceKey}
-	case jobcontracts.JobTypeExtractAudio:
-		input = jobcontracts.ExtractAudioInput{AssetID: assetID, StorageKey: sourceKey, AudioKey: storage.AudioKey(assetID)}
-	case jobcontracts.JobTypeTranscribeAudio:
-		// Empty language: Whisper detects it.
-		input = jobcontracts.TranscribeAudioInput{AssetID: assetID, AudioKey: storage.AudioKey(assetID)}
-	case jobcontracts.JobTypeAnalyzeTranscript:
-		input = jobcontracts.AnalyzeTranscriptInput{AssetID: assetID}
-	case jobcontracts.JobTypeSuggestClips:
-		input = jobcontracts.SuggestClipsInput{AssetID: assetID}
-	case jobcontracts.JobTypeTrackFaces:
-		input = jobcontracts.TrackFacesInput{AssetID: assetID, StorageKey: sourceKey}
-	default:
+	build, ok := inputs[jobType]
+	if !ok {
 		return nil, fmt.Errorf("%w %q", ErrUnknownJobType, jobType)
 	}
-	return json.Marshal(input)
+	return json.Marshal(build(assetID, sourceKey))
 }
 
 // pipelineJobs builds one pending job per pipeline step, in order, with
@@ -245,6 +252,15 @@ type RerunJob struct {
 }
 
 func (uc RerunJob) Run(ctx context.Context, assetID, jobType string) (domain.Job, error) {
+	kind, ok := jobcontracts.Lookup(jobType)
+	switch {
+	case !ok:
+		err := fmt.Errorf("%w %q", ErrUnknownJobType, jobType)
+		return domain.Job{}, &Error{Kind: Invalid, Msg: err.Error(), Err: err}
+	case !kind.Rerun:
+		return domain.Job{}, &Error{Kind: Invalid, Err: ErrNotRerunnable,
+			Msg: fmt.Sprintf("%s jobs cannot be run again by hand: they run when a clip is exported", kind.Label)}
+	}
 	if err := assetExists(ctx, uc.Assets, assetID); err != nil {
 		return domain.Job{}, err
 	}

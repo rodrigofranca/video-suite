@@ -31,18 +31,10 @@ type Message struct {
 	Payload json.RawMessage // JSON-encoded input struct for Type
 }
 
-// aiJobTypes are the job types run by the Python AI worker.
-var aiJobTypes = map[string]bool{
-	JobTypeTranscribeAudio:     true,
-	JobTypeAnalyzeTranscript:   true,
-	JobTypeSuggestClips:        true,
-	JobTypeTrackFaces:          true,
-	JobTypeTranslateTranscript: true,
-}
-
-// StreamFor returns the stream a job type is queued on.
+// StreamFor returns the stream a job type is queued on: the stream of the
+// worker that runs it (JobTypes), the media worker's for an unknown type.
 func StreamFor(jobType string) string {
-	if aiJobTypes[jobType] {
+	if t, ok := Lookup(jobType); ok && t.Worker == WorkerAI {
 		return StreamAIJobs
 	}
 	return StreamJobs

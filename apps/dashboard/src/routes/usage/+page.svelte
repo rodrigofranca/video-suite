@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { getUsage, usagePeriods, type AIUsageGroup, type UsageSummary } from '$lib/api';
-	import { formatTokens, formatUsd, jobLabel } from '$lib/format';
+	import { formatTokens, formatUsd } from '$lib/format';
 	import UsageChart from '$lib/components/UsageChart.svelte';
 
 	let days = $state(30);
@@ -50,7 +50,7 @@
 	});
 
 	const tables = (u: UsageSummary) => [
-		{ title: 'By action', rows: u.byAction, name: (g: AIUsageGroup) => jobLabel(g.key), link: () => '' },
+		{ title: 'By action', rows: u.byAction, name: (g: AIUsageGroup) => g.label || g.key, link: () => '' },
 		{ title: 'By model', rows: u.byModel, name: (g: AIUsageGroup) => g.key, link: () => '' },
 		{
 			title: 'By video',

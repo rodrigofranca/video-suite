@@ -25,7 +25,7 @@ An upload creates an asset and eight jobs: `extract-metadata` → `generate-thum
 | `apps/worker` | Media worker (Go): reads the `jobs` stream, runs FFmpeg (clip exports as a list of stages over a filter graph builder, [ADR 0035](docs/adr/0035-export-stages-and-filter-graph.md)), runs an outbox relay |
 | `apps/ai-worker` | AI worker (Python, faster-whisper, OpenCV, ONNX Runtime): reads the `jobs:ai` stream, transcribes speech, asks the gateway for summaries, tags, chapters and clips, and finds who to keep in frame in each clip (the face, or whoever speaks) |
 | `apps/dashboard` | Web dashboard (SvelteKit): upload, video list, job logs, player |
-| `packages/job-contracts` | Job types, typed inputs, pipeline order, stream routing and queue message format (shared with Python through `testdata/contracts.json`) |
+| `packages/job-contracts` | The job type table (name, label, worker, can run again; [ADR 0036](docs/adr/0036-job-type-table-and-llm-task-template.md)), typed inputs, pipeline order, stream routing and queue message format (shared with Python through `testdata/contracts.json`) |
 | `packages/media-core` | Domain entities, SQL (`store`), the outbox relay that queues and chains jobs (`outbox`), S3 client (`storage`), DB pool |
 | `infra/` | Local infrastructure config (bucket CORS and public-read policy, LiteLLM models) |
 | `docs/` | PRD, roadmap and architecture decisions ([map](docs/README.md)) |

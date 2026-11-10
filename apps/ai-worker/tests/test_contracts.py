@@ -1,6 +1,7 @@
 """The Python contracts must match the Go ones (packages/job-contracts)."""
 
 import json
+import logging
 
 import pytest
 
@@ -23,6 +24,19 @@ def test_lists_match_go(golden):
         golden["events"]["jobQueued"], golden["events"]["jobFinished"], golden["events"]["channel"]
     ]
     assert contracts.CAPTION_LANGUAGES == golden["captionLanguages"]
+
+
+def test_job_types_match_the_go_table(golden):
+    """This worker runs the job types the Go table gives worker "ai" (docs/adr/0036)."""
+    assert contracts.AI_JOB_TYPES == {j["name"] for j in golden["jobs"] if j["worker"] == "ai"}
+    assert {j["name"] for j in golden["jobs"]} >= set(contracts.PIPELINE) | set(contracts.AFTER) | set(contracts.AFTER.values())
+
+
+def test_every_job_type_has_a_handler(cfg):
+    from ultramedia_ai.__main__ import build_handlers
+
+    handlers = build_handlers(cfg, None, None, None, logging.getLogger("test"), object(), object())
+    assert set(handlers) == contracts.AI_JOB_TYPES
 
 
 def test_routing_matches_go(golden):

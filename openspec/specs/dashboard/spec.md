@@ -54,11 +54,15 @@ Quando o asset estiver `ready`, a página SHALL reproduzir a playlist com `hls.j
 - **THEN** o vídeo SHALL tocar a partir da playlist pública
 
 ### Requirement: Rodar um job de novo pelo dashboard
-A página do vídeo SHALL oferecer **Run again** na tentativa mais recente de cada job `done` ou `failed`, visível direto quando o job falhou e ao abrir o job nos demais casos. O botão SHALL ficar oculto enquanto algum job do asset estiver pendente ou rodando. Quando houver mais de uma tentativa de um tipo, cada uma SHALL mostrar seu número, com as antigas esmaecidas.
+A página do vídeo SHALL oferecer **Run again** na tentativa mais recente de cada job `done` ou `failed` que a API marca com `canRerun`, visível direto quando o job falhou e ao abrir o job nos demais casos. O botão SHALL ficar oculto enquanto algum job do asset estiver pendente ou rodando. Quando houver mais de uma tentativa de um tipo, cada uma SHALL mostrar seu número, com as antigas esmaecidas. Os nomes dos jobs SHALL vir do `label` da API.
 
 #### Scenario: Refazer a miniatura
 - **WHEN** o usuário abre o job de miniatura e clica em **Run again**
 - **THEN** uma nova linha `attempt 2` SHALL aparecer e a página SHALL acompanhar o job até ele terminar
+
+#### Scenario: Tradução
+- **WHEN** o usuário abre um job de tradução terminado
+- **THEN** **Run again** SHALL não aparecer
 
 ### Requirement: Transcrição e legendas no dashboard
 A página do vídeo SHALL carregar as legendas do asset no player e mostrar uma seção **Transcript** com o idioma, o modelo e os trechos com horário. Clicar num trecho SHALL levar o player àquele ponto, e o trecho em reprodução SHALL ficar destacado. Enquanto a transcrição roda, a seção SHALL mostrar o progresso; se o vídeo não tem áudio ou a transcrição falhou, SHALL dizer isso.

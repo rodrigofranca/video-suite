@@ -3,6 +3,8 @@ package app
 import (
 	"strings"
 	"testing"
+
+	jobcontracts "ultramedia/job-contracts"
 )
 
 func TestIsMP4(t *testing.T) {
@@ -26,5 +28,19 @@ func TestCleanFilename(t *testing.T) {
 		if got := CleanFilename(in); got != want {
 			t.Errorf("CleanFilename(%.20q) = %.20q, want %.20q", in, got, want)
 		}
+	}
+}
+
+// The API builds an input for exactly the job types the table says can run
+// again by hand (docs/adr/0036).
+func TestInputsMatchTheJobTable(t *testing.T) {
+	for _, kind := range jobcontracts.JobTypes {
+		_, ok := inputs[kind.Name]
+		if ok != kind.Rerun {
+			t.Errorf("%s: input builder %v, rerun %v", kind.Name, ok, kind.Rerun)
+		}
+	}
+	if len(inputs) != len(jobcontracts.Pipeline) {
+		t.Errorf("%d input builders for %d pipeline steps", len(inputs), len(jobcontracts.Pipeline))
 	}
 }
