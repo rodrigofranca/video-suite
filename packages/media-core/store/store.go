@@ -15,8 +15,8 @@ import (
 	"ultramedia/media-core/domain"
 )
 
-// ErrNotFound is returned when a row does not exist.
-var ErrNotFound = errors.New("not found")
+// ErrNotFound is returned when a row does not exist (domain.ErrNotFound).
+var ErrNotFound = domain.ErrNotFound
 
 type Store struct {
 	db *pgxpool.Pool
@@ -269,7 +269,7 @@ func (s *Store) FinishJob(ctx context.Context, id string, jobErr error) error {
 }
 
 // ErrBusy is returned when an asset still has jobs pending or running.
-var ErrBusy = errors.New("the asset still has jobs pending or running")
+var ErrBusy = domain.ErrBusy
 
 // CreateJobIfIdle adds a pending job for an asset whose jobs have all
 // finished, and the pending jobs in then, which the pipeline runs after it.
