@@ -210,8 +210,8 @@ func TestTrackExpr(t *testing.T) {
 	if one := trackExpr([]TrackPoint{{1, 0.5}}, 1280, 404); one != "438.000" {
 		t.Fatalf("one point = %s", one)
 	}
-	args, _ := ClipArgs(ClipSpec{Input: "in.mp4", Duration: 4, Format: "vertical-face", SourceWidth: 1280, SourceHeight: 720,
-		Output: "out.mp4", Track: []TrackPoint{{0, 0.5}, {4, 0.6}}})
+	args, _ := Export{Source: Source{Path: "in.mp4", Duration: 4, Width: 1280, Height: 720}, Output: "out.mp4",
+		Stages: []Stage{Frame{Format: "vertical-face", Track: []TrackPoint{{0, 0.5}, {4, 0.6}}}}}.Args()
 	if graph := args[slices.Index(args, "-filter_complex")+1]; !strings.HasPrefix(graph, "[0:v:0]crop=w=404:h=720:x='lt(t,0.000)*438.000+") {
 		t.Fatalf("graph = %s", graph)
 	}
