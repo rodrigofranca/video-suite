@@ -6,15 +6,14 @@ small (a day or less), medium (a few days), large (a week or more).
 
 The journalism, social media and newsroom ideas were added on 2026-11-09.
 On 2026-11-10 three of them were moved to the top, in this order: search the
-archive (done, docs/adr/0038), clip from a quote, and cutting silences and
-filler words. After them: transcript correction and glossary; post copy; face
-blurring and source credits; sign-in with approval, then publishing to the
-networks.
+archive (done, docs/adr/0038), clip from a quote (done, docs/adr/0039), and
+cutting silences and filler words. After them: transcript correction and
+glossary; post copy; face blurring and source credits; sign-in with approval,
+then publishing to the networks.
 
 ## Next
 
-1. **Clip from a quote** (medium): search the transcript, select a sentence and turn it into a clip, snapped to its words; reuses the word timings and clip editing (docs/adr/0024), and starts from a moment the archive search found (docs/adr/0038).
-2. **Cut silences and filler words** (medium): remove pauses and fillers ("uh", "like") with jump cuts, as common in Reels and TikTok; the word timings say where the speech is.
+1. **Cut silences and filler words** (medium): remove pauses and fillers ("uh", "like") with jump cuts, as common in Reels and TikTok; the word timings say where the speech is.
 
 ## Journalism
 

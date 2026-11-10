@@ -29,10 +29,11 @@ Open http://localhost:5173. Keep `make demo-logs` running in a terminal if you w
 10. **Presets and vignettes.** Open **Presets**, upload a short opening (an MP4 with a logo) and a closing under **Vignettes**, and a logo under **Watermarks**, then **+ New preset**: pick a caption style and color, the opening for 9:16 clips, the closing, and the watermark (the preview shows it in both shapes). Back on the video, pick the preset on a clip and export **9:16 face**: "The preset fills in the caption choices, joins the opening and the closing and lays the logo, in one FFmpeg run; an opening made for 16:9 is shown whole over a blurred copy of itself."
 11. **What the AI cost.** In the video's details, **AI usage** shows the tokens and the cost of its summary, clips and translations. Open **AI usage** in the menu: "Every call to the language model is recorded with its tokens and the cost the gateway reports; here are the totals per day, action, model and video." Hover a bar for that day's numbers.
 12. **Search the archive.** Open **Search** in the menu (or type in the box on **Videos**) and search for a word said in the video, without its accents: "Every transcript is indexed by segment, with its language's rules: accents and word endings don't matter, and a phrase goes in quotes." Tap a moment: the video opens there, with the transcript scrolled to the line; **← Results** goes back.
-13. **Run a job again.** Open **Thumbnail**, click **Run again**. "A new attempt is added; the earlier one stays in the history."
-14. **The list.** Go back to **Videos**: thumbnail, duration, resolution, status.
-15. **Clean up.** Open a test video, scroll to **Delete video**, confirm: "The video, its clips and every stored file are gone; the list no longer shows it."
-16. **What's next.** "Next: select a sentence in the transcript and turn it into a clip, then cut silences and filler words; after that, sign-in, to run it on a server."
+13. **Clip from a quote.** On the video the search opened, tap **✂ Clip a quote** in the transcript, then the first and the last word of a sentence: "The clip snaps to the words, with a little room so the first syllable is not cut." **Preview**, change the title if you like, **Make the clip**: it is first in **Clips**, marked **Quote**, and exports like any other. Suggesting clips again keeps it.
+14. **Run a job again.** Open **Thumbnail**, click **Run again**. "A new attempt is added; the earlier one stays in the history."
+15. **The list.** Go back to **Videos**: thumbnail, duration, resolution, status.
+16. **Clean up.** Open a test video, scroll to **Delete video**, confirm: "The video, its clips and every stored file are gone; the list no longer shows it."
+17. **What's next.** "Next: cut silences and filler words; after that, sign-in, to run it on a server."
 
 ## After the demo
 

@@ -212,3 +212,10 @@ O menu SHALL ter **Search**, e a página **Videos** SHALL ter uma caixa "Search 
 #### Scenario: Nada encontrado
 - **WHEN** a busca não acha nada em 32 vídeos com transcrição
 - **THEN** o painel SHALL dizer "Nothing found for “…” in 32 videos with a transcript."
+
+### Requirement: Cortes sem sugestão
+A lista de cortes SHALL carregar quando a transcrição termina, mesmo que a sugestão de cortes tenha falhado, e as mensagens de falha e de "nenhum corte" SHALL lembrar que dá para fazer um corte de uma citação.
+
+#### Scenario: Sugestão falhou
+- **WHEN** a sugestão falha e o usuário faz um corte de citação
+- **THEN** a seção **Clips** SHALL mostrar o corte

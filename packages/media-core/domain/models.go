@@ -115,16 +115,18 @@ type Analysis struct {
 }
 
 // Clip is a moment of an asset that works as a short standalone video,
-// suggested by a language model from the transcript (docs/adr/0020).
+// suggested by a language model from the transcript (docs/adr/0020) or made
+// by someone from a quote in it (docs/adr/0039).
 type Clip struct {
 	ID        string
 	AssetID   string
-	JobID     string
+	JobID     string  // the suggest-clips job; empty for a clip made from a quote
+	Origin    string  // ClipSuggested or ClipQuote
 	Start     float64 // seconds
 	End       float64
 	Title     string
 	Reason    string // why the moment works on its own
-	Score     int    // 1 to 10, from the model
+	Score     int    // 1 to 10, from the model; 0 for a clip made from a quote
 	Rank      int    // 1 is the best
 	Model     string
 	CreatedAt time.Time
@@ -135,6 +137,12 @@ type Clip struct {
 	// clip as suggested (see migration 0014).
 	EditedAt *time.Time
 }
+
+// Where a clip came from (see migration 0021).
+const (
+	ClipSuggested = "suggested" // picked by the language model
+	ClipQuote     = "quote"     // made by someone from a quote in the transcript
+)
 
 // Limits of a clip edited by hand, in seconds.
 const (

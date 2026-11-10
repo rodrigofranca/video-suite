@@ -520,26 +520,38 @@ func (s *Store) GetAnalysis(ctx context.Context, assetID string) (domain.Analysi
 
 // ---- Clips ----
 
-const clipColumns = `id, asset_id, job_id, start_seconds, end_seconds, title, reason, score, rank, model, created_at`
+const clipColumns = `id, asset_id, job_id, origin, start_seconds, end_seconds, title, reason, score, rank, model, created_at, face_track, edited_at`
 
 func scanClip(row pgx.Row) (domain.Clip, error) {
 	var c domain.Clip
-	err := row.Scan(&c.ID, &c.AssetID, &c.JobID, &c.Start, &c.End, &c.Title, &c.Reason, &c.Score, &c.Rank, &c.Model, &c.CreatedAt, &c.FaceTrack, &c.EditedAt)
+	var jobID *string
+	var score *int
+	err := row.Scan(&c.ID, &c.AssetID, &jobID, &c.Origin, &c.Start, &c.End, &c.Title, &c.Reason, &score, &c.Rank, &c.Model,
+		&c.CreatedAt, &c.FaceTrack, &c.EditedAt)
+	if jobID != nil {
+		c.JobID = *jobID
+	}
+	if score != nil {
+		c.Score = *score
+	}
 	return c, notFound(err)
 }
 
 // ReplaceClips stores an asset's suggested clips, removing the earlier
-// suggestions but keeping the clips edited by hand, as the suggest-clips job
-// does (docs/adr/0026; the job also drops new clips that repeat an edited
-// one and ranks them all, which this method leaves to the caller).
+// suggestions but keeping the clips made or edited by hand, as the
+// suggest-clips job does (docs/adr/0026, 0039; the job also drops new clips
+// that repeat a kept one and ranks them all, which this method leaves to the
+// caller).
 func (s *Store) ReplaceClips(ctx context.Context, assetID string, clips []domain.Clip) error {
 	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `DELETE FROM clips WHERE asset_id = $1 AND edited_at IS NULL`, assetID); err != nil {
+		_, err := tx.Exec(ctx, `DELETE FROM clips WHERE asset_id = $1 AND edited_at IS NULL AND origin = $2`, assetID, domain.ClipSuggested)
+		if err != nil {
 			return err
 		}
 		for _, c := range clips {
 			_, err := tx.Exec(ctx,
-				`INSERT INTO clips (`+clipColumns+`) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+				`INSERT INTO clips (id, asset_id, job_id, start_seconds, end_seconds, title, reason, score, rank, model)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 				c.ID, assetID, c.JobID, c.Start, c.End, c.Title, c.Reason, c.Score, c.Rank, c.Model)
 			if err != nil {
 				return err
@@ -551,7 +563,7 @@ func (s *Store) ReplaceClips(ctx context.Context, assetID string, clips []domain
 
 // ListClips returns an asset's clips, best first.
 func (s *Store) ListClips(ctx context.Context, assetID string) ([]domain.Clip, error) {
-	rows, err := s.db.Query(ctx, `SELECT `+clipColumns+`, face_track, edited_at FROM clips WHERE asset_id = $1 ORDER BY rank, start_seconds`, assetID)
+	rows, err := s.db.Query(ctx, `SELECT `+clipColumns+` FROM clips WHERE asset_id = $1 ORDER BY rank, start_seconds`, assetID)
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +581,51 @@ func (s *Store) ListClips(ctx context.Context, assetID string) ([]domain.Clip, e
 
 // GetClip returns one clip.
 func (s *Store) GetClip(ctx context.Context, id string) (domain.Clip, error) {
-	return scanClip(s.db.QueryRow(ctx, `SELECT `+clipColumns+`, face_track, edited_at FROM clips WHERE id = $1`, id))
+	return scanClip(s.db.QueryRow(ctx, `SELECT `+clipColumns+` FROM clips WHERE id = $1`, id))
+}
+
+// CreateClipIfIdle adds a clip made from a quote (docs/adr/0039) at the top
+// of the asset's clips, while none of its jobs is pending or running, and
+// adds track as a pending job and queues it, in the same transaction, to
+// find the faces through the clip. It returns ErrNotFound for an unknown
+// asset and ErrBusy while the asset is busy.
+func (s *Store) CreateClipIfIdle(ctx context.Context, c domain.Clip, track domain.Job) error {
+	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if err := lockIdleAsset(ctx, tx, c.AssetID); err != nil {
+			return err
+		}
+		// The newest clip made by hand comes first.
+		if _, err := tx.Exec(ctx, `UPDATE clips SET rank = rank + 1 WHERE asset_id = $1`, c.AssetID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx,
+			`INSERT INTO clips (id, asset_id, origin, start_seconds, end_seconds, title, reason, rank, model, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, 1, '', $8)`,
+			c.ID, c.AssetID, domain.ClipQuote, c.Start, c.End, c.Title, c.Reason, c.CreatedAt)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx,
+			`INSERT INTO processing_jobs (id, asset_id, type, input_json, status, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6)`,
+			track.ID, c.AssetID, track.Type, track.InputJSON, domain.JobPending, track.CreatedAt)
+		if err != nil {
+			return err
+		}
+		track.AssetID = c.AssetID
+		return queueJob(ctx, tx, track)
+	})
+}
+
+// lockIdleAsset locks an asset's row, as CreateJobIfIdle does, so no job
+// starts until the transaction ends, and returns ErrBusy while one of its
+// jobs is pending or running (ErrNotFound for an unknown asset).
+func lockIdleAsset(ctx context.Context, tx pgx.Tx, assetID string) error {
+	var id string
+	if err := tx.QueryRow(ctx, `SELECT id FROM media_assets WHERE id = $1 FOR UPDATE`, assetID).Scan(&id); err != nil {
+		return notFound(err)
+	}
+	return checkIdle(ctx, tx, assetID)
 }
 
 // EditClipIfIdle sets a clip's start, end and title, and marks it edited,
@@ -584,19 +640,8 @@ func (s *Store) EditClipIfIdle(ctx context.Context, c domain.Clip, retrack *doma
 		if err != nil {
 			return notFound(err)
 		}
-		// Lock the asset as CreateJobIfIdle does, so a job cannot start in between.
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM media_assets WHERE id = $1 FOR UPDATE`, assetID); err != nil {
+		if err := lockIdleAsset(ctx, tx, assetID); err != nil {
 			return err
-		}
-		var busy bool
-		err = tx.QueryRow(ctx,
-			`SELECT EXISTS (SELECT 1 FROM processing_jobs WHERE asset_id = $1 AND status IN ($2, $3))`,
-			assetID, domain.JobPending, domain.JobRunning).Scan(&busy)
-		if err != nil {
-			return err
-		}
-		if busy {
-			return ErrBusy
 		}
 		_, err = tx.Exec(ctx,
 			`UPDATE clips SET start_seconds = $2, end_seconds = $3, title = $4, edited_at = NOW(),

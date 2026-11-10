@@ -75,11 +75,20 @@ export interface TranscriptSegment {
 	text: string;
 }
 
+/** A word and when it was said. */
+export interface TranscriptWord {
+	start: number;
+	end: number;
+	word: string;
+}
+
 export interface Transcript {
 	language: string;
 	model: string;
 	text: string;
 	segments: TranscriptSegment[];
+	/** Every word with its timing; empty for transcripts made before words were saved. */
+	words: TranscriptWord[];
 	createdAt: string;
 }
 
@@ -223,7 +232,7 @@ export interface ClipExport {
 	outdated?: boolean;
 }
 
-/** A moment that works as a short standalone video, suggested from the transcript. */
+/** A moment that works as a short standalone video, suggested from the transcript or made from a quote in it. */
 export interface Clip {
 	id: string;
 	start: number;
@@ -231,7 +240,10 @@ export interface Clip {
 	duration: number;
 	title: string;
 	reason: string;
-	score: number;
+	/** "suggested" by the language model, or made from a "quote" (docs/adr/0039). */
+	origin: 'suggested' | 'quote';
+	/** 1 to 10, from the model; null for a quote. */
+	score: number | null;
 	rank: number;
 	model: string;
 	createdAt: string;
@@ -398,6 +410,10 @@ export const deleteClip = (assetId: string, clipId: string) =>
 export const clipLimits = { minSeconds: 3, maxSeconds: 180, maxTitle: 120 };
 
 /** Changes a clip's start, end (seconds from the start of the video) or title. */
+/** Makes a clip from a quote (docs/adr/0039); without a title, the quote is the title. */
+export const createClip = (assetId: string, range: { start: number; end: number; title?: string }) =>
+	sendJSON<Clip>('POST', `/assets/${encodeURIComponent(assetId)}/clips`, range);
+
 export const editClip = (assetId: string, clipId: string, changes: { start?: number; end?: number; title?: string }) =>
 	sendJSON<Clip>('PATCH', `/assets/${encodeURIComponent(assetId)}/clips/${encodeURIComponent(clipId)}`, changes);
 

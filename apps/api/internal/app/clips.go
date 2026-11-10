@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"strings"
@@ -13,6 +14,96 @@ import (
 
 	jobcontracts "ultramedia/job-contracts"
 )
+
+// CreateClip makes a clip from a quote in the transcript (docs/adr/0039):
+// a range someone chose, which the dashboard snaps to the words of the
+// quote. Without a title, the title is what was said in the range. The clip
+// keeps to domain.Clip.Problem and comes first in the asset's clips. Like an
+// edit, it waits until no job of the asset is pending or running, and it
+// queues a track-faces job for the clip in the same transaction.
+type CreateClip struct {
+	Assets   Assets
+	Clips    Clips
+	Metadata Metadata
+	Speech   Speech
+	Writer   ClipWriter
+	Log      *slog.Logger
+	clock
+}
+
+// CreateRequest is the range, in seconds from the start of the video (kept
+// to the millisecond), and an optional title.
+type CreateRequest struct {
+	AssetID    string
+	Start, End float64
+	Title      string
+}
+
+// Run returns the clip as saved.
+func (uc CreateClip) Run(ctx context.Context, req CreateRequest) (domain.Clip, error) {
+	if err := assetExists(ctx, uc.Assets, req.AssetID); err != nil {
+		return domain.Clip{}, err
+	}
+	clip := domain.Clip{
+		ID: uc.newID(), AssetID: req.AssetID, Origin: domain.ClipQuote,
+		Start: math.Round(req.Start*1000) / 1000, End: math.Round(req.End*1000) / 1000,
+		Title: strings.Join(strings.Fields(req.Title), " "), CreatedAt: uc.now(),
+	}
+	if clip.Title == "" {
+		said, err := uc.said(ctx, clip)
+		if err != nil {
+			return clip, err
+		}
+		clip.Title = domain.QuoteTitle(said)
+	}
+	if clip.Title == "" && clip.End > clip.Start {
+		clip.Title = "Clip at " + clockTime(clip.Start)
+	}
+	duration, err := videoDuration(ctx, uc.Metadata, req.AssetID)
+	if err != nil {
+		return clip, err
+	}
+	if problem := clip.Problem(duration); problem != "" {
+		return clip, fail(Invalid, problem)
+	}
+
+	src, err := uc.Assets.GetSource(ctx, req.AssetID)
+	if err != nil {
+		return clip, err
+	}
+	input, _ := json.Marshal(jobcontracts.TrackFacesInput{AssetID: req.AssetID, StorageKey: src.StorageKey, ClipID: clip.ID})
+	track := domain.Job{ID: uc.newID(), AssetID: req.AssetID, Type: jobcontracts.JobTypeTrackFaces, InputJSON: input,
+		Status: domain.JobPending, CreatedAt: uc.now()}
+	err = uc.Writer.CreateClipIfIdle(ctx, clip, track)
+	switch {
+	case errors.Is(err, domain.ErrBusy):
+		return clip, &Error{Kind: Conflict, Msg: err.Error(), Err: err}
+	case isNotFound(err):
+		return clip, fail(NotFound, "not found")
+	case err != nil:
+		return clip, err
+	}
+	orDiscard(uc.Log).Info("clip made from a quote", "asset_id", req.AssetID, "clip_id", clip.ID, "start", clip.Start, "end", clip.End)
+	return uc.Clips.GetClip(ctx, clip.ID)
+}
+
+// said is what was said in the clip's range; "" without a transcript.
+func (uc CreateClip) said(ctx context.Context, c domain.Clip) (string, error) {
+	t, err := uc.Speech.GetTranscript(ctx, c.AssetID)
+	if isNotFound(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return t.Said(c.Start, c.End), nil
+}
+
+// clockTime writes seconds as m:ss.
+func clockTime(seconds float64) string {
+	s := int(math.Max(seconds, 0))
+	return fmt.Sprintf("%d:%02d", s/60, s%60)
+}
 
 // EditClip changes a clip's start, end or title for the exports from then
 // on (docs/adr/0024). The clip must keep to domain.Clip.Problem. New times
@@ -55,7 +146,7 @@ func (uc EditClip) Run(ctx context.Context, req EditRequest) (domain.Clip, error
 	if req.Title != nil {
 		edited.Title = strings.Join(strings.Fields(*req.Title), " ")
 	}
-	duration, err := uc.videoDuration(ctx, req.AssetID)
+	duration, err := videoDuration(ctx, uc.Metadata, req.AssetID)
 	if err != nil {
 		return clip, err
 	}
@@ -91,8 +182,8 @@ func (uc EditClip) Run(ctx context.Context, req EditRequest) (domain.Clip, error
 
 // videoDuration is the video's length from its metadata, or 0 when the
 // metadata job has not run.
-func (uc EditClip) videoDuration(ctx context.Context, assetID string) (float64, error) {
-	m, err := uc.Metadata.GetTechnicalMetadata(ctx, assetID)
+func videoDuration(ctx context.Context, metadata Metadata, assetID string) (float64, error) {
+	m, err := metadata.GetTechnicalMetadata(ctx, assetID)
 	if isNotFound(err) {
 		return 0, nil
 	}
