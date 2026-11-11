@@ -250,6 +250,43 @@ func TestExportWithAPreset(t *testing.T) {
 	}
 }
 
+// Jump cuts (docs/adr/0040): asked for or from the preset, and only with
+// the transcript's word timings.
+func TestExportWithJumpCuts(t *testing.T) {
+	f := newFake()
+	run := func(r ExportRequest) (jobcontracts.ExportClipInput, error) {
+		r.AssetID, r.ClipID, r.Format = assetID, clipID, "vertical"
+		res, err := useCase(f).Run(context.Background(), r)
+		if err != nil {
+			return jobcontracts.ExportClipInput{}, err
+		}
+		return input(t, res.Job), nil
+	}
+	// The fake transcript has no words yet.
+	if _, err := run(ExportRequest{JumpCuts: yes()}); kindOf(err) != Conflict || !strings.Contains(err.Error(), "word timings") {
+		t.Fatalf("without word timings: %v", err)
+	}
+	if in, err := run(ExportRequest{}); err != nil || in.JumpCuts {
+		t.Fatalf("not asked for: %+v, %v", in, err)
+	}
+	f.transcripts[assetID] = domain.Transcript{AssetID: assetID, Language: "pt", Words: []byte(`[{"start":1,"end":1.5,"word":"Olá"}]`)}
+	if in, err := run(ExportRequest{JumpCuts: yes()}); err != nil || !in.JumpCuts {
+		t.Fatalf("asked for: %+v, %v", in, err)
+	}
+	// From the preset, unless the request turns them off.
+	f.presets[otherID] = domain.Preset{ID: otherID, Name: "Reels", Captions: true, CaptionStyle: "box", JumpCuts: true}
+	if in, _ := run(ExportRequest{PresetID: otherID}); !in.JumpCuts {
+		t.Fatal("the preset's jump cuts were not applied")
+	}
+	if in, _ := run(ExportRequest{PresetID: otherID, JumpCuts: no()}); in.JumpCuts {
+		t.Fatal("the request's jump cuts off lost to the preset")
+	}
+	delete(f.transcripts, assetID)
+	if _, err := run(ExportRequest{PresetID: otherID}); kindOf(err) != Conflict {
+		t.Fatalf("without a transcript: %v", err)
+	}
+}
+
 func TestExportTranslatesFirstWhenNeeded(t *testing.T) {
 	f := newFake()
 	req := ExportRequest{AssetID: assetID, ClipID: clipID, Format: "vertical", CaptionLanguage: str("en")}

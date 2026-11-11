@@ -96,7 +96,7 @@
 						<button class="secondary" onclick={() => edit(p)} disabled={editing !== null}>✎ Edit</button>
 						<button class="secondary" onclick={() => (confirming = p.id)}>🗑 Delete</button>
 					</div>
-					<p class="muted small">{describeCaptions(p)}</p>
+					<p class="muted small">{describeCaptions(p)}{p.jumpCuts ? ' · jump cuts' : ''}</p>
 					<p class="muted small">
 						Opening: {describeVignettes(p.introHorizontalId, p.introVerticalId, vignettes ?? [])} · Closing: {describeVignettes(
 							p.outroHorizontalId,

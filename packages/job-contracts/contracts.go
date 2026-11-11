@@ -152,8 +152,11 @@ type ExportClipInput struct {
 	// Watermark is an image over the clip, also from the Preset
 	// (docs/adr/0031); nil for none.
 	Watermark *Watermark `json:"watermark,omitempty"`
-	Preset    string     `json:"preset,omitempty"`
-	OutputKey string     `json:"output_key"`
+	// JumpCuts cuts the pauses and filler sounds out of the clip, from the
+	// transcript's word timings (docs/adr/0040).
+	JumpCuts  bool   `json:"jump_cuts,omitempty"`
+	Preset    string `json:"preset,omitempty"`
+	OutputKey string `json:"output_key"`
 }
 
 // Watermark is an image laid over a clip (not over its vignettes), below the

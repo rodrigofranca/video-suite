@@ -42,12 +42,14 @@ type presetDTO struct {
 	OutroVertical   *string `json:"outroVerticalId"`
 	// The watermark image (or null), its corner, its width as a percentage
 	// of the clip's shorter side, and its opacity in percent (docs/adr/0031).
-	WatermarkID       *string   `json:"watermarkId"`
-	WatermarkPosition string    `json:"watermarkPosition"`
-	WatermarkSize     int       `json:"watermarkSize"`
-	WatermarkOpacity  int       `json:"watermarkOpacity"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	WatermarkID       *string `json:"watermarkId"`
+	WatermarkPosition string  `json:"watermarkPosition"`
+	WatermarkSize     int     `json:"watermarkSize"`
+	WatermarkOpacity  int     `json:"watermarkOpacity"`
+	// JumpCuts cuts the pauses and filler sounds out (docs/adr/0040).
+	JumpCuts  bool      `json:"jumpCuts"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 func idOrNull(id string) *string {
@@ -64,7 +66,7 @@ func toPreset(p domain.Preset) presetDTO {
 		IntroHorizontal: idOrNull(p.IntroHorizontal), IntroVertical: idOrNull(p.IntroVertical),
 		OutroHorizontal: idOrNull(p.OutroHorizontal), OutroVertical: idOrNull(p.OutroVertical),
 		WatermarkID: idOrNull(p.Watermark), WatermarkPosition: p.WatermarkPosition, WatermarkSize: p.WatermarkSize,
-		WatermarkOpacity: p.WatermarkOpacity, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
+		WatermarkOpacity: p.WatermarkOpacity, JumpCuts: p.JumpCuts, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
 	}
 }
 
@@ -155,6 +157,7 @@ type presetBody struct {
 	WatermarkPosition string  `json:"watermarkPosition"`
 	WatermarkSize     *int    `json:"watermarkSize"`
 	WatermarkOpacity  *int    `json:"watermarkOpacity"`
+	JumpCuts          bool    `json:"jumpCuts"`
 }
 
 var presetUsage = `expected a JSON body like {"name": "My channel", "captionStyle": "highlight", "introVerticalId": "<vignette id>"}`
@@ -171,6 +174,7 @@ func readPreset(w http.ResponseWriter, r *http.Request) (app.PresetInput, bool) 
 		CaptionColor: b.CaptionColor, CaptionCaps: b.CaptionCaps, CaptionLanguage: b.CaptionLanguage,
 		IntroHorizontal: b.IntroHorizontal, IntroVertical: b.IntroVertical, OutroHorizontal: b.OutroHorizontal, OutroVertical: b.OutroVertical,
 		WatermarkID: b.WatermarkID, WatermarkPosition: b.WatermarkPosition, WatermarkSize: b.WatermarkSize, WatermarkOpacity: b.WatermarkOpacity,
+		JumpCuts: b.JumpCuts,
 	}, true
 }
 

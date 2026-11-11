@@ -39,8 +39,8 @@ type Source struct {
 
 // Export is one clip export. Stages run in the order given: the export job
 // changes the picture first (Frame), then draws over it (Watermark, then
-// Captions, which stay on top), and joins the vignettes last, so they get
-// none of it.
+// Captions, which stay on top), then cuts the pauses out (JumpCuts), and
+// joins the vignettes last, so they get none of it.
 type Export struct {
 	Source Source
 	Stages []Stage

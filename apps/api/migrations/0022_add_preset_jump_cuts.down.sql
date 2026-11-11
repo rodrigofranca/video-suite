@@ -1,0 +1,1 @@
+ALTER TABLE presets DROP COLUMN IF EXISTS jump_cuts;

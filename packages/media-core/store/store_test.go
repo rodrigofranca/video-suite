@@ -527,7 +527,7 @@ func TestVignettesAndPresets(t *testing.T) {
 	}
 	got, err := s.GetPreset(ctx, p.ID)
 	if err != nil || got.Name != name || got.CaptionStyle != "box" || got.CaptionCaps == nil || !*got.CaptionCaps ||
-		got.CaptionLanguage != "en" || got.IntroVertical != intro.ID || got.IntroHorizontal != "" || got.OutroHorizontal != outro.ID {
+		got.CaptionLanguage != "en" || got.IntroVertical != intro.ID || got.IntroHorizontal != "" || got.OutroHorizontal != outro.ID || got.JumpCuts {
 		t.Fatalf("GetPreset = %+v, %v", got, err)
 	}
 
@@ -536,12 +536,12 @@ func TestVignettesAndPresets(t *testing.T) {
 	if err := s.DeleteVignette(ctx, intro.ID); !errors.As(err, &inUse) || inUse.Presets[0] != name {
 		t.Fatalf("delete a vignette in use: %v", err)
 	}
-	p.IntroVertical, p.CaptionCaps, p.Name = "", nil, name+" v2"
+	p.IntroVertical, p.CaptionCaps, p.Name, p.JumpCuts = "", nil, name+" v2", true
 	if err := s.UpdatePreset(ctx, p); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.GetPreset(ctx, p.ID)
-	if got.IntroVertical != "" || got.CaptionCaps != nil || got.Name != name+" v2" || !got.UpdatedAt.After(got.CreatedAt) {
+	if got.IntroVertical != "" || got.CaptionCaps != nil || got.Name != name+" v2" || !got.JumpCuts || !got.UpdatedAt.After(got.CreatedAt) {
 		t.Fatalf("after the update: %+v", got)
 	}
 	if err := s.DeleteVignette(ctx, intro.ID); err != nil {

@@ -64,3 +64,10 @@ Um preset SHALL aceitar `watermarkId`, `watermarkPosition` (`top-right`, `top-le
 #### Scenario: Só a imagem
 - **WHEN** o preset é criado só com `watermarkId`
 - **THEN** SHALL ficar no canto de cima à direita, com 15% e opacidade 80
+
+### Requirement: Cortes secos no preset
+O preset SHALL guardar se as exportações fazem cortes secos (`jumpCuts`, falso por padrão). Exportar com o preset SHALL fazer cortes secos quando ele diz, a menos que o pedido diga `jumpCuts: false`.
+
+#### Scenario: Preset de Reels
+- **WHEN** o preset tem `jumpCuts` e o pedido só traz o formato e o preset
+- **THEN** o job de exportação SHALL receber `jump_cuts: true`

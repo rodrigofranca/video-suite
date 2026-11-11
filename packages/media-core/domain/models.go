@@ -185,8 +185,10 @@ type Preset struct {
 	WatermarkPosition string
 	WatermarkSize     int
 	WatermarkOpacity  int
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// JumpCuts cuts the pauses and filler sounds out (docs/adr/0040).
+	JumpCuts  bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Watermark is an image in the library, laid over exported clips by a
