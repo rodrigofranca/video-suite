@@ -16,7 +16,8 @@ import (
 )
 
 // ExportClip queues the export of a clip in one format (docs/adr/0020),
-// with captions as chosen or as a preset says (docs/adr/0030, 0031), in the
+// with captions and jump cuts (docs/adr/0040) as chosen or as a preset says
+// (docs/adr/0030, 0031), in the
 // transcript's language or another one: the first export into a language
 // queues its translation first, and the export waits for it (docs/adr/0029).
 // Like every command on an asset, it waits until no job of the asset is
@@ -42,6 +43,7 @@ type ExportRequest struct {
 	CaptionColor    *string
 	CaptionCaps     *bool
 	CaptionLanguage *string
+	JumpCuts        *bool
 	PresetID        string
 }
 
@@ -86,6 +88,11 @@ func (uc ExportClip) Run(ctx context.Context, req ExportRequest) (ExportResult, 
 	if err != nil {
 		return ExportResult{}, err
 	}
+	if choice.JumpCuts {
+		if err := uc.canJumpCut(ctx, req.AssetID); err != nil {
+			return ExportResult{}, err
+		}
+	}
 	intro, outro, err := uc.vignettes(ctx, preset)
 	if err != nil {
 		return ExportResult{}, err
@@ -106,7 +113,7 @@ func (uc ExportClip) Run(ctx context.Context, req ExportRequest) (ExportResult, 
 		AssetID: req.AssetID, ClipID: clip.ID, StorageKey: src.StorageKey, Format: choice.Format,
 		Captions: choice.Captions, CaptionStyle: choice.CaptionStyle,
 		CaptionPosition: choice.CaptionPosition, CaptionColor: choice.CaptionColor, CaptionCaps: choice.CaptionCaps,
-		CaptionLanguage: language, Intro: intro, Outro: outro, Watermark: watermark, Preset: preset.Name,
+		CaptionLanguage: language, Intro: intro, Outro: outro, Watermark: watermark, JumpCuts: choice.JumpCuts, Preset: preset.Name,
 		OutputKey: storage.ClipKey(req.AssetID, clip.ID, choice.Format),
 	})
 	if err != nil {
@@ -164,6 +171,7 @@ type exportChoice struct {
 	Captions                                                     bool
 	CaptionStyle, CaptionPosition, CaptionColor, CaptionLanguage string
 	CaptionCaps                                                  *bool
+	JumpCuts                                                     bool
 }
 
 // resolveChoices fills the choices the request left out from the preset (a
@@ -187,6 +195,10 @@ func resolveChoices(req ExportRequest, p domain.Preset) exportChoice {
 	}
 	if req.CaptionCaps != nil {
 		c.CaptionCaps = req.CaptionCaps
+	}
+	c.JumpCuts = p.JumpCuts
+	if req.JumpCuts != nil {
+		c.JumpCuts = *req.JumpCuts
 	}
 	if c.CaptionStyle == "" {
 		c.CaptionStyle = jobcontracts.CaptionStyles[0]
@@ -227,6 +239,23 @@ func (uc ExportClip) captionLanguage(ctx context.Context, assetID string, c expo
 		return c.CaptionLanguage, true, nil
 	}
 	return c.CaptionLanguage, false, err
+}
+
+// canJumpCut checks that the transcript has the word timings jump cuts are
+// planned from (docs/adr/0040).
+func (uc ExportClip) canJumpCut(ctx context.Context, assetID string) error {
+	tr, err := uc.Speech.GetTranscript(ctx, assetID)
+	if isNotFound(err) {
+		return fail(Conflict, "jump cuts need the transcript, and this video has none")
+	}
+	if err != nil {
+		return err
+	}
+	var words []json.RawMessage
+	if json.Unmarshal(tr.Words, &words) != nil || len(words) == 0 {
+		return fail(Conflict, "jump cuts need the word timings, which this transcript was made without: run the transcription again")
+	}
+	return nil
 }
 
 // vignettes resolves a preset's openings and closings into the storage keys

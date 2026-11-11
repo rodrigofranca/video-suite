@@ -105,6 +105,13 @@
 			</div>
 		{/if}
 	</fieldset>
+	<fieldset>
+		<legend>Editing</legend>
+		<label class="check">
+			<input type="checkbox" bind:checked={form.jumpCuts} data-testid="preset-jump-cuts" /> Jump cuts: cut the pauses and
+			filler sounds out
+		</label>
+	</fieldset>
 	{#each [{ legend: 'Opening', h: 'introHorizontalId', v: 'introVerticalId' }, { legend: 'Closing', h: 'outroHorizontalId', v: 'outroVerticalId' }] as const as slot (slot.legend)}
 		<fieldset>
 			<legend>{slot.legend}</legend>

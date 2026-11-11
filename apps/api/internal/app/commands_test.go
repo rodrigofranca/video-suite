@@ -380,8 +380,11 @@ func TestSavePreset(t *testing.T) {
 
 	p, err := uc.Create(ctx, PresetInput{Name: "  My   channel "})
 	if err != nil || p.Name != "My channel" || !p.Captions || p.CaptionStyle != jobcontracts.CaptionStyles[0] ||
-		p.WatermarkPosition != jobcontracts.WatermarkPositions[0] || p.WatermarkSize != 15 || p.WatermarkOpacity != 80 {
+		p.WatermarkPosition != jobcontracts.WatermarkPositions[0] || p.WatermarkSize != 15 || p.WatermarkOpacity != 80 || p.JumpCuts {
 		t.Fatalf("defaults: %+v, %v", p, err)
+	}
+	if p, err := uc.Create(ctx, PresetInput{Name: "Reels", JumpCuts: true}); err != nil || !p.JumpCuts {
+		t.Fatalf("jump cuts: %+v, %v", p, err)
 	}
 	for why, in := range map[string]PresetInput{
 		"no name":           {Name: " "},

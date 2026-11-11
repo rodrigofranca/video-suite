@@ -169,3 +169,40 @@ func TestStagesWithoutVignettesKeepTheSourceSound(t *testing.T) {
 		t.Fatalf("maps = %s", maps)
 	}
 }
+
+func TestJumpCutsStage(t *testing.T) {
+	stages := []Stage{Frame{Format: "original"}, Captions{File: "c.ass"}, JumpCuts{Keep: []Span{{0.4, 1.55}, {3.9, 5.15}}}}
+	args, err := Export{Source: hd, Stages: stages, Output: "out.mp4"}.Args()
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph := args[slices.Index(args, "-filter_complex")+1]
+	for _, want := range []string{
+		"[0:v:0]scale=1920:1080,setsar=1,ass=filename=c.ass,split=2[s2][s3]", // cut after the captions
+		"[0:a:0]asplit=2[s4][s5]",
+		"[s2]trim=start=0.400:end=1.550,setpts=PTS-STARTPTS[s6]",
+		"[s4]atrim=start=0.400:end=1.550,asetpts=PTS-STARTPTS,afade=t=in:d=0.015,afade=t=out:st=1.135:d=0.015[s7]",
+		"[s3]trim=start=3.900:end=5.150",
+		"[s6][s7][s8][s9]concat=n=2:v=1:a=1[s10][s11]",
+	} {
+		if !strings.Contains(graph, want) {
+			t.Errorf("graph lacks %q:\n%s", want, graph)
+		}
+	}
+	if d := Describe(stages); d != "keep the shape → captions → jump cuts (2 parts)" {
+		t.Errorf("Describe = %q", d)
+	}
+	// Without sound, only the picture is cut and joined.
+	src := hd
+	src.Audio = false
+	args, _ = Export{Source: src, Stages: []Stage{Frame{Format: "original"}, JumpCuts{Keep: []Span{{0, 1}, {2, 3}}}}, Output: "out.mp4"}.Args()
+	graph = args[slices.Index(args, "-filter_complex")+1]
+	if strings.Contains(graph, "asplit") || !strings.Contains(graph, "concat=n=2:v=1:a=0") {
+		t.Errorf("silent source:\n%s", graph)
+	}
+	for _, bad := range [][]Span{nil, {{2, 1}}, {{0, 2}, {1, 3}}} {
+		if _, err := (Export{Source: hd, Stages: []Stage{JumpCuts{Keep: bad}}, Output: "o.mp4"}).Args(); err == nil {
+			t.Errorf("parts %v were accepted", bad)
+		}
+	}
+}

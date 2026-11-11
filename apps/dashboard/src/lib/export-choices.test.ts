@@ -38,7 +38,7 @@ describe('export choices', () => {
 		expect(c.request()).toEqual({
 			captions: true,
 			style: 'box',
-			options: { position: 'bottom', color: 'green', caps: false, language: '', presetId: undefined }
+			options: { position: 'bottom', color: 'green', caps: false, language: '', presetId: undefined, jumpCuts: false }
 		});
 	});
 
@@ -60,5 +60,23 @@ describe('export choices', () => {
 		c.applyPreset('');
 		expect(c.preset).toBeUndefined();
 		expect(c.request().options.presetId).toBeUndefined();
+	});
+
+	it('cuts the pauses when asked or when the preset does, with word timings only', () => {
+		const presets = [preset({ id: 'reels', jumpCuts: true }), preset({ id: 'plain' })];
+		const c = new ExportChoices(() => context({ presets }));
+		expect(c.jumpCuts).toBe(false);
+		c.applyPreset('reels');
+		expect(c.jumpCuts).toBe(true);
+		expect(c.request().options.jumpCuts).toBe(true);
+		c.jumpCuts = false;
+		expect(c.request().options.jumpCuts).toBe(false);
+		c.applyPreset('plain');
+		expect(c.jumpCuts).toBe(false);
+
+		const old = new ExportChoices(() => context({ wordTimings: false, presets }));
+		old.applyPreset('reels');
+		expect(old.canJumpCut).toBe(false);
+		expect(old.jumpCuts).toBe(false);
 	});
 });

@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"ultramedia/worker/internal/testvideo"
@@ -162,5 +164,74 @@ func TestClipWithWatermark(t *testing.T) {
 	}
 	if r, _, _ := pixel(t, half, 2, 640-14-80, 20, 60, 30); r < 100 || r > 160 {
 		t.Errorf("at 50%% opacity the logo should be grey over black, got %d", r)
+	}
+}
+
+// Jump cuts keep three parts of a clip whose color changes every second:
+// the result is as long as the parts, the parts follow each other, and the
+// sound lasts as long as the picture, with an opening joined whole after.
+func TestClipWithJumpCuts(t *testing.T) {
+	needFFmpeg(t)
+	dir := t.TempDir()
+	parts := []string{"red", "green", "blue", "white", "yellow"}
+	var inputs []string
+	for i, c := range parts {
+		p := filepath.Join(dir, fmt.Sprintf("p%d.mp4", i))
+		colorVideo(t, p, c, "640x360", 25, 1, true)
+		inputs = append(inputs, "file '"+p+"'")
+	}
+	list, src := filepath.Join(dir, "list.txt"), filepath.Join(dir, "src.mp4")
+	writeText(t, list, strings.Join(inputs, "\n"))
+	if out, err := exec.Command("ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", src).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	intro := filepath.Join(dir, "intro.mp4")
+	colorVideo(t, intro, "magenta", "640x360", 25, 1, true)
+	out := filepath.Join(dir, "clip.mp4")
+	// Red 0.2-0.8, blue 2.2-2.8, yellow 4.1-4.9: 2 seconds in all.
+	args, err := Export{
+		Source: Source{Path: src, Duration: 5, Width: 640, Height: 360, FrameRate: 25, Audio: true},
+		Stages: []Stage{Frame{Format: "original"}, JumpCuts{Keep: []Span{{0.2, 0.8}, {2.2, 2.8}, {4.1, 4.9}}},
+			Vignettes{Intro: &VignetteInput{Path: intro, Duration: 1, Audio: true}}},
+		Output: out,
+	}.Args()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), args, slog.Default(), Options{}); err != nil {
+		t.Fatalf("%v\n%s", err, CommandLine(args))
+	}
+	_, info, _ := Probe(context.Background(), out, "clip.mp4")
+	if math.Abs(info.DurationSeconds-3) > 0.1 || info.AudioCodec != "aac" {
+		t.Fatalf("clip = %.2f s, audio %q; want 3 s (1 s opening + 2 s kept) with sound", info.DurationSeconds, info.AudioCodec)
+	}
+	for _, c := range []struct {
+		at    float64
+		color string
+		ok    func(r, g, b int) bool
+	}{
+		{0.5, "magenta (the opening)", func(r, g, b int) bool { return r > 200 && g < 60 && b > 200 }},
+		{1.3, "red", func(r, g, b int) bool { return r > 200 && g < 60 && b < 60 }},
+		{1.9, "blue", func(r, g, b int) bool { return b > 200 && r < 60 && g < 60 }},
+		{2.6, "yellow", func(r, g, b int) bool { return r > 200 && g > 200 && b < 60 }},
+	} {
+		if r, g, b := centre(t, out, c.at); !c.ok(r, g, b) {
+			t.Errorf("at %.1f s want %s, got %d,%d,%d", c.at, c.color, r, g, b)
+		}
+	}
+	// The sound is as long as the picture: no drift from the cuts.
+	audio, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=duration", "-of", "csv=p=0", out).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := strconv.ParseFloat(strings.TrimSpace(string(audio)), 64); math.Abs(d-3) > 0.06 {
+		t.Errorf("sound lasts %.3f s, want 3", d)
+	}
+}
+
+func writeText(t *testing.T, path, text string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

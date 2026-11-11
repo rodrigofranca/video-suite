@@ -15,8 +15,8 @@ export interface ExportContext {
 }
 
 /**
- * How one clip will be exported (docs/adr/0021, 0025, 0029, 0030): its
- * captions, their look and language, and a preset. Until something is
+ * How one clip will be exported (docs/adr/0021, 0025, 0029, 0030, 0040):
+ * its captions, their look and language, jump cuts, and a preset. Until something is
  * picked, captions follow the word when the transcript allows, else lines,
  * else none, and each style brings its own color and case. A preset fills
  * in every choice, which can still be changed.
@@ -30,6 +30,7 @@ export class ExportChoices {
 	/** The captions' language: the transcript's own ('') or a translation. */
 	language = $state('');
 	presetId = $state('');
+	#jumpCuts = $state(false);
 
 	constructor(context: () => ExportContext) {
 		this.#context = context;
@@ -70,6 +71,19 @@ export class ExportChoices {
 		this.#caps = on;
 	}
 
+	/** Jump cuts need the transcript's word timings. */
+	get canJumpCut(): boolean {
+		return this.#context().wordTimings;
+	}
+
+	/** Cut the pauses and filler sounds out, where the transcript allows. */
+	get jumpCuts(): boolean {
+		return this.#jumpCuts && this.canJumpCut;
+	}
+	set jumpCuts(on: boolean) {
+		this.#jumpCuts = on;
+	}
+
 	get preset(): Preset | undefined {
 		return this.#context().presets.find((p) => p.id === this.presetId);
 	}
@@ -84,6 +98,7 @@ export class ExportChoices {
 		this.#color = p.captionColor || null;
 		this.#caps = p.captionCaps;
 		this.language = p.captionLanguage === this.#context().transcriptLanguage ? '' : p.captionLanguage;
+		this.#jumpCuts = p.jumpCuts;
 	}
 
 	/** The export request for these choices. */
@@ -97,7 +112,8 @@ export class ExportChoices {
 				color: this.color,
 				caps: this.caps,
 				language: this.language,
-				presetId: this.presetId || undefined
+				presetId: this.presetId || undefined,
+				jumpCuts: this.jumpCuts
 			}
 		};
 	}

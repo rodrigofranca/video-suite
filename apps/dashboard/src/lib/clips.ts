@@ -12,9 +12,10 @@ export function faceStatus(clip: Pick<Clip, 'faceCoverage' | 'faceFollows' | 'fa
 	return `Face in ${Math.round(clip.faceCoverage * 100)}% of the clip`;
 }
 
-/** What an exported file has, after its size: " · centred · Karaoke, top, caps · Channel (opening + watermark)". */
+/** What an exported file has, after its size: " · 31 s, jump cuts · centred · Karaoke, top, caps · Channel (opening + watermark)". */
 export function describeExport(ex: ClipExport): string {
-	let text = ex.framing === 'center' ? ' · centred' : '';
+	let text = ex.jumpCuts ? ` · ${ex.durationSeconds ? `${Math.round(ex.durationSeconds)} s, ` : ''}jump cuts` : '';
+	if (ex.framing === 'center') text += ' · centred';
 	if (ex.captions) {
 		const style = ex.captionStyle ?? 'lines';
 		text += ` · ${captionStyleLabel(style)}`;

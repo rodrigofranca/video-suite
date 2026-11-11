@@ -112,6 +112,15 @@
 				</select>
 			</label>
 		{/if}
+		<label
+			class="choice"
+			title={choices.canJumpCut
+				? 'Cut the pauses and filler sounds out, as in Reels and TikTok'
+				: 'Needs the word timings: run Transcription again'}
+		>
+			<input type="checkbox" bind:checked={choices.jumpCuts} disabled={!choices.canJumpCut} data-testid="jump-cuts" />
+			Jump cuts
+		</label>
 		{#if captionsOn}
 			<label class="choice">
 				Captions

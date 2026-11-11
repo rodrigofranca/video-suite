@@ -31,6 +31,7 @@ describe('clips in words', () => {
 	it('describes an exported file', () => {
 		expect(describeExport(ex({}))).toBe('');
 		expect(describeExport(ex({ framing: 'center' }))).toBe(' · centred');
+		expect(describeExport(ex({ jumpCuts: true, durationSeconds: 30.6, framing: 'center' }))).toBe(' · 31 s, jump cuts · centred');
 		// The style's own color and the one-word style's capitals go unsaid.
 		expect(describeExport(ex({ captions: true, captionStyle: 'highlight', captionColor: 'yellow' }))).toBe(' · Highlighted word');
 		expect(describeExport(ex({ captions: true, captionStyle: 'one-word', captionCaps: true }))).toBe(' · One word at a time');

@@ -142,6 +142,8 @@ export interface CaptionOptions {
 	language?: string;
 	/** A preset whose opening and closing the export joins (its other choices are sent explicitly). */
 	presetId?: string;
+	/** Cut the pauses and filler sounds out (docs/adr/0040). */
+	jumpCuts?: boolean;
 }
 
 /** An opening or closing in the library (docs/adr/0030). */
@@ -177,6 +179,8 @@ export interface Preset {
 	watermarkPosition: WatermarkPosition;
 	watermarkSize: number;
 	watermarkOpacity: number;
+	/** Cut the pauses and filler sounds out (docs/adr/0040). */
+	jumpCuts: boolean;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -221,6 +225,10 @@ export interface ClipExport {
 	intro?: boolean;
 	outro?: boolean;
 	watermark?: boolean;
+	/** The file's pauses and filler sounds were cut out (docs/adr/0040). */
+	jumpCuts?: boolean;
+	/** How long the clip is in the file, without the vignettes. */
+	durationSeconds?: number;
 	/** How a 'vertical-face' file was framed. */
 	framing?: 'face' | 'center';
 	width?: number;
@@ -439,6 +447,7 @@ export const exportClip = (
 		captionColor: options?.color,
 		captionCaps: options?.caps,
 		captionLanguage: options?.language || undefined,
+		jumpCuts: options?.jumpCuts ?? false,
 		presetId: options?.presetId || undefined
 	});
 

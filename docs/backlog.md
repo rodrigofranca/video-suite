@@ -5,15 +5,11 @@ becomes an OpenSpec change and leaves this list. Effort is a rough guess:
 small (a day or less), medium (a few days), large (a week or more).
 
 The journalism, social media and newsroom ideas were added on 2026-11-09.
-On 2026-11-10 three of them were moved to the top, in this order: search the
-archive (done, docs/adr/0038), clip from a quote (done, docs/adr/0039), and
-cutting silences and filler words. After them: transcript correction and
-glossary; post copy; face blurring and source credits; sign-in with approval,
-then publishing to the networks.
-
-## Next
-
-1. **Cut silences and filler words** (medium): remove pauses and fillers ("uh", "like") with jump cuts, as common in Reels and TikTok; the word timings say where the speech is.
+On 2026-11-10 three of them were moved to the top, in this order, and all
+three are done: search the archive (docs/adr/0038), clip from a quote
+(docs/adr/0039) and jump cuts (docs/adr/0040). Suggested order from here:
+transcript correction and glossary; post copy; face blurring and source
+credits; sign-in with approval, then publishing to the networks.
 
 ## Journalism
 
@@ -29,6 +25,7 @@ then publishing to the networks.
 - **More shapes** (medium): 1:1 and 4:5 for feeds, and a split screen for interviews and debates that stacks the two people in a 9:16 clip.
 - **Export with one click** (small): the preset also keeps the formats, and one button exports all of them.
 - **Clip cover** (small to medium): pick a frame and put a title over it, as the cover for Shorts and Reels.
+- **Sharper jump cuts** (small to medium): move each cut to where the sound actually goes quiet, since Whisper's word timings can start a word a little early (docs/adr/0040), and ask Whisper to write the fillers it now leaves out, so they can be cut too.
 - **Subtitle files** (small): download a clip's captions as SRT or VTT, for platforms where captions are uploaded as a file.
 - **Publish and schedule** (large): send clips to YouTube, Instagram, TikTok and X, now or at a set time; needs sign-in and each network's authorization.
 - **Transitions for vignettes** (small): a short fade between a vignette and the clip, as a preset choice.

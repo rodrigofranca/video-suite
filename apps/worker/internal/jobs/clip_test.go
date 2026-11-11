@@ -692,3 +692,55 @@ func TestExportClipWithWatermark(t *testing.T) {
 		}
 	}
 }
+
+// Jump cuts (docs/adr/0040) keep the words of a clip and cut the pauses
+// and the filler between them: a 5 s clip with 2.2 s of speech comes out
+// about 2.6 s long, and the file says what was cut.
+func TestExportClipWithJumpCuts(t *testing.T) {
+	f := newFixtureWith(t, func(path string) { grayVideo(t, path) })
+	f.jobs[jobcontracts.JobTypeExportClip] = f.jobs[jobcontracts.JobTypeSuggestClips]
+	clip := f.addClip(0, 5, "")
+	key := storage.ClipKey(f.asset, clip.ID, jobcontracts.ClipFormatOriginal)
+	f.t.Cleanup(func() { f.files.Delete(f.ctx, key) })
+	export := func() error {
+		return f.media.ExportClip(f.ctx, f.job(jobcontracts.JobTypeExportClip), jobcontracts.ExportClipInput{
+			AssetID: f.asset, ClipID: clip.ID, StorageKey: f.src, Format: jobcontracts.ClipFormatOriginal, JumpCuts: true, OutputKey: key,
+		})
+	}
+
+	// Without word timings there is nothing to cut by.
+	f.saveWords(`[]`)
+	if err := export(); err == nil || !strings.Contains(err.Error(), "word timings") {
+		t.Fatalf("without words: %v", err)
+	}
+
+	// "These words" (1.0-1.9), "uhm" (2.3-2.6), "are burned" (3.5-4.0): 0.9-2.05 and 3.4-4.15 stay.
+	f.saveWords(`[{"start":1.0,"end":1.4,"word":"These"},{"start":1.5,"end":1.9,"word":"words"},{"start":2.3,"end":2.6,"word":"uhm"},` +
+		`{"start":3.5,"end":3.7,"word":"are"},{"start":3.7,"end":4.0,"word":"burned."}]`)
+	f.logs.Reset()
+	if err := export(); err != nil {
+		t.Fatalf("%v\nlogs:\n%s", err, f.logs.String())
+	}
+	if log := f.logs.String(); !strings.Contains(log, "jump cuts: keeping 1.9 s of 5.0 s in 2 parts; 3.1 s of pauses and 1 filler out") ||
+		!strings.Contains(log, "→ jump cuts (2 parts)") {
+		t.Errorf("logs:\n%s", log)
+	}
+	local := filepath.Join(t.TempDir(), "clip.mp4")
+	if err := f.files.DownloadFile(f.ctx, key, local); err != nil {
+		t.Fatal(err)
+	}
+	_, info, err := ffmpeg.Probe(f.ctx, local, "clip.mp4")
+	if err != nil || info.DurationSeconds < 1.8 || info.DurationSeconds > 2.05 {
+		t.Fatalf("clip lasts %.2f s (%v), want about 1.9", info.DurationSeconds, err)
+	}
+	arts, _ := f.st.ListArtifacts(f.ctx, f.asset)
+	var meta struct {
+		JumpCuts                  bool
+		KeptSeconds, TotalSeconds float64
+		Fillers                   int
+	}
+	json.Unmarshal(arts[len(arts)-1].MetadataJSON, &meta)
+	if !meta.JumpCuts || meta.Fillers != 1 || meta.KeptSeconds < 1.89 || meta.KeptSeconds > 1.91 || meta.TotalSeconds != meta.KeptSeconds {
+		t.Errorf("metadata = %+v", meta)
+	}
+}

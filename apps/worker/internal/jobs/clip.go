@@ -19,6 +19,7 @@ import (
 	"ultramedia/media-core/store"
 	"ultramedia/worker/internal/captions"
 	"ultramedia/worker/internal/ffmpeg"
+	"ultramedia/worker/internal/jumpcut"
 
 	jobcontracts "ultramedia/job-contracts"
 )
@@ -95,9 +96,16 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 			return err
 		}
 	}
+	var cuts jumpcut.Plan
+	if in.JumpCuts {
+		if cuts, err = m.jumpCuts(ctx, job, in.AssetID, clip); err != nil {
+			return err
+		}
+	}
 
 	// The picture's shape first, then what is drawn over it (the captions on
-	// top), and the vignettes last, so they get none of it.
+	// top), then the jump cuts, which cut the captions with the picture, and
+	// the vignettes last, so they get none of it.
 	stages := []ffmpeg.Stage{frame}
 	if watermark != nil {
 		stages = append(stages, *watermark)
@@ -105,7 +113,16 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 	if subs.Path != "" {
 		stages = append(stages, ffmpeg.Captions{File: subs.Path})
 	}
-	total := duration
+	kept := duration
+	if len(cuts.Keep) > 0 {
+		spans := make([]ffmpeg.Span, len(cuts.Keep))
+		for i, k := range cuts.Keep {
+			spans[i] = ffmpeg.Span{Start: k.Start, End: k.End}
+		}
+		stages = append(stages, ffmpeg.JumpCuts{Keep: spans})
+		kept = cuts.Length
+	}
+	total := kept
 	if intro != nil || outro != nil {
 		stages = append(stages, ffmpeg.Vignettes{Intro: intro, Outro: outro})
 		for _, v := range []*ffmpeg.VignetteInput{intro, outro} {
@@ -149,6 +166,7 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 		"captions": subs.Path != "", "captionStyle": subs.Style, "language": subs.Language, "translatedFrom": subs.TranslatedFrom,
 		"captionPosition": subs.Position, "captionColor": subs.Color, "captionCaps": subs.Caps,
 		"start": clip.Start, "end": clip.End, "durationSeconds": duration,
+		"jumpCuts": len(cuts.Keep) > 0, "keptSeconds": kept, "fillers": cuts.Fillers,
 		"preset": in.Preset, "intro": intro != nil, "outro": outro != nil, "watermark": watermark != nil, "totalSeconds": total,
 		"width": width, "height": height, "sizeBytes": info.Size(),
 	})
@@ -156,6 +174,42 @@ func (m Media) ExportClip(ctx context.Context, job Job, in jobcontracts.ExportCl
 		ID: domain.NewID(), AssetID: in.AssetID, JobID: job.ID, Type: domain.ArtifactClip,
 		StorageKey: in.OutputKey, MetadataJSON: meta,
 	})
+}
+
+// jumpCuts plans the jump cuts of a clip (docs/adr/0040) from the
+// transcript's word timings, whatever language the captions are in: the
+// speech is the original's. A clip with no speech is exported whole.
+func (m Media) jumpCuts(ctx context.Context, job Job, assetID string, clip domain.Clip) (jumpcut.Plan, error) {
+	tr, err := m.Store.GetTranscript(ctx, assetID)
+	if errors.Is(err, store.ErrNotFound) {
+		return jumpcut.Plan{}, errors.New("jump cuts need the transcript, and this video has none")
+	}
+	if err != nil {
+		return jumpcut.Plan{}, err
+	}
+	all, err := captions.ParseWords(tr.Words)
+	if err != nil {
+		return jumpcut.Plan{}, err
+	}
+	if len(all) == 0 {
+		return jumpcut.Plan{}, errors.New("jump cuts need the word timings, which this transcript was made without: run the transcription again")
+	}
+	length := clip.End - clip.Start
+	plan := jumpcut.Cut(captions.CutWords(all, clip.Start, clip.End), length)
+	if len(plan.Keep) == 0 {
+		job.Log.Warn("jump cuts: nothing is said in the clip; exporting it whole")
+		return plan, nil
+	}
+	job.Log.Info(fmt.Sprintf("jump cuts: keeping %.1f s of %.1f s in %d parts; %.1f s of pauses and %d filler%s out",
+		plan.Length, length, len(plan.Keep), length-plan.Length, plan.Fillers, plural(plan.Fillers)))
+	return plan, nil
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // Word-by-word captions: phrases per screen.

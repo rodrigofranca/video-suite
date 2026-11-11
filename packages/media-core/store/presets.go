@@ -135,13 +135,13 @@ func (s *Store) DeleteWatermark(ctx context.Context, id string) error {
 const presetColumns = `id, name, captions, caption_style, caption_position, caption_color, caption_caps, caption_language,
 	COALESCE(intro_horizontal_id::text, ''), COALESCE(intro_vertical_id::text, ''),
 	COALESCE(outro_horizontal_id::text, ''), COALESCE(outro_vertical_id::text, ''),
-	COALESCE(watermark_id::text, ''), watermark_position, watermark_size, watermark_opacity, created_at, updated_at`
+	COALESCE(watermark_id::text, ''), watermark_position, watermark_size, watermark_opacity, jump_cuts, created_at, updated_at`
 
 func scanPreset(row pgx.Row) (domain.Preset, error) {
 	var p domain.Preset
 	err := row.Scan(&p.ID, &p.Name, &p.Captions, &p.CaptionStyle, &p.CaptionPosition, &p.CaptionColor, &p.CaptionCaps,
 		&p.CaptionLanguage, &p.IntroHorizontal, &p.IntroVertical, &p.OutroHorizontal, &p.OutroVertical,
-		&p.Watermark, &p.WatermarkPosition, &p.WatermarkSize, &p.WatermarkOpacity, &p.CreatedAt, &p.UpdatedAt)
+		&p.Watermark, &p.WatermarkPosition, &p.WatermarkSize, &p.WatermarkOpacity, &p.JumpCuts, &p.CreatedAt, &p.UpdatedAt)
 	return p, notFound(err)
 }
 
@@ -183,11 +183,11 @@ func (s *Store) CreatePreset(ctx context.Context, p domain.Preset) error {
 	_, err := s.db.Exec(ctx,
 		`INSERT INTO presets (id, name, captions, caption_style, caption_position, caption_color, caption_caps, caption_language,
 		                      intro_horizontal_id, intro_vertical_id, outro_horizontal_id, outro_vertical_id,
-		                      watermark_id, watermark_position, watermark_size, watermark_opacity)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+		                      watermark_id, watermark_position, watermark_size, watermark_opacity, jump_cuts)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		p.ID, p.Name, p.Captions, p.CaptionStyle, p.CaptionPosition, p.CaptionColor, p.CaptionCaps, p.CaptionLanguage,
 		orNull(p.IntroHorizontal), orNull(p.IntroVertical), orNull(p.OutroHorizontal), orNull(p.OutroVertical),
-		orNull(p.Watermark), p.WatermarkPosition, p.WatermarkSize, p.WatermarkOpacity)
+		orNull(p.Watermark), p.WatermarkPosition, p.WatermarkSize, p.WatermarkOpacity, p.JumpCuts)
 	return nameTaken(err)
 }
 
@@ -199,11 +199,11 @@ func (s *Store) UpdatePreset(ctx context.Context, p domain.Preset) error {
 		`UPDATE presets SET name = $2, captions = $3, caption_style = $4, caption_position = $5, caption_color = $6,
 		        caption_caps = $7, caption_language = $8, intro_horizontal_id = $9, intro_vertical_id = $10,
 		        outro_horizontal_id = $11, outro_vertical_id = $12, watermark_id = $13, watermark_position = $14,
-		        watermark_size = $15, watermark_opacity = $16, updated_at = NOW()
+		        watermark_size = $15, watermark_opacity = $16, jump_cuts = $17, updated_at = NOW()
 		 WHERE id = $1`,
 		p.ID, p.Name, p.Captions, p.CaptionStyle, p.CaptionPosition, p.CaptionColor, p.CaptionCaps, p.CaptionLanguage,
 		orNull(p.IntroHorizontal), orNull(p.IntroVertical), orNull(p.OutroHorizontal), orNull(p.OutroVertical),
-		orNull(p.Watermark), p.WatermarkPosition, p.WatermarkSize, p.WatermarkOpacity)
+		orNull(p.Watermark), p.WatermarkPosition, p.WatermarkSize, p.WatermarkOpacity, p.JumpCuts)
 	if err != nil {
 		return nameTaken(err)
 	}

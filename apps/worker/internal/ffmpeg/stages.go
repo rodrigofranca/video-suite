@@ -168,6 +168,71 @@ func (c Captions) Apply(g *Graph, m Media) (Media, error) {
 	return m, nil
 }
 
+// ---- Jump cuts ----
+
+// Span is a part of the clip, in seconds from its start.
+type Span struct {
+	Start, End float64
+}
+
+// fadeSeconds is how long each kept part's sound fades in and out, so the
+// joins do not click.
+const fadeSeconds = 0.015
+
+// JumpCuts keeps the parts of the clip in Keep, in order and apart, and
+// joins them back to back (docs/adr/0040). It goes after the captions,
+// which are cut with the picture and so stay with the words, and before the
+// vignettes, which are joined whole. Each part is trimmed from the same
+// stream; the concat filter keeps picture and sound together part by part.
+type JumpCuts struct {
+	Keep []Span
+}
+
+func (j JumpCuts) String() string { return fmt.Sprintf("jump cuts (%d parts)", len(j.Keep)) }
+
+func (j JumpCuts) Apply(g *Graph, m Media) (Media, error) {
+	n := len(j.Keep)
+	if n == 0 {
+		return m, fmt.Errorf("nothing to keep")
+	}
+	pictures := []Stream{m.Video}
+	var sounds []Stream
+	if m.HasAudio {
+		sounds = []Stream{m.Audio}
+	}
+	if n > 1 {
+		pictures = g.Split(m.Video, n)
+		if m.HasAudio {
+			sounds = g.Fork([]Stream{m.Audio}, n, F("asplit", n))
+		}
+	}
+	var parts []Stream
+	m.Duration = 0
+	for i, s := range j.Keep {
+		if s.End <= s.Start || (i > 0 && s.Start < j.Keep[i-1].End) {
+			return m, fmt.Errorf("part %d (%.3f-%.3f s) is empty or overlaps the one before", i+1, s.Start, s.End)
+		}
+		length := s.End - s.Start
+		parts = append(parts, g.Pipe(pictures[i], F("trim", "start="+seconds(s.Start), "end="+seconds(s.End)), F("setpts", "PTS-STARTPTS")))
+		if m.HasAudio {
+			fade := min(fadeSeconds, length/4)
+			parts = append(parts, g.Pipe(sounds[i], F("atrim", "start="+seconds(s.Start), "end="+seconds(s.End)), F("asetpts", "PTS-STARTPTS"),
+				F("afade", "t=in", "d="+seconds(fade)), F("afade", "t=out", "st="+seconds(length-fade), "d="+seconds(fade))))
+		}
+		m.Duration += length
+	}
+	audio := 0
+	if m.HasAudio {
+		audio = 1
+	}
+	joined := g.Fork(parts, 1+audio, F("concat", fmt.Sprintf("n=%d", n), "v=1", fmt.Sprintf("a=%d", audio)))
+	m.Video = joined[0]
+	if m.HasAudio {
+		m.Audio = joined[1]
+	}
+	return m, nil
+}
+
 // ---- Vignettes ----
 
 // Vignettes joins an opening before the clip and a closing after it

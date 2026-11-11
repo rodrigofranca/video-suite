@@ -33,6 +33,7 @@ type PresetInput struct {
 	WatermarkID                                                    *string
 	WatermarkPosition                                              string
 	WatermarkSize, WatermarkOpacity                                *int
+	JumpCuts                                                       bool
 }
 
 // Create saves a new preset and returns it as saved.
@@ -113,6 +114,7 @@ func (uc SavePreset) check(ctx context.Context, in PresetInput) (domain.Preset, 
 		*s.out = *s.in
 	}
 
+	p.JumpCuts = in.JumpCuts
 	p.WatermarkPosition, p.WatermarkSize, p.WatermarkOpacity = in.WatermarkPosition, 15, 80
 	if p.WatermarkPosition == "" {
 		p.WatermarkPosition = jobcontracts.WatermarkPositions[0]

@@ -22,7 +22,8 @@ export const blankPreset = (): PresetInput => ({
 	watermarkId: null,
 	watermarkPosition: 'top-right',
 	watermarkSize: 15,
-	watermarkOpacity: 80
+	watermarkOpacity: 80,
+	jumpCuts: false
 });
 
 /** A preset's choices, to edit them. */

@@ -79,6 +79,11 @@ type clipExportDTO struct {
 	Intro     bool   `json:"intro,omitempty"`
 	Outro     bool   `json:"outro,omitempty"`
 	Watermark bool   `json:"watermark,omitempty"`
+	// JumpCuts says the file's pauses and filler sounds were cut out
+	// (docs/adr/0040), and DurationSeconds is how long the clip is in it,
+	// without the vignettes.
+	JumpCuts        bool    `json:"jumpCuts,omitempty"`
+	DurationSeconds float64 `json:"durationSeconds,omitempty"`
 	// Framing is how a "vertical-face" file was framed: "face" or "center".
 	Framing   string `json:"framing,omitempty"`
 	Width     int    `json:"width,omitempty"`
@@ -104,6 +109,9 @@ type clipFileMeta struct {
 	Intro           bool    `json:"intro"`
 	Outro           bool    `json:"outro"`
 	Watermark       bool    `json:"watermark"`
+	JumpCuts        bool    `json:"jumpCuts"`
+	KeptSeconds     float64 `json:"keptSeconds"`
+	DurationSeconds float64 `json:"durationSeconds"`
 	Framing         string  `json:"framing"`
 	Width           int     `json:"width"`
 	Height          int     `json:"height"`
@@ -217,6 +225,10 @@ func clipExports(clip domain.Clip, jobs []domain.Job, arts []domain.Artifact) []
 		if file, ok := latestClipFile(arts, clipID, format); ok {
 			e.Captions, e.CaptionStyle, e.Framing, e.Width, e.Height, e.SizeBytes, e.Ready = file.Captions, file.CaptionStyle, file.Framing, file.Width, file.Height, file.SizeBytes, true
 			e.CaptionLanguage, e.Preset, e.Intro, e.Outro, e.Watermark = "", file.Preset, file.Intro, file.Outro, file.Watermark
+			e.JumpCuts, e.DurationSeconds = file.JumpCuts, file.DurationSeconds
+			if file.JumpCuts {
+				e.DurationSeconds = file.KeptSeconds
+			}
 			if file.Captions {
 				e.CaptionPosition, e.CaptionColor, e.CaptionCaps = file.CaptionPosition, file.CaptionColor, file.CaptionCaps
 				e.CaptionLanguage, e.TranslatedFrom = file.Language, file.TranslatedFrom
@@ -326,7 +338,7 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 		AssetID: r.PathValue("id"), ClipID: r.PathValue("clipId"), Format: body.Format,
 		Captions: body.Captions, CaptionStyle: body.CaptionStyle, CaptionPosition: body.CaptionPosition,
 		CaptionColor: body.CaptionColor, CaptionCaps: body.CaptionCaps, CaptionLanguage: body.CaptionLanguage,
-		PresetID: body.PresetID,
+		JumpCuts: body.JumpCuts, PresetID: body.PresetID,
 	})
 	if errors.Is(err, app.ErrInvalidChoice) {
 		writeError(w, http.StatusBadRequest, exportUsage)
@@ -339,7 +351,7 @@ func (a *api) exportClip(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, toJob(res.Job))
 }
 
-var exportUsage = `expected a JSON body like {"format": "vertical", "captions": true, "captionStyle": "highlight", "captionPosition": "bottom", "captionColor": "yellow", "captionCaps": false, "captionLanguage": "en", "presetId": "<id>"}; ` +
+var exportUsage = `expected a JSON body like {"format": "vertical", "captions": true, "captionStyle": "highlight", "captionPosition": "bottom", "captionColor": "yellow", "captionCaps": false, "captionLanguage": "en", "jumpCuts": true, "presetId": "<id>"}; ` +
 	app.ChoicesOnOffer
 
 // exportBody is what POST .../exports takes; app.ExportClip does the rest
@@ -353,6 +365,7 @@ type exportBody struct {
 	CaptionColor    *string `json:"captionColor"`
 	CaptionCaps     *bool   `json:"captionCaps"`
 	CaptionLanguage *string `json:"captionLanguage"`
+	JumpCuts        *bool   `json:"jumpCuts"`
 	PresetID        string  `json:"presetId"`
 }
 
